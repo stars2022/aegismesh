@@ -50,8 +50,9 @@ def issue_certificate_sync(
 
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
-    key_path = output / f"{aic}.key"
-    cert_path = output / f"{aic}.pem"
+    suffix = "" if usage == "clientAuth" else f".{usage.lower()}"
+    key_path = output / f"{aic}{suffix}.key"
+    cert_path = output / f"{aic}{suffix}.pem"
     trust_path = output / "trust-bundle.pem"
 
     account_key_path = Path(account_key_path) if account_key_path else output / "acme-account.key"
@@ -108,7 +109,7 @@ def issue_certificate_sync(
     )
 
 
-async def issue_certificate(aic: str, eab: dict) -> IssuedCertificate:
+async def issue_certificate(aic: str, eab: dict, usage: str = "clientAuth") -> IssuedCertificate:
     settings = get_settings()
     # The official registry binds an ACME account to one registered AIC.  Keep
     # account keys isolated so issuing a certificate for one agent cannot make
@@ -121,4 +122,5 @@ async def issue_certificate(aic: str, eab: dict) -> IssuedCertificate:
         settings.ca_server_url,
         account_key,
         settings.certs_dir,
+        usage,
     )

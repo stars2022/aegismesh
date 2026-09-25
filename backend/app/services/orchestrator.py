@@ -809,6 +809,7 @@ class ReliableOrchestrator:
             for k, v in kwargs.items()
             if k in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
         }
+        invoke_started = time.monotonic()
         try:
             res = await asyncio.wait_for(
                 transport.execute(agent, query, timeout, **safe_kwargs),
@@ -818,15 +819,18 @@ class ReliableOrchestrator:
                 target_controller.calibrate_tokens(res.completion_tokens)
             return res
         except asyncio.TimeoutError as err:
-            logger.warning("Agent %s invocation timed out after %ss", agent.name, hard_deadline)
+            elapsed = time.monotonic() - invoke_started
+            logger.warning("Agent %s invocation timed out after %.1fs (hard_deadline=%.1fs)", agent.name, elapsed, hard_deadline)
             if target_controller:
                 expired, code, msg = target_controller.check_deadline()
                 if expired:
                     if code == "idle_timeout":
-                        raise IdleTimeoutError(msg or f"智能体 {agent.name} 响应超时", phase=target_controller.phase.value) from err
+                        raise IdleTimeoutError(msg or f"智能体 {agent.name} 响应超时（空闲等待超过宽限期）", phase=target_controller.phase.value) from err
                     else:
-                        raise AbsoluteTimeoutError(msg or f"智能体 {agent.name} 响应超时（超过硬截止 {hard_deadline} 秒）") from err
-            raise AbsoluteTimeoutError(f"智能体 {agent.name} 响应超时（超过硬截止 {hard_deadline} 秒）") from err
+                        raise AbsoluteTimeoutError(msg or f"智能体 {agent.name} 达到时长上限（耗时 {elapsed:.1f} 秒）") from err
+            if elapsed >= hard_deadline - 0.5:
+                raise AbsoluteTimeoutError(f"智能体 {agent.name} 响应超时（超过硬截止 {hard_deadline:.1f} 秒）") from err
+            raise TimeoutError(f"智能体 {agent.name} 响应超时（已等待 {elapsed:.1f} 秒，未在预期时限 {timeout:.1f} 秒内返回）") from err
 
     async def _run_direct(
         self,
@@ -1169,7 +1173,7 @@ class ReliableOrchestrator:
                 "type": "function",
                 "function": {
                     "name": "dispatch_task",
-                    "description": "把一个子任务交给平台调度执行：平台自动选择最合适的执行型智能体（也可用 agent 指定）。系统全程基于调用链（call_chain）追踪链路，严禁循环调用已在调用链中的智能体或自身。",
+                    "description": "把一个子任务交给平台调度执行：平台自动选择最合适的执行型智能体（也可用 agent 指定）。系统全程基于调用链（call_chain）追踪链路。若指定智能体执行失败或超时，应优先检索其他相关候选智能体；若无可用候选，向用户汇报具体原因并询问是否代为生成，严禁擅自直接虚构替代品。",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -2635,7 +2639,12 @@ class ReliableOrchestrator:
                         "agent_id": agent.id,
                         "caller_id": effective_caller,
                         "call_chain": next_chain,
-                        "error": f"{agent.name} 执行失败：{error_msg}。请主协调器结合已知信息直接给出答复，或使用自身工具自执行。",
+                        "error": (
+                            f"智能体「{agent.name}」调用失败（{error_msg}）。"
+                            f"【协同调度准则】：1. 请优先在候选池或全网中检索是否具备其他同类/相关能力的候选智能体进行替代调度；"
+                            f"2. 若无其他可用候选，请如实向用户汇报「{agent.name}」不可用的具体原因；"
+                            f"3. 严禁在未经用户允许前擅自直接自行虚构替代内容！请主动向用户询问：是否需要由平台协助生成模拟数据或测试方案。"
+                        ),
                     }
                 finally:
                     sub_lease.release()

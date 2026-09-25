@@ -239,6 +239,10 @@ async def lifespan(_: FastAPI):
                 agent.active_tasks = 0
                 agent.queued_tasks = 0
         with SessionLocal() as db:
+            agents = db.scalars(select(Agent).where(Agent.active == True)).all()
+            for ag in agents:
+                if public_aic(ag):
+                    amp_service.register_aic(ag.aic)
             leader_agent = db.scalar(select(Agent).where(Agent.role == "leader"))
             if leader_agent and leader_agent.aic:
                 amp_service.update_aic(leader_agent.aic)
@@ -858,6 +862,7 @@ async def sync_registration(agent_id: str, db: DbSession) -> AgentRead:
             agent.aic = remote_aic
             if agent.transport != "aip-rpc":
                 agent.usage_mode = "both"
+            amp_service.register_aic(agent.aic)
     comments = detail.get("comments") or detail.get("processComments")
     agent.registration_message = (str(comments) if comments else f"注册服务状态：{remote_status or '未知'}")[:500]
     agent.registration_synced_at = _now_utc()
@@ -885,7 +890,7 @@ async def fetch_eab_credential(agent_id: str, db: DbSession) -> dict:
 
 
 @app.post("/api/agents/{agent_id}/certificate", dependencies=[Depends(require_admin)], tags=["registration"])
-async def issue_agent_certificate(agent_id: str, db: DbSession) -> dict:
+async def issue_agent_certificate(agent_id: str, db: DbSession, usage: str = "clientAuth") -> dict:
     """基于 EAB 凭据通过 CA（ACME）签发客户端证书，落盘到数据目录。"""
     agent = db.get(Agent, agent_id)
     if not agent:
@@ -897,7 +902,9 @@ async def issue_agent_certificate(agent_id: str, db: DbSession) -> dict:
         credential = await client.fetch_eab(agent.aic)
         agent.eab_key_id = credential.key_id
         agent.eab_expires_at = _parse_iso_datetime(credential.expires_at)
-        issued = await issue_certificate(agent.aic, {"keyId": credential.key_id, "macKey": credential.mac_key})
+        if usage not in {"clientAuth", "serverAuth"}:
+            raise HTTPException(status_code=422, detail="usage 必须为 clientAuth 或 serverAuth")
+        issued = await issue_certificate(agent.aic, {"keyId": credential.key_id, "macKey": credential.mac_key}, usage)
     except RegistrationError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except CertificateError as exc:
@@ -1871,11 +1878,14 @@ def platform_acs(request: Request, db: DbSession) -> dict:
     leader = db.scalar(select(Agent).where(Agent.role == "leader").order_by(Agent.id))
     if not leader or not public_aic(leader):
         raise HTTPException(status_code=404, detail="Leader not configured")
-    return build_acs(leader, None)
+    rpc_url = settings.platform_rpc_url or f"{_public_base_url(request)}:8443/aip/platform/rpc"
+    return build_acs(leader, rpc_url)
 
 
 def _hosted_partner(agent_id: str, db: Session) -> Agent:
     agent = db.get(Agent, agent_id)
+    if not agent:
+        agent = db.scalar(select(Agent).where(Agent.aic == agent_id))
     if not agent or agent.transport == "aip-rpc" or agent.usage_mode == "internal" or not public_aic(agent):
         raise HTTPException(status_code=404, detail="Hosted Agent not found")
     return agent
@@ -1890,11 +1900,11 @@ async def hosted_partner_rpc(agent_id: str, request: Request, db: DbSession):
     except (json.JSONDecodeError, Exception) as exc:
         raise HTTPException(status_code=400, detail="AIP 请求格式无效") from exc
 
-    # 兼容官方探针/探活请求（method="get" 或 taskId="probe"）
+    # 兼容官方探针/探活请求（method="get" / "ping" 或 taskId="probe" / "ping"）
     if isinstance(payload, dict):
         method = str(payload.get("method") or "").lower()
         params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
-        if method == "get" or params.get("taskId") == "probe":
+        if method in {"get", "ping"} or params.get("taskId") in {"probe", "ping"}:
             return {
                 "jsonrpc": "2.0",
                 "id": payload.get("id"),

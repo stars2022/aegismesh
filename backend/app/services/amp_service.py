@@ -28,7 +28,13 @@ class AmpService:
         self.log_dir = Path(log_dir or settings.amp_log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.aic = aic
-        self._heartbeat_emitter = HeartbeatEmitter(
+        self._aics: set[str] = {aic} if aic and not aic.startswith("local:") else set()
+        self._emitters: dict[str, HeartbeatEmitter] = {}
+        if self.aic:
+            self._emitters[self.aic] = HeartbeatEmitter(
+                self.log_dir / "amp_heartbeat_aegismesh.jsonl", aic=self.aic
+            )
+        self._heartbeat_emitter = self._emitters.get(self.aic) or HeartbeatEmitter(
             self.log_dir / "amp_heartbeat_aegismesh.jsonl", aic=self.aic
         )
         self._access_emitter = AccessEmitter(
@@ -44,10 +50,19 @@ class AmpService:
         )
         self._hb_task: asyncio.Task[None] | None = None
 
+    def register_aic(self, aic: str) -> None:
+        if aic and not aic.startswith("local:"):
+            self._aics.add(aic)
+            if aic not in self._emitters:
+                self._emitters[aic] = HeartbeatEmitter(
+                    self.log_dir / "amp_heartbeat_aegismesh.jsonl", aic=aic
+                )
+
     def update_aic(self, aic: str) -> None:
         if aic and aic != self.aic:
             self.aic = aic
-            self._heartbeat_emitter = HeartbeatEmitter(
+            self.register_aic(aic)
+            self._heartbeat_emitter = self._emitters.get(self.aic) or HeartbeatEmitter(
                 self.log_dir / "amp_heartbeat_aegismesh.jsonl", aic=self.aic
             )
             self._access_emitter = AccessEmitter(
@@ -62,14 +77,31 @@ class AmpService:
                 },
             )
 
+    async def _run_periodic_heartbeats(self, interval_seconds: float) -> None:
+        hb_path = self.log_dir / "amp_heartbeat_aegismesh.jsonl"
+        while True:
+            target_aics = list(self._aics) if self._aics else [self.aic]
+            for target in target_aics:
+                if not target or target.startswith("local:"):
+                    continue
+                emitter = self._emitters.get(target)
+                if not emitter:
+                    emitter = HeartbeatEmitter(hb_path, aic=target)
+                    self._emitters[target] = emitter
+                try:
+                    await emitter.emit()
+                except Exception as exc:
+                    logger.warning("AMP 心跳发送失败 (%s): %s", target, exc)
+            await asyncio.sleep(interval_seconds)
+
     async def start(self) -> None:
         settings = get_settings()
         interval = getattr(settings, "amp_heartbeat_interval_seconds", 15.0)
         self._hb_task = asyncio.create_task(
-            self._heartbeat_emitter.run_periodic(interval),
+            self._run_periodic_heartbeats(interval),
             name="amp-heartbeat",
         )
-        logger.info("AMP 心跳服务已启动 (AIC: %s, 周期: %.1fs)", self.aic, interval)
+        logger.info("AMP 心跳服务已启动 (AIC 集合: %s, 周期: %.1fs)", list(self._aics) or [self.aic], interval)
         self.record_system(
             category="lifecycle",
             message="AegisMesh 启动完成并已开启 AMP 可观测性追踪",

@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     aip_tls_port: int = 0
     aip_notification_allowed_origins: list[str] = []
     aip_group_mq_url: str = ""
+    public_base_url: str = ""
     aip_group_mq_host: str = ""
     aip_group_mq_port: int = 5672
     aip_group_mq_vhost: str = "/"
@@ -58,6 +59,7 @@ class Settings(BaseSettings):
     registry_password: str = ""
     registry_timeout_seconds: float = 15.0
     public_base_url: str = ""
+    platform_rpc_url: str = ""
     ca_server_url: str = "https://wt.ioa.pub/ca-server/acps-atr-v2"
     ca_account_key_file: str = ""
     certs_dir: str = "data/certs"

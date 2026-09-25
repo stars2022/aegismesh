@@ -5,6 +5,7 @@ import uuid
 
 from fastapi.testclient import TestClient
 
+import app.main as main_module
 from app.main import app, settings
 
 API_KEY = "test-public-api-key-123456"
@@ -141,6 +142,32 @@ def test_notification_routes_fail_closed_without_mtls(monkeypatch: pytest.Monkey
             json={"jsonrpc": "2.0", "method": "notification/set", "id": "1", "params": config},
         )
         assert set_response.status_code == 503
+
+
+def test_platform_acs_declares_endpoint(monkeypatch) -> None:
+    leader_id = f"leader-{uuid.uuid4().hex[:8]}"
+    with client() as test_client:
+        created = test_client.post(
+            "/api/agents",
+            json={
+                "id": leader_id,
+                "name": "平台协调者",
+                "aic": "1.2.156.3088.1.BUPT.L2K8YU.9FTJ5K.FUG31M.0VW4",
+                "role": "leader",
+                "transport": "openai-compatible",
+            },
+        )
+        assert created.status_code == 201
+        original = main_module.settings.platform_rpc_url
+        main_module.settings.platform_rpc_url = "https://aip.example.test:8443/aip/platform/rpc"
+        try:
+            response = test_client.get("/.well-known/acs.json")
+        finally:
+            main_module.settings.platform_rpc_url = original
+        assert response.status_code == 200
+        endpoints = response.json()["endPoints"]
+        assert endpoints and endpoints[0]["url"] == "https://aip.example.test:8443/aip/platform/rpc"
+        test_client.delete(f"/api/agents/{leader_id}")
 
 
 def test_stream_endpoint_fails_closed_without_mtls(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -36,7 +36,9 @@ def main() -> None:
         ssl_certfile=settings.aip_tls_certfile,
         ssl_keyfile=settings.aip_tls_keyfile,
         ssl_ca_certs=settings.aip_tls_client_ca_file,
-        ssl_cert_reqs=2,
+        # CERT_OPTIONAL：无客户端证书也能完成握手（互操作预检需读取服务端
+        # serverAuth 证书）；AIP 命令的身份校验仍在应用层执行。
+        ssl_cert_reqs=1,
         http=AipPeerCertH11Protocol,
     )
 

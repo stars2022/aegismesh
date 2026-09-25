@@ -729,7 +729,7 @@ tr:last-child td { border-bottom: 0; }
 .api-entry:first-of-type { margin-top: 8px; }
 .chat-stage { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: auto; scrollbar-width: thin; border-right: 1px solid var(--line); }
 .api-stage { overflow-y: auto; padding: 24px; }
-.chat-thread { width: min(750px, calc(100% - 50px)); min-height: 0; flex: 1 1 0; margin: 0 auto; padding: 45px 0 145px; overflow: visible; }
+.chat-thread { width: 100%; max-width: 100%; min-height: 0; flex: 1 1 0; margin: 0 auto; padding: 45px max(24px, calc((100% - 750px) / 2)) 145px; box-sizing: border-box; overflow: visible; }
 .chat-hero { min-height: 410px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .hero-mark { width: 44px; height: 44px; display: grid; place-items: center; margin-bottom: 19px; color: var(--cffffff); background: var(--ink); border-radius: 12px; }
 .chat-hero h2 { margin: 0 0 26px; font-size: clamp(22px, 3vw, 30px); font-weight: 500; letter-spacing: -.03em; }
@@ -1969,6 +1969,8 @@ tr:last-child td { border-bottom: 0; }
 }
 
 .chat-stage:not(.api-stage) .chat-thread {
+  width: 100%;
+  max-width: 100%;
   height: 100%;
   min-height: 0;
   overflow-y: auto;
@@ -1976,6 +1978,8 @@ tr:last-child td { border-bottom: 0; }
   overscroll-behavior: contain;
   scrollbar-gutter: auto;
   scrollbar-width: thin;
+  padding: 45px max(24px, calc((100% - 750px) / 2)) 145px;
+  box-sizing: border-box;
 }
 
 .chat-stage:not(.api-stage) .composer {
@@ -7833,6 +7837,185 @@ tr:last-child td { border-bottom: 0; }
 [data-theme="dark"] .bb-empty-icon {
   background: #18181b !important;
   color: #71717a !important;
+}
+
+/* ===== 实时路由与动态派发监控 (Realtime Route Inspector) ===== */
+.route-section-group {
+  margin: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.route-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.route-dispatches-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.route-dispatch-card {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--cffffff);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.route-dispatch-card.running {
+  border-color: #6366f1;
+  background: rgba(99, 102, 241, 0.04);
+}
+
+.route-dispatch-card.error {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.04);
+}
+
+.route-dispatch-card.completed {
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.dispatch-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dispatch-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.dispatch-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.dispatch-badge.running {
+  background: rgba(99, 102, 241, 0.15);
+  color: #4f46e5;
+}
+
+.dispatch-badge.completed {
+  background: rgba(16, 185, 129, 0.15);
+  color: #059669;
+}
+
+.dispatch-badge.error {
+  background: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+}
+
+.dispatch-task {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--c666660);
+  margin: 0;
+  word-break: break-word;
+}
+
+.dispatch-meta {
+  font-size: 10px;
+  font-family: "DM Mono", monospace;
+  color: var(--c898983);
+}
+
+.dispatch-err {
+  font-size: 11px;
+  color: #dc2626;
+  margin: 2px 0 0;
+  line-height: 1.4;
+}
+
+.discovered-candidates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.discovered-cand-card {
+  padding: 9px 12px;
+  border-radius: 7px;
+  background: var(--cffffff);
+  border: 1px solid var(--line);
+}
+
+.discovered-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.discovered-name-row strong {
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.source-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(13, 148, 136, 0.12);
+  color: #0d9488;
+  font-weight: 500;
+}
+
+.discovered-desc {
+  font-size: 11px;
+  color: var(--c666660);
+  margin: 4px 0 0;
+  line-height: 1.4;
+}
+
+.route-running-pulse {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #6366f1;
+  font-weight: 500;
+  margin-top: 4px;
+}
+
+/* 深色模式适配 */
+[data-theme="dark"] .route-dispatch-card {
+  background: #18181b !important;
+  border-color: #27272a !important;
+}
+
+[data-theme="dark"] .route-dispatch-card.running {
+  border-color: #6366f1 !important;
+  background: rgba(99, 102, 241, 0.1) !important;
+}
+
+[data-theme="dark"] .route-dispatch-card.error {
+  border-color: rgba(239, 68, 68, 0.4) !important;
+  background: rgba(239, 68, 68, 0.08) !important;
+}
+
+[data-theme="dark"] .discovered-cand-card {
+  background: #18181b !important;
+  border-color: #27272a !important;
+}
+
+[data-theme="dark"] .dispatch-task,
+[data-theme="dark"] .discovered-desc {
+  color: #a1a1aa !important;
 }
 
 

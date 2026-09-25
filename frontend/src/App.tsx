@@ -5151,9 +5151,13 @@ function CollaborationPanel({
 
     for (const res of results) {
       const rd = res.result_data;
-      // 集群群组：真实黑板消息
+      // 集群群组：仅在显式处于模式三（集群黑板研讨）或明确多智能体群聊时展示
+      const isMode3Swarm =
+        rd?.mode === "group_blackboard" ||
+        (rd as any)?.collaboration_mode === 3 ||
+        rd?.mode === "mode_3_group_blackboard";
       const bb = rd?.shared_context?.blackboard_messages || [];
-      if (bb.length > 0) {
+      if (bb.length > 0 && isMode3Swarm) {
         entries.push({ kind: "swarm", key: `swarm-${res.invocation_id}`, messages: [...bb] });
       }
       // 串行群组：execute_workflow 工具调用
@@ -5176,10 +5180,14 @@ function CollaborationPanel({
     }
     // 进行中的实时派发（尚无最终结果）
     pushContacts(runningList);
-    // 实时群组：正在进行的集群研讨与串行工作流置顶展示
-    const discussionLive = (liveBlackboardMessages || []).filter(
-      (m) => m.type === "chat" || m.type === "broadcast",
+    // 实时群组：仅在模式三集群研讨时置顶展示
+    const isMode3Live = Boolean(
+      inspector?.result_data?.mode === "group_blackboard" ||
+      (inspector?.result_data as any)?.collaboration_mode === 3
     );
+    const discussionLive = isMode3Live
+      ? (liveBlackboardMessages || []).filter((m) => m.type === "chat" || m.type === "broadcast")
+      : [];
     if (discussionLive.length > 0) {
       let lastSwarmIdx = -1;
       for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -6269,6 +6277,84 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     return list;
   }, [liveBlackboardMessages, messages]);
 
+  // 本轮实时调度智能体列表（包含实时流式运行中与已完成/异常的派发）
+  const activeDispatches = useMemo(() => {
+    const list: Array<{
+      id: string;
+      name: string;
+      task: string;
+      status: string;
+      latency_ms?: number;
+      error?: string;
+    }> = [];
+    const seen = new Set<string>();
+    for (const sub of Object.values(liveSubagents)) {
+      const key = `${sub.agent_id}-${sub.task}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        list.push({
+          id: sub.agent_id,
+          name: sub.agent_name || sub.agent_id,
+          task: sub.task,
+          status: sub.status,
+          latency_ms: sub.latency_ms,
+          error: sub.error,
+        });
+      }
+    }
+    if (inspector?.result_data?.collaborations) {
+      for (const c of inspector.result_data.collaborations) {
+        const key = `${c.agent_id}-${c.task}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          list.push({
+            id: c.agent_id,
+            name: c.agent_name || c.agent_id,
+            task: c.task,
+            status: c.status,
+            latency_ms: c.latency_ms,
+            error: c.error,
+          });
+        }
+      }
+    }
+    return list;
+  }, [liveSubagents, inspector]);
+
+  // 本轮动态发现的外部/同伴候选列表
+  const dynamicDiscoveredCandidates = useMemo(() => {
+    const dynamicList: Array<{
+      id: string;
+      name: string;
+      description: string;
+      source: string;
+    }> = [];
+    const seen = new Set<string>();
+    for (const m of messages.slice(-5)) {
+      for (const t of m.result?.result_data?.tool_executions || []) {
+        if (t.name === "list_agents" && t.output) {
+          try {
+            const parsed = typeof t.output === "string" ? JSON.parse(t.output) : t.output;
+            if (Array.isArray(parsed)) {
+              for (const item of parsed) {
+                if (item.agent_id && !seen.has(item.agent_id)) {
+                  seen.add(item.agent_id);
+                  dynamicList.push({
+                    id: item.agent_id,
+                    name: item.name || item.agent_id,
+                    description: item.description || "全网发现协同同伴",
+                    source: item.source === "adp_network" ? "ADP 全网发现" : (item.source || "协同同伴"),
+                  });
+                }
+              }
+            }
+          } catch {}
+        }
+      }
+    }
+    return dynamicList;
+  }, [messages]);
+
   const [mentionMenuOpen, setMentionMenuOpen] = useState(false);
   const [mentionFilter, setMentionFilter] = useState("");
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -6513,6 +6599,9 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     setQueue(data?.queue || []);
     setContent("chat");
     setMobileHistoryOpen(false);
+    if (!target.isGroup && (detail === "blackboard" || detail === "members")) {
+      setDetail("route");
+    }
   };
   const createConversation = (targetAgentId?: string) => {
     const newId = crypto.randomUUID();
@@ -6521,6 +6610,9 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     setShowAllMessages(false);
     setSession(undefined);
     sessionRef.current = undefined;
+    if (detail === "blackboard" || detail === "members") {
+      setDetail("route");
+    }
     if (targetAgentId) {
       setAgentId(targetAgentId);
     } else {
@@ -8280,12 +8372,6 @@ void runMessage(next.text, next.agentId, next.attachments);
                 >
                   协作
                 </button>
-                <button
-                  className={detail === "blackboard" ? "active" : ""}
-                  onClick={() => setDetail("blackboard")}
-                >
-                  黑板 {blackboardDeliverables.length > 0 && <span className="tab-badge">{blackboardDeliverables.length}</span>}
-                </button>
               </>
             )}
           </div>
@@ -8329,59 +8415,129 @@ void runMessage(next.text, next.agentId, next.attachments);
             }}
           />
         )}
-        {!activeMeta?.isGroup && inspector && detail === "route" && (
-          <>
-            <div className="selected-route">
-              <span>已选择</span>
-              <strong>{inspector.selected_agent?.name || "—"}</strong>
-            </div>
-            <div className="candidate-scores">
-              {inspector.candidates.some((item) => item.weights && Object.keys(item.weights).length > 0) && (
-                <p className="muted">
-                  本次融合权重
-                  {Object.entries(
-                    inspector.candidates.find((item) => item.weights && Object.keys(item.weights).length > 0)?.weights || {},
-                  )
-                    .map(([key, value]) => ` ${metricLabels[key] || key} ${Math.round(value * 100)}%`)
-                    .join(" ·")}
-                </p>
-              )}
-              {inspector.candidates.map((candidate) => (
-                <div key={candidate.agent_id}>
-                  <div>
-                    <span className="rank">{candidate.eligible ? candidate.rank : "—"}</span>
-                    <strong>{candidate.agent_name}</strong>
-                    <b>{candidate.eligible ? candidate.score : "未入选"}</b>
+        {!activeMeta?.isGroup && detail === "route" && (
+          (inspector || activeDispatches.length > 0 || dynamicDiscoveredCandidates.length > 0) ? (
+            <>
+              <div className="selected-route">
+                <span>已选择主控</span>
+                <strong>{inspector?.selected_agent?.name || agents.find((a) => a.id === agentId)?.name || "科研智能体协作平台"}</strong>
+                {sending && (
+                  <div className="route-running-pulse">
+                    <span className="pulse" />
+                    <span>本轮任务调度执行中...</span>
                   </div>
-                  {candidate.eligible && <ScoreBar value={candidate.score} />}
-                  {candidate.eligible && (
+                )}
+              </div>
+
+              {/* 1. 本轮实时调度与协同状态 */}
+              {activeDispatches.length > 0 && (
+                <div className="route-section-group">
+                  <div className="route-section-title">
+                    <GitBranch size={13} color="#6366f1" />
+                    <span>本轮实时调度智能体 ({activeDispatches.length})</span>
+                  </div>
+                  <div className="route-dispatches-list">
+                    {activeDispatches.map((disp, idx) => (
+                      <div key={idx} className={`route-dispatch-card ${disp.status}`}>
+                        <div className="dispatch-header">
+                          <span className="dispatch-name">@{disp.name}</span>
+                          <span className={`dispatch-badge ${disp.status}`}>
+                            {disp.status === "running" ? "执行中" : disp.status === "error" || disp.error ? "调用异常" : "已完成"}
+                          </span>
+                        </div>
+                        <p className="dispatch-task">{disp.task}</p>
+                        {disp.latency_ms && <span className="dispatch-meta">{formatMs(disp.latency_ms)}</span>}
+                        {disp.error && <p className="dispatch-err">⚠️ {disp.error}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 2. 本轮动态全网发现候选 */}
+              {dynamicDiscoveredCandidates.length > 0 && (
+                <div className="route-section-group">
+                  <div className="route-section-title">
+                    <Search size={13} color="#0d9488" />
+                    <span>本轮全网动态发现候选 ({dynamicDiscoveredCandidates.length})</span>
+                  </div>
+                  <div className="discovered-candidates-list">
+                    {dynamicDiscoveredCandidates.map((c) => (
+                      <div key={c.id} className="discovered-cand-card">
+                        <div className="discovered-name-row">
+                          <strong>{c.name}</strong>
+                          <span className="source-tag">{c.source}</span>
+                        </div>
+                        <p className="discovered-desc">{c.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 3. 初选融合打分与候选 */}
+              {inspector?.candidates && inspector.candidates.length > 0 && (
+                <div className="candidate-scores">
+                  <div className="route-section-title" style={{ padding: "10px 0 6px" }}>
+                    <SlidersHorizontal size={13} color="var(--c888882)" />
+                    <span>初选评估与 TOPSIS 综合打分</span>
+                  </div>
+                  {inspector.candidates.some((item) => item.weights && Object.keys(item.weights).length > 0) && (
                     <p className="muted">
-                      {Object.entries(candidate.breakdown)
-                        .map(([key, value]) => `${metricLabels[key] || key} ${value}`)
-                        .join(" · ")}
+                      本次融合权重
+                      {Object.entries(
+                        inspector.candidates.find((item) => item.weights && Object.keys(item.weights).length > 0)?.weights || {},
+                      )
+                        .map(([key, value]) => ` ${metricLabels[key] || key} ${Math.round(value * 100)}%`)
+                        .join(" ·")}
                     </p>
                   )}
-                  {candidate.reasons.length > 0 && (
-                    <p className="muted">{candidate.reasons.join(" · ")}</p>
-                  )}
+                  {inspector.candidates.map((candidate) => (
+                    <div key={candidate.agent_id}>
+                      <div>
+                        <span className="rank">{candidate.eligible ? candidate.rank : "—"}</span>
+                        <strong>{candidate.agent_name}</strong>
+                        <b>{candidate.eligible ? candidate.score : "未入选"}</b>
+                      </div>
+                      {candidate.eligible && <ScoreBar value={candidate.score} />}
+                      {candidate.eligible && (
+                        <p className="muted">
+                          {Object.entries(candidate.breakdown)
+                            .map(([key, value]) => `${metricLabels[key] || key} ${value}`)
+                            .join(" · ")}
+                        </p>
+                      )}
+                      {candidate.reasons.length > 0 && (
+                        <p className="muted">{candidate.reasons.join(" · ")}</p>
+                      )}
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
+
+              {/* 4. Token 消耗 */}
+              {inspector?.usage && (
+                <div className="usage-box">
+                  <div>
+                    <span>模型调用</span>
+                    <strong>{inspector.usage.llm_calls}</strong>
+                  </div>
+                  <div>
+                    <span>输入 Token</span>
+                    <strong>{inspector.usage.prompt_tokens}</strong>
+                  </div>
+                  <div>
+                    <span>输出 Token</span>
+                    <strong>{inspector.usage.completion_tokens}</strong>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="inspector-empty">
+              {sending ? "正在评估路由与可用智能体..." : "等待运行记录"}
             </div>
-            <div className="usage-box">
-              <div>
-                <span>模型调用</span>
-                <strong>{inspector.usage.llm_calls}</strong>
-              </div>
-              <div>
-                <span>输入 Token</span>
-                <strong>{inspector.usage.prompt_tokens}</strong>
-              </div>
-              <div>
-                <span>输出 Token</span>
-                <strong>{inspector.usage.completion_tokens}</strong>
-              </div>
-            </div>
-          </>
+          )
         )}
         {detail === "collaboration" && (
           activeMeta?.isGroup ? (
@@ -8401,13 +8557,8 @@ void runMessage(next.text, next.agentId, next.attachments);
             />
           )
         )}
-        {detail === "blackboard" && (
+        {activeMeta?.isGroup && detail === "blackboard" && (
           <BlackboardPanel items={blackboardDeliverables} />
-        )}
-        {!activeMeta?.isGroup && detail === "route" && !inspector && (
-          <div className="inspector-empty">
-            {sending ? "正在评估路由与可用智能体..." : "等待运行记录"}
-          </div>
         )}
       </aside>
       {settingsOpen && (

@@ -27,5 +27,5 @@ def test_aip_server_uses_peer_certificate_protocol(monkeypatch) -> None:
 
     serve.main()
 
-    assert captured["ssl_cert_reqs"] == 2
+    assert captured["ssl_cert_reqs"] == 1  # CERT_OPTIONAL：握手可读服务端证书，命令身份校验在应用层
     assert captured["http"] is AipPeerCertH11Protocol
