@@ -4029,6 +4029,12 @@ function AccessControl() {
   );
 }
 
+type GroupConfig = {
+  name: string;
+  members: string[]; // agent IDs
+  hostAgentId?: string | null; // agent ID or null for user host
+};
+
 type ChatMessage = {
   role: "user" | "assistant";
   text: string;
@@ -4036,6 +4042,10 @@ type ChatMessage = {
   streaming?: boolean;
   attachments?: Attachment[];
   feedback?: "positive" | "negative";
+  senderAgentId?: string;
+  senderName?: string;
+  isHost?: boolean;
+  createdAt?: number;
 };
 type QueuedTask = { id: string; text: string; agentId: string; attachments?: Attachment[] };
 type Conversation = {
@@ -4045,6 +4055,8 @@ type Conversation = {
   agentId?: string;
   messages: ChatMessage[];
   queue?: QueuedTask[];
+  isGroup?: boolean;
+  groupConfig?: GroupConfig;
 };
 
 type ConversationMeta = {
@@ -4053,6 +4065,8 @@ type ConversationMeta = {
   session?: string;
   agentId?: string;
   messageCount?: number;
+  isGroup?: boolean;
+  groupMemberCount?: number;
 };
 
 function loadConversationIndex(): ConversationMeta[] {
@@ -4079,6 +4093,8 @@ function loadConversationIndex(): ConversationMeta[] {
               session: item.session,
               agentId: item.agentId,
               messageCount: Array.isArray(item.messages) ? item.messages.length : 0,
+              isGroup: item.isGroup,
+              groupMemberCount: item.groupConfig?.members?.length,
             });
           }
         }
@@ -5317,6 +5333,199 @@ function CollaborationPanel({
   );
 }
 
+function GroupChatModal({
+  isOpen,
+  mode,
+  targetConv,
+  agents,
+  onClose,
+  onSubmit,
+}: {
+  isOpen: boolean;
+  mode: "create" | "edit";
+  targetConv?: Conversation | null;
+  agents: Agent[];
+  onClose: () => void;
+  onSubmit: (config: GroupConfig) => void;
+}) {
+  const [name, setName] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [hostId, setHostId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    if (mode === "edit" && targetConv?.groupConfig) {
+      setName(targetConv.groupConfig.name || targetConv.title || "智能体协作讨论群");
+      setSelectedIds(targetConv.groupConfig.members || []);
+      setHostId(targetConv.groupConfig.hostAgentId ?? null);
+    } else {
+      setName("智能体协作讨论群");
+      const defaultAgents = agents.filter((a) => a.active).slice(0, 3).map((a) => a.id);
+      setSelectedIds(defaultAgents);
+      const leader = agents.find((a) => a.role === "leader" && a.active);
+      setHostId(leader ? leader.id : null);
+    }
+  }, [isOpen, mode, targetConv, agents]);
+
+  if (!isOpen) return null;
+
+  const activeAgents = agents.filter((a) => a.active);
+  const filteredAgents = activeAgents.filter((a) =>
+    `${a.name} ${a.id} ${a.description || ""}`.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  const toggleAgent = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+      if (hostId === id && !next.includes(id)) {
+        setHostId(null);
+      }
+      return next;
+    });
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    if (selectedIds.length === 0) return;
+    onSubmit({
+      name: name.trim(),
+      members: selectedIds,
+      hostAgentId: hostId,
+    });
+  };
+
+  return (
+    <div className="group-modal-overlay" onClick={onClose}>
+      <div className="group-modal-container" onClick={(e) => e.stopPropagation()}>
+        <div className="group-modal-header">
+          <div className="modal-header-left">
+            <Users size={18} />
+            <h3>{mode === "create" ? "新建智能体协作群聊" : "群聊设置与成员管理"}</h3>
+            <span className="beta-tag">实验性</span>
+          </div>
+          <button className="modal-close-btn" onClick={onClose} aria-label="关闭">
+            <X size={16} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="group-modal-form">
+          <div className="form-group">
+            <label>群聊名称</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="输入群聊名称，如：近海海洋环境监测分析组"
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <div className="form-group-label-row">
+              <label>选择群成员智能体 ({selectedIds.length} 位)</label>
+              <div className="quick-select-links">
+                <button
+                  type="button"
+                  onClick={() => setSelectedIds(activeAgents.map((a) => a.id))}
+                >
+                  全选
+                </button>
+                <span>·</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedIds([]);
+                    setHostId(null);
+                  }}
+                >
+                  清空
+                </button>
+              </div>
+            </div>
+            <div className="group-agent-search">
+              <Search size={14} />
+              <input
+                type="text"
+                placeholder="搜索智能体..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <div className="group-agent-picker-list">
+              {filteredAgents.map((agent) => {
+                const checked = selectedIds.includes(agent.id);
+                return (
+                  <div
+                    key={agent.id}
+                    className={`group-agent-picker-item ${checked ? "selected" : ""}`}
+                    onClick={() => toggleAgent(agent.id)}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {}}
+                    />
+                    <div className="agent-info">
+                      <div className="agent-title-row">
+                        <strong>{agent.name}</strong>
+                        <span className={`role-pill ${agent.role}`}>
+                          {agent.role === "leader" ? "协调型" : "执行型"}
+                        </span>
+                        {hostId === agent.id && <span className="host-pill">👑 主持人</span>}
+                      </div>
+                      <p className="agent-desc">{agent.description || "专业领域智能体"}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label>指定群聊主持人 (Host Agent)</label>
+            <select
+              value={hostId || ""}
+              onChange={(e) => setHostId(e.target.value ? e.target.value : null)}
+              className="select-host-control"
+            >
+              <option value="">👑 我自己当主持人 (自主主持与调度)</option>
+              {selectedIds.map((id) => {
+                const a = agents.find((ag) => ag.id === id);
+                return (
+                  <option key={id} value={id}>
+                    👑 {a ? a.name : id} (指定为主持人)
+                  </option>
+                );
+              })}
+            </select>
+            <p className="form-hint">
+              {hostId ? (
+                <>💡 用户发言将优先由主持人处理，主持人可在发言中 @ 群成员委派任务或发消息给所有人。</>
+              ) : (
+                <>💡 用户作为群主自主主持，消息自由交流，用户可通过 @ 成员点名智能体针对性回答。</>
+              )}
+            </p>
+          </div>
+
+          <div className="group-modal-footer">
+            <button type="button" className="btn-secondary" onClick={onClose}>
+              取消
+            </button>
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={selectedIds.length === 0 || !name.trim()}
+            >
+              {mode === "create" ? "创建群聊" : "保存修改"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const [conversations, setConversations] =
     useState<ConversationMeta[]>(loadConversationIndex);
@@ -5354,6 +5563,18 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const [queueExpanded, setQueueExpanded] = useState(false);
   const [settings, setSettings] = useState<UserSettings>(loadSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [newChatDropdownOpen, setNewChatDropdownOpen] = useState(false);
+  const [groupModalOpen, setGroupModalOpen] = useState(false);
+  const [groupModalMode, setGroupModalMode] = useState<"create" | "edit">("create");
+  const [groupModalTargetId, setGroupModalTargetId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!newChatDropdownOpen) return;
+    const handleClose = () => setNewChatDropdownOpen(false);
+    window.addEventListener("click", handleClose);
+    return () => window.removeEventListener("click", handleClose);
+  }, [newChatDropdownOpen]);
+
   const updateSettings = (patch: Partial<UserSettings>) => {
     setSettings((current) => {
       const next = { ...current, ...patch };
@@ -5487,9 +5708,11 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
 
   useEffect(() => {
     if (!messages.length) return;
+    const existing = loadConversationData(activeId);
     const title =
-      messages.find((item) => item.role === "user")?.text.slice(0, 32) ||
-      "会话";
+      existing?.isGroup
+        ? (existing.groupConfig?.name || existing.title || "智能体协作讨论群")
+        : messages.find((item) => item.role === "user")?.text.slice(0, 32) || "会话";
     const conversation: Conversation = {
       id: activeId,
       title,
@@ -5497,6 +5720,8 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
       agentId,
       messages,
       queue,
+      isGroup: existing?.isGroup,
+      groupConfig: existing?.groupConfig,
     };
     saveConversationData(conversation);
     setConversations((items) => {
@@ -5506,6 +5731,8 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
         session,
         agentId,
         messageCount: messages.length,
+        isGroup: existing?.isGroup,
+        groupMemberCount: existing?.groupConfig?.members?.length,
       };
       const next = [meta, ...items.filter((item) => item.id !== activeId)].slice(0, 50);
       saveConversationIndex(next);
@@ -5591,6 +5818,95 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     setQueue([]);
     setContent("chat");
     setMobileHistoryOpen(false);
+  };
+  const createGroupConversation = (config: GroupConfig) => {
+    const newId = crypto.randomUUID();
+    const newMeta: ConversationMeta = {
+      id: newId,
+      title: config.name || "智能体协作讨论群",
+      isGroup: true,
+      groupMemberCount: config.members.length,
+    };
+    const hostAgent = config.hostAgentId ? agents.find((a) => a.id === config.hostAgentId) : null;
+    const hostName = hostAgent ? hostAgent.name : "用户自主主持 (群主)";
+    const membersNames = config.members
+      .map((mId) => agents.find((a) => a.id === mId)?.name || mId)
+      .join("、");
+
+    const newConv: Conversation = {
+      id: newId,
+      title: config.name || "智能体协作讨论群",
+      messages: [
+        {
+          role: "assistant",
+          text: `📢 **群聊「${config.name}」已创建**\n\n- **群成员 (${config.members.length}位)**: ${membersNames}\n- **主持人**: ${hostName}\n\n欢迎各位专家进驻讨论，您可以在输入框直接发言，或使用 \`@专家名称\` 点名具体智能体处理！`,
+          isHost: true,
+          senderName: "群系统提示",
+          createdAt: Date.now(),
+        },
+      ],
+      isGroup: true,
+      groupConfig: config,
+    };
+    saveConversationData(newConv);
+    const nextMetas = [newMeta, ...conversations.filter((c) => c.id !== newId)];
+    setConversations(nextMetas);
+    saveConversationIndex(nextMetas);
+    setActiveId(newId);
+    setMessages(newConv.messages);
+    setShowAllMessages(false);
+    setSession(undefined);
+    sessionRef.current = undefined;
+    setAgentId(config.hostAgentId || config.members[0] || "");
+    setInspector(null);
+    setQueue([]);
+    setContent("chat");
+    setMobileHistoryOpen(false);
+    setGroupModalOpen(false);
+  };
+  const updateGroupConfig = (convId: string, patch: Partial<GroupConfig>) => {
+    const conv = loadConversationData(convId);
+    if (!conv) return;
+    const nextConfig: GroupConfig = {
+      name: patch.name || conv.groupConfig?.name || conv.title || "智能体协作讨论群",
+      members: patch.members || conv.groupConfig?.members || [],
+      hostAgentId: patch.hostAgentId !== undefined ? patch.hostAgentId : conv.groupConfig?.hostAgentId,
+    };
+    conv.groupConfig = nextConfig;
+    if (patch.name) {
+      conv.title = patch.name;
+    }
+    saveConversationData(conv);
+    setConversations((prev) => {
+      const next = prev.map((item) => {
+        if (item.id === convId) {
+          return {
+            ...item,
+            title: patch.name || item.title,
+            groupMemberCount: nextConfig.members.length,
+          };
+        }
+        return item;
+      });
+      saveConversationIndex(next);
+      return next;
+    });
+    if (convId === activeId) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text: `⚙️ **群聊设置已更新**：群名更改为「${nextConfig.name}」，当前群成员 ${nextConfig.members.length} 位，主持人：${
+            nextConfig.hostAgentId
+              ? agents.find((a) => a.id === nextConfig.hostAgentId)?.name || nextConfig.hostAgentId
+              : "用户自主主持"
+          }。`,
+          senderName: "群系统提示",
+          createdAt: Date.now(),
+        },
+      ]);
+    }
+    setGroupModalOpen(false);
   };
   const deleteConversation = (id: string) => {
     try {
@@ -5725,11 +6041,225 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     };
   }, [session]);
 
+  const runGroupMessage = async (
+    userText: string,
+    groupCfg: GroupConfig,
+    messageAttachments?: Attachment[],
+  ) => {
+    sendingRef.current = true;
+    setSending(true);
+    setSendingSince(Date.now());
+    setLiveSubagents({});
+    setLiveBlackboardMessages([]);
+
+    const userMsg: ChatMessage = {
+      role: "user",
+      text: userText,
+      attachments: messageAttachments,
+      senderName: groupCfg.hostAgentId ? "我 (群成员)" : "我 (群主 / 主持人)",
+      createdAt: Date.now(),
+    };
+    setMessages((prev) => [...prev, userMsg]);
+
+    let firstSpeakerId: string | undefined;
+    const mentionedMember = groupCfg.members.find((mId) => {
+      const a = agents.find((ag) => ag.id === mId);
+      return a && (userText.includes(`@${a.name}`) || userText.includes(`@${a.id}`));
+    });
+
+    if (mentionedMember) {
+      firstSpeakerId = mentionedMember;
+    } else if (groupCfg.hostAgentId) {
+      firstSpeakerId = groupCfg.hostAgentId;
+    } else {
+      firstSpeakerId = agentId || groupCfg.members[0];
+    }
+
+    const executeSpeaker = async (
+      targetId: string,
+      currentMsgs: ChatMessage[],
+      chainRound: number,
+    ): Promise<void> => {
+      const speakerAgent = agents.find((a) => a.id === targetId);
+      const isHost = targetId === groupCfg.hostAgentId;
+
+      const membersListStr = groupCfg.members
+        .map((mId) => {
+          const a = agents.find((ag) => ag.id === mId);
+          return `- ${a?.name || mId}（ID: ${mId}，专长: ${a?.description || "领域专家"}）`;
+        })
+        .join("\n");
+
+      const cleanHistory = currentMsgs
+        .slice(-14)
+        .map((m) => {
+          const sender =
+            m.role === "user"
+              ? groupCfg.hostAgentId
+                ? "用户"
+                : "群主 (用户)"
+              : m.senderName || "智能体";
+          const clean = m.text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+          return `【${sender}】: ${clean}`;
+        })
+        .join("\n\n");
+
+      const otherMembers = groupCfg.members
+        .filter((mId) => mId !== targetId)
+        .map((mId) => agents.find((ag) => ag.id === mId)?.name || mId);
+      const sampleOther = otherMembers[0] || "其他专家";
+
+      const groupPrompt = `【AIP 国标规范·智能体多方协作群聊】
+你正在参与群聊「${groupCfg.name}」。
+你的身份：${speakerAgent?.name || targetId}（角色：${isHost ? "本群主持人" : "受邀群成员"}）。
+群内所有智能体成员：
+${membersListStr}
+
+【群聊规则与格式】：
+1. 这是一个开放、平等的专业群聊，你正在直接公开发言。
+2. 你的发言必须言简意赅、切中要害。直接给出公开回复，绝对不要包含内部思考草稿（如 <think>）。
+3. 如果你需要让群内某位专家处理具体任务或回答问题，请在发言中明确使用「@专家名称」（例如：@${sampleOther} 请...）。系统将自动触发该专家在群内继续响应。
+4. ${
+        isHost
+          ? "作为主持人，你负责统筹协调。你可以直接解答用户疑问，也可以将任务拆解后艾特对应专家协同，或发消息面向全群总结。"
+          : "作为受邀专家，请针对艾特你的问题或主持人的委派，给出专业解答。"
+      }
+
+【群聊历史公开记录】：
+${cleanHistory}
+
+请作为「${speakerAgent?.name || targetId}」在群聊中发表你的公开回复：`;
+
+      let receivedDelta = false;
+      const abortCtrl = new AbortController();
+      abortControllerRef.current = abortCtrl;
+      currentTaskIdRef.current = null;
+      stopRequestedRef.current = false;
+
+      try {
+        const result = await api.chatStream(
+          groupPrompt,
+          sessionRef.current,
+          targetId,
+          (delta) => {
+            receivedDelta = true;
+            setMessages((items) => {
+              const last = items.at(-1);
+              if (last?.role === "assistant" && last.streaming && last.senderAgentId === targetId) {
+                return [
+                  ...items.slice(0, -1),
+                  { ...last, text: last.text + delta },
+                ];
+              }
+              return [
+                ...items,
+                {
+                  role: "assistant",
+                  text: delta,
+                  streaming: true,
+                  senderAgentId: targetId,
+                  senderName: speakerAgent?.name || targetId,
+                  isHost,
+                  createdAt: Date.now(),
+                },
+              ];
+            });
+          },
+          () => {},
+          abortCtrl.signal,
+          (taskId) => {
+            currentTaskIdRef.current = taskId;
+          },
+          messageAttachments,
+        );
+
+        setSession(result.session_id);
+        sessionRef.current = result.session_id;
+
+        let finalAnswer = result.answer;
+        finalAnswer = finalAnswer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
+        const assistantMsg: ChatMessage = {
+          role: "assistant",
+          text: finalAnswer,
+          result,
+          senderAgentId: targetId,
+          senderName: speakerAgent?.name || targetId,
+          isHost,
+          createdAt: Date.now(),
+        };
+
+        setMessages((items) => {
+          const last = items.at(-1);
+          if (receivedDelta && last?.role === "assistant" && last.streaming) {
+            return [...items.slice(0, -1), assistantMsg];
+          }
+          return [...items, assistantMsg];
+        });
+
+        await onComplete();
+
+        if (chainRound < 2 && !stopRequestedRef.current) {
+          const nextTargetId = groupCfg.members.find((mId) => {
+            if (mId === targetId) return false;
+            const a = agents.find((ag) => ag.id === mId);
+            return a && (finalAnswer.includes(`@${a.name}`) || finalAnswer.includes(`@${a.id}`));
+          });
+          if (nextTargetId) {
+            await executeSpeaker(nextTargetId, [...currentMsgs, assistantMsg], chainRound + 1);
+          }
+        }
+      } catch (reason) {
+        if (
+          stopRequestedRef.current ||
+          (reason instanceof DOMException && reason.name === "AbortError") ||
+          (reason instanceof Error && reason.name === "AbortError")
+        ) {
+          setMessages((items) => {
+            const last = items.at(-1);
+            if (last?.role === "assistant" && last.streaming) {
+              return [
+                ...items.slice(0, -1),
+                { ...last, text: `${last.text}\n\n[发言已由用户终止]` },
+              ];
+            }
+            return [...items, { role: "assistant", text: "[发言已由用户终止]" }];
+          });
+          return;
+        }
+        const errorMsg = reason instanceof Error ? reason.message : "智能体发言失败";
+        setMessages((items) => [
+          ...items,
+          {
+            role: "assistant",
+            text: `⚠️ [${speakerAgent?.name || targetId}] 发言遇到异常: ${errorMsg}`,
+            senderName: speakerAgent?.name || targetId,
+            isHost,
+          },
+        ]);
+      }
+    };
+
+    try {
+      await executeSpeaker(firstSpeakerId, [...messages, userMsg], 0);
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+      setSendingSince(null);
+      abortControllerRef.current = null;
+      currentTaskIdRef.current = null;
+    }
+  };
+
   const runMessage = async (
     message: string,
     taskAgentId: string,
     messageAttachments?: Attachment[],
   ) => {
+    const currentConv = loadConversationData(activeId);
+    if (currentConv?.isGroup && currentConv?.groupConfig) {
+      return await runGroupMessage(message, currentConv.groupConfig, messageAttachments);
+    }
     sendingRef.current = true;
     setSending(true);
     setSendingSince(Date.now());
@@ -6021,20 +6551,96 @@ void runMessage(next.text, next.agentId, next.attachments);
             <X size={16} />
           </button>
         </div>
-        <button className="new-chat" onClick={() => createConversation()}>
-          <CirclePlus size={15} />
-          新会话
-        </button>
+        <div className="new-chat-split-container">
+          <button
+            className="new-chat-main"
+            onClick={() => createConversation()}
+            title="新建普通会话"
+          >
+            <CirclePlus size={15} />
+            <span>新会话</span>
+          </button>
+          <button
+            type="button"
+            className="new-chat-split-trigger"
+            onClick={(e) => {
+              e.stopPropagation();
+              setNewChatDropdownOpen((prev) => !prev);
+            }}
+            title="更多会话类型"
+            aria-label="更多会话类型"
+          >
+            <ChevronDown size={14} />
+          </button>
+          {newChatDropdownOpen && (
+            <div className="new-chat-dropdown-menu">
+              <button
+                type="button"
+                onClick={() => {
+                  setNewChatDropdownOpen(false);
+                  createConversation();
+                }}
+              >
+                <MessageSquareText size={15} />
+                <div>
+                  <strong>普通会话</strong>
+                  <span className="subtext">单智能体独立对话或系统协调</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewChatDropdownOpen(false);
+                  setGroupModalMode("create");
+                  setGroupModalTargetId(null);
+                  setGroupModalOpen(true);
+                }}
+              >
+                <Users size={15} />
+                <div>
+                  <strong>
+                    智能体群聊 <span className="beta-tag">实验性</span>
+                  </strong>
+                  <span className="subtext">类似微信群聊的多方协同研讨</span>
+                </div>
+              </button>
+            </div>
+          )}
+        </div>
         <nav>
           {conversations.map((conversation) => (
             <div
-              className={`history-item ${conversation.id === activeId ? "active" : ""}`}
+              className={`history-item ${conversation.id === activeId ? "active" : ""} ${conversation.isGroup ? "is-group" : ""}`}
               key={conversation.id}
             >
               <button onClick={() => openConversation(conversation)}>
-                <MessageSquareText size={14} />
+                {conversation.isGroup ? (
+                  <Users size={14} className="group-item-icon" />
+                ) : (
+                  <MessageSquareText size={14} />
+                )}
                 <span>{conversation.title}</span>
+                {conversation.isGroup && (
+                  <span className="group-count-badge">
+                    {conversation.groupMemberCount || 0}人
+                  </span>
+                )}
               </button>
+              {conversation.isGroup && (
+                <button
+                  type="button"
+                  className="edit-chat"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setGroupModalMode("edit");
+                    setGroupModalTargetId(conversation.id);
+                    setGroupModalOpen(true);
+                  }}
+                  title="群设置与成员管理"
+                >
+                  <Settings2 size={13} />
+                </button>
+              )}
               <button
                 className="delete-chat"
                 onClick={() => deleteConversation(conversation.id)}
@@ -6176,16 +6782,41 @@ void runMessage(next.text, next.agentId, next.attachments);
                 ).map((message, index) => (
                   <div className={`message ${message.role}`} key={index}>
                     {message.role === "assistant" && (
-                      <div className="assistant-mark">
-                        <Network size={15} />
+                      <div className={`assistant-mark ${message.isHost ? "host" : ""}`}>
+                        {message.isHost ? <span style={{ fontSize: 13 }}>👑</span> : <Network size={15} />}
                       </div>
                     )}
                     <div>
                       <div className="message-header-line">
-                        <span className="message-role">
-                          {message.role === "user"
-                            ? "你"
-                            : message.result?.selected_agent?.name || "AegisMesh"}
+                        <span
+                          className={`message-role ${activeMeta?.isGroup && message.role === "assistant" ? "group-sender" : ""}`}
+                          onClick={() => {
+                            if (activeMeta?.isGroup && message.senderName && message.senderName !== "群系统提示") {
+                              const mention = `@${message.senderName} `;
+                              setInput((prev) => (prev.includes(mention) ? prev : `${mention}${prev}`));
+                              composerTextareaRef.current?.focus();
+                            }
+                          }}
+                          title={activeMeta?.isGroup && message.role === "assistant" ? "点击在输入框 @TA" : undefined}
+                        >
+                          {activeMeta?.isGroup ? (
+                            message.role === "user" ? (
+                              loadConversationData(activeId)?.groupConfig?.hostAgentId ? "我 (群成员)" : "我 (群主 / 主持人)"
+                            ) : (
+                              <>
+                                <strong>{message.senderName || message.result?.selected_agent?.name || "智能体专家"}</strong>
+                                {message.isHost ? (
+                                  <span className="group-role-badge host">👑 主持人</span>
+                                ) : (
+                                  <span className="group-role-badge member">群成员</span>
+                                )}
+                              </>
+                            )
+                          ) : (
+                            message.role === "user"
+                              ? "你"
+                              : message.result?.selected_agent?.name || "AegisMesh"
+                          )}
                         </span>
                         {message.streaming && (
                           <div className="turn-status" role="status" aria-live="polite">
@@ -6467,6 +7098,35 @@ void runMessage(next.text, next.agentId, next.attachments);
                 ))}
               </div>
             )}
+            {activeMeta?.isGroup && loadConversationData(activeId)?.groupConfig && (
+              <div className="group-mention-chips-bar">
+                <span className="mention-bar-title">点名发言:</span>
+                {loadConversationData(activeId)!.groupConfig!.members.map((mId) => {
+                  const a = agents.find((ag) => ag.id === mId);
+                  if (!a) return null;
+                  const isHost = mId === loadConversationData(activeId)!.groupConfig!.hostAgentId;
+                  return (
+                    <button
+                      key={mId}
+                      type="button"
+                      className={`mention-chip-btn ${isHost ? "host" : ""}`}
+                      onClick={() => {
+                        const mentionText = `@${a.name} `;
+                        setInput((prev) => (prev.includes(mentionText) ? prev : `${mentionText}${prev}`));
+                        composerTextareaRef.current?.focus();
+                      }}
+                      title={isHost ? "主持人（点击在输入框 @TA）" : "点击在输入框 @TA"}
+                    >
+                      {isHost && <span className="chip-crown">👑</span>}
+                      <span>@{a.name}</span>
+                    </button>
+                  );
+                })}
+                {!loadConversationData(activeId)!.groupConfig!.hostAgentId && (
+                  <span className="host-self-tip">💡 您当前自主主持，可点击上方 @ 成员点名回答</span>
+                )}
+              </div>
+            )}
             <textarea
               ref={composerTextareaRef}
               value={input}
@@ -6478,11 +7138,15 @@ void runMessage(next.text, next.agentId, next.attachments);
                 }
               }}
               placeholder={
-                sending
-                  ? "继续输入，消息将加入队列"
-                  : attachments.length > 0
-                    ? "输入对已上传材料的研讨或分析指令（可直接回车发送）..."
-                    : "请输入问题"
+                activeMeta?.isGroup
+                  ? loadConversationData(activeId)?.groupConfig?.hostAgentId
+                    ? "向主持人发言（或输入 @点名群成员）..."
+                    : "输入消息，或点击上方 @ 成员点名回答..."
+                  : sending
+                    ? "继续输入，消息将加入队列"
+                    : attachments.length > 0
+                      ? "输入对已上传材料的研讨或分析指令（可直接回车发送）..."
+                      : "请输入问题"
               }
               rows={1}
             />
@@ -6498,16 +7162,55 @@ void runMessage(next.text, next.agentId, next.attachments);
                   {uploading ? <Loader2 size={14} className="spin" /> : <Paperclip size={14} />}
                   <span>{uploading ? "解析中..." : "上传材料"}</span>
                 </button>
-                <Dropdown
-                  className="runtime-mode"
-                  value={agentId}
-                  onChange={handleAgentSelect}
-                  placeholder={agents.length === 0 ? "暂无可用智能体" : "请选择智能体"}
-                  options={agents.map((agent) => ({
-                    value: agent.id,
-                    label: `${agent.name} · ${agent.role === "leader" ? "协调型" : "执行型"}`,
-                  }))}
-                />
+                {activeMeta?.isGroup && loadConversationData(activeId)?.groupConfig ? (
+                  <div className="group-active-strip">
+                    <span className="group-strip-badge">
+                      <Users size={13} />
+                      <b>{loadConversationData(activeId)!.groupConfig!.name || "智能体群聊"}</b>
+                    </span>
+                    <span className="group-strip-members">
+                      {loadConversationData(activeId)!.groupConfig!.members.length} 位专家
+                    </span>
+                    <span className="group-strip-host">
+                      {loadConversationData(activeId)!.groupConfig!.hostAgentId ? (
+                        <>
+                          👑 主持人:{" "}
+                          <strong>
+                            {agents.find(
+                              (a) => a.id === loadConversationData(activeId)!.groupConfig!.hostAgentId,
+                            )?.name || loadConversationData(activeId)!.groupConfig!.hostAgentId}
+                          </strong>
+                        </>
+                      ) : (
+                        <>👑 用户自主主持</>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      className="group-strip-btn"
+                      onClick={() => {
+                        setGroupModalMode("edit");
+                        setGroupModalTargetId(activeId);
+                        setGroupModalOpen(true);
+                      }}
+                      title="群聊设置与成员管理"
+                    >
+                      <Settings2 size={13} />
+                      群管理
+                    </button>
+                  </div>
+                ) : (
+                  <Dropdown
+                    className="runtime-mode"
+                    value={agentId}
+                    onChange={handleAgentSelect}
+                    placeholder={agents.length === 0 ? "暂无可用智能体" : "请选择智能体"}
+                    options={agents.map((agent) => ({
+                      value: agent.id,
+                      label: `${agent.name} · ${agent.role === "leader" ? "协调型" : "执行型"}`,
+                    }))}
+                  />
+                )}
               </div>
               <div className="composer-bottom-right">
                 {settings.showContextMeter && (
@@ -6725,6 +7428,26 @@ void runMessage(next.text, next.agentId, next.attachments);
           }}
         />
       )}
+      <GroupChatModal
+        isOpen={groupModalOpen}
+        mode={groupModalMode}
+        targetConv={
+          groupModalTargetId
+            ? loadConversationData(groupModalTargetId)
+            : activeMeta?.isGroup
+              ? loadConversationData(activeId)
+              : null
+        }
+        agents={agents}
+        onClose={() => setGroupModalOpen(false)}
+        onSubmit={(config) => {
+          if (groupModalMode === "create") {
+            createGroupConversation(config);
+          } else {
+            updateGroupConfig(groupModalTargetId || activeId, config);
+          }
+        }}
+      />
     </div>
   );
 }

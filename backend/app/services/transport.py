@@ -114,7 +114,8 @@ def has_unexecuted_tool_markers(text: str) -> bool:
 def clean_model_output(text: str) -> str:
     if not text:
         return ""
-    cleaned = DSML_MARKER_PATTERN.sub("", text)
+    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
+    cleaned = DSML_MARKER_PATTERN.sub("", cleaned)
     cleaned = re.sub(
         r"</?(?:invoke|parameter|calls|tool_call|function)[^>]*>",
         "",
@@ -123,7 +124,7 @@ def clean_model_output(text: str) -> str:
     )
     cleaned = re.sub(r'name="[^"]*"\s*(?:string="[^"]*")?>', "", cleaned)
     cleaned = re.sub(
-        r'```(?:json)?\s*\{\s*"name"\s*:\s*"(?:dispatch_task|list_agents|check_subagent_status|fetch_session_history|web_search)"[\s\S]*?\}\s*```',
+        r'```(?:json)?\s*\{\s*"name"\s*:\s*"(?:dispatch_task|list_agents|check_subagent_status|fetch_session_history|web_search|run_swarm_discussion|execute_workflow)"[\s\S]*?\}\s*```',
         "",
         cleaned,
     )
