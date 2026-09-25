@@ -28,6 +28,7 @@ import {
   Hash,
   Hourglass,
   Layers,
+  ListPlus,
   LayoutDashboard,
   Lock,
   LogOut,
@@ -4929,7 +4930,7 @@ type WorkflowStep = { step?: number; step_title?: string; agent?: string; result
 type ListEntry =
   | { kind: "contact"; key: string; collab: SubagentCollaboration; timeText: string }
   | { kind: "workflow"; key: string; title: string; steps: WorkflowStep[] }
-  | { kind: "swarm"; key: string; messages: BlackboardMessage[] };
+  | { kind: "swarm"; key: string; messages: BlackboardMessage[]; live?: boolean };
 
 function CollaborationPanel({
   inspector,
@@ -5142,18 +5143,51 @@ function CollaborationPanel({
     }
     // 进行中的实时派发（尚无最终结果）
     pushContacts(runningList);
-    // 当前集群的实时黑板并入最新的集群群组
-    if ((liveBlackboardMessages || []).length > 0) {
-      const lastSwarm = [...entries].reverse().find((e) => e.kind === "swarm");
-      if (lastSwarm && lastSwarm.kind === "swarm") {
-        const merged = [...lastSwarm.messages];
-        for (const m of liveBlackboardMessages) {
-          if (!merged.some((x) => x.id === m.id)) merged.push(m);
+    // 实时群组：正在进行的集群研讨与串行工作流置顶展示
+    const discussionLive = (liveBlackboardMessages || []).filter(
+      (m) => m.type === "chat" || m.type === "broadcast",
+    );
+    if (discussionLive.length > 0) {
+      let lastSwarmIdx = -1;
+      for (let i = entries.length - 1; i >= 0; i -= 1) {
+        if (entries[i].kind === "swarm") {
+          lastSwarmIdx = i;
+          break;
         }
-        lastSwarm.messages = merged;
-      } else {
-        entries.push({ kind: "swarm", key: "swarm-live", messages: [...liveBlackboardMessages] });
       }
+      if (lastSwarmIdx >= 0) {
+        const lastSwarm = entries[lastSwarmIdx];
+        if (lastSwarm.kind === "swarm") {
+          const merged = [...lastSwarm.messages];
+          for (const m of discussionLive) {
+            if (!merged.some((x) => x.id === m.id)) merged.push(m);
+          }
+          entries[lastSwarmIdx] = { ...lastSwarm, messages: merged };
+        }
+      } else {
+        entries.unshift({
+          kind: "swarm",
+          key: "swarm-live",
+          messages: discussionLive,
+          live: true,
+        });
+      }
+    }
+    const liveWorkflowTasks = runningList.filter(
+      (r) => r.task?.includes("【本阶段目标") || r.task?.includes("【承接前序"),
+    );
+    if (liveWorkflowTasks.length > 0) {
+      entries.unshift({
+        kind: "workflow",
+        key: `wf-live-${liveWorkflowTasks[0].task_id || liveWorkflowTasks[0].agent_id || "live"}`,
+        title: "串行工作流（进行中）",
+        steps: liveWorkflowTasks.map((r, i) => ({
+          step: i + 1,
+          step_title: r.phase_name || r.task?.slice(0, 40) || `阶段 ${i + 1}`,
+          agent: r.agent_name || r.agent_id,
+          result: r.status === "completed" ? r.result : undefined,
+        })),
+      });
     }
     return entries;
   }, [inspector, messages, isTurnScope, runningList, liveBlackboardMessages]);
@@ -6170,15 +6204,6 @@ void runMessage(next.text, next.agentId, next.attachments);
                                 <TurnClock start={sendingSince} />
                               </>
                             )}
-                            <button
-                              type="button"
-                              className="turn-stop-inline-btn"
-                              onClick={handleStopTask}
-                              title="终止当前任务"
-                            >
-                              <Square size={10} fill="currentColor" />
-                              <span>停止</span>
-                            </button>
                           </div>
                         )}
                       </div>
@@ -6325,15 +6350,6 @@ void runMessage(next.text, next.agentId, next.attachments);
                           <TurnClock start={sendingSince} />
                         </>
                       )}
-                      <button
-                        type="button"
-                        className="turn-stop-inline-btn"
-                        onClick={handleStopTask}
-                        title="终止当前任务"
-                      >
-                        <Square size={10} fill="currentColor" />
-                        <span>停止</span>
-                      </button>
                     </div>
                   </div>
                   {Object.values(liveSubagents)
@@ -6551,37 +6567,14 @@ void runMessage(next.text, next.agentId, next.attachments);
                   </div>
                 )}
                 {sending ? (
-                  <div className="stop-button-group">
-                    {input.trim() && (
-                      <button
-                        type="submit"
-                        className="queue-add-button"
-                        title="加入发送队列"
-                      >
-                        <Send size={13} />
-                        <span>入列</span>
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="stop-button"
-                      onClick={handleStopTask}
-                      title="停止当前任务"
-                    >
-                      <Square size={12} fill="currentColor" />
-                      <span>停止</span>
-                    </button>
-                    {queue.length > 0 && (
-                      <button
-                        type="button"
-                        className="stop-all-button"
-                        onClick={handleStopAll}
-                        title="停止当前任务并清空队列"
-                      >
-                        <span>停止全部 ({queue.length})</span>
-                      </button>
-                    )}
-                  </div>
+                  <button
+                    type="submit"
+                    className="send-button queue-add-button"
+                    disabled={!input.trim() && attachments.length === 0}
+                    title="加入队列"
+                  >
+                    <ListPlus size={16} />
+                  </button>
                 ) : (
                   <button
                     type="submit"

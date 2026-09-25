@@ -1585,11 +1585,21 @@ class ReliableOrchestrator:
                             "wait": True,
                         })
                         if disp_res.get("ok"):
+                            statement = disp_res.get("result", "")
                             speeches.append({
                                 "round": r + 1,
                                 "agent": p,
-                                "statement": disp_res.get("result", ""),
+                                "statement": statement,
                             })
+                            if shared_context is not None and statement:
+                                shared_context.add_blackboard_message(
+                                    sender_id=str(p),
+                                    sender_name=str(p),
+                                    content=str(statement)[:2000],
+                                    role="expert",
+                                    msg_type="chat",
+                                    nickname=f"@{str(p).replace('智能体', '').strip() or p}专家",
+                                )
 
                 return {
                     "ok": True,
