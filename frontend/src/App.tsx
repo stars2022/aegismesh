@@ -4036,7 +4036,7 @@ type ChatMessage = {
   attachments?: Attachment[];
   feedback?: "positive" | "negative";
 };
-type QueuedTask = { id: string; text: string; agentId: string; attachments?: Attachment[]; collabStyle?: string };
+type QueuedTask = { id: string; text: string; agentId: string; attachments?: Attachment[] };
 type Conversation = {
   id: string;
   title: string;
@@ -4648,6 +4648,130 @@ function SubagentConversationView({
   );
 }
 
+function WorkflowGroupView({
+  entry,
+  onBack,
+}: {
+  entry: { title: string; steps: WorkflowStep[] };
+  onBack: () => void;
+}) {
+  return (
+    <div className="subagent-dialogue-pane">
+      <div className="subagent-dialogue-header">
+        <button type="button" className="subagent-back-btn" onClick={onBack}>
+          <ArrowLeft size={13} />
+          <span>返回会话列表</span>
+        </button>
+        <div className="subagent-header-identity">
+          <div className="collab-bot-avatar" style={{ background: "rgba(99, 102, 241, 0.12)", color: "#4f46e5" }}>
+            <GitBranch size={15} />
+          </div>
+          <div className="collab-name-box">
+            <strong>{entry.title}</strong>
+            <code>串行工作流 · 共 {entry.steps.length} 棒</code>
+          </div>
+        </div>
+      </div>
+      <div className="subagent-dialogue-messages">
+        {entry.steps.map((step, idx) => (
+          <div key={idx} className="subagent-msg-bubble user-task" style={{ background: "var(--paper)" }}>
+            <div className="subagent-msg-role" style={{ display: "flex", justifyContent: "space-between", width: "100%" }}>
+              <span>第 {step.step || idx + 1} 棒 · {step.step_title || `阶段 ${idx + 1}`}</span>
+              <span style={{ fontSize: 11, opacity: 0.8 }}>{step.agent || ""}</span>
+            </div>
+            <div className="subagent-task-content">
+              <p>{step.result || "（未回传内容）"}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SwarmGroupView({
+  entry,
+  onBack,
+}: {
+  entry: { messages: BlackboardMessage[] };
+  onBack: () => void;
+}) {
+  const members = new Map<string, string>();
+  for (const msg of entry.messages) {
+    if (!members.has(msg.sender_id)) {
+      members.set(msg.sender_id, msg.nickname || `@${(msg.sender_name || msg.sender_id).replace("智能体", "").trim()}专家`);
+    }
+  }
+  return (
+    <div className="subagent-dialogue-pane">
+      <div className="subagent-dialogue-header">
+        <button type="button" className="subagent-back-btn" onClick={onBack}>
+          <ArrowLeft size={13} />
+          <span>返回会话列表</span>
+        </button>
+        <div className="subagent-header-identity">
+          <div className="collab-bot-avatar" style={{ background: "rgba(99, 102, 241, 0.12)", color: "#4f46e5" }}>
+            <Users size={15} />
+          </div>
+          <div className="collab-name-box">
+            <strong>集群群聊黑板</strong>
+            <code>{entry.messages.length} 条发言 · {members.size} 位成员</code>
+          </div>
+        </div>
+        <div className="collab-swarm-members">
+          {[...members.entries()].map(([id, nickname]) => (
+            <div key={id} className="collab-swarm-member-chip">
+              <span>{nickname}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="subagent-dialogue-messages">
+        {entry.messages.map((msg, idx) => {
+          const isLeader = msg.role === "leader" || msg.sender_id === "leader";
+          const palette = getSubagentPalette(idx, msg.sender_id || msg.sender_name);
+          const Icon = isLeader ? Bot : palette.icon;
+          const timeStr = msg.timestamp
+            ? new Date(msg.timestamp * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+            : "";
+          return (
+            <div key={msg.id || `msg-${idx}`} className="collab-chat-msg">
+              <div
+                className="collab-chat-avatar"
+                style={{
+                  backgroundColor: isLeader ? "rgba(99, 102, 241, 0.12)" : palette.bg,
+                  color: isLeader ? "#4f46e5" : palette.color,
+                }}
+              >
+                <Icon size={14} />
+              </div>
+              <div className="collab-chat-main">
+                <div className="collab-chat-header">
+                  <span className="collab-chat-nickname">{msg.nickname}</span>
+                  <span className={`collab-chat-role-badge ${isLeader ? "leader" : ""}`}>
+                    {isLeader ? "主控协调" : "领域专家"}
+                  </span>
+                  <span className={`collab-chat-type-badge ${msg.type || "chat"}`}>
+                    {msg.type === "dispatch"
+                      ? "任务派发"
+                      : msg.type === "report"
+                        ? "成果汇报"
+                        : msg.type === "error"
+                          ? "异常警报"
+                          : "集群广播"}
+                  </span>
+                  {timeStr && <span className="collab-chat-time">{timeStr}</span>}
+                </div>
+                <div className="collab-chat-bubble">{msg.content}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function dedupeCollabList(list: SubagentCollaboration[]): SubagentCollaboration[] {
   const result: SubagentCollaboration[] = [];
   for (const item of list) {
@@ -4800,6 +4924,13 @@ function extractResultCollabs(res: ChatResult | null | undefined): SubagentColla
   return dedupeCollabList(items);
 }
 
+type WorkflowStep = { step?: number; step_title?: string; agent?: string; result?: string };
+
+type ListEntry =
+  | { kind: "contact"; key: string; collab: SubagentCollaboration; timeText: string }
+  | { kind: "workflow"; key: string; title: string; steps: WorkflowStep[] }
+  | { kind: "swarm"; key: string; messages: BlackboardMessage[] };
+
 function CollaborationPanel({
   inspector,
   messages = [],
@@ -4813,17 +4944,7 @@ function CollaborationPanel({
   liveBlackboardMessages?: BlackboardMessage[];
   toolNames?: Record<string, string>;
 }) {
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [selectedCollabSnapshot, setSelectedCollabSnapshot] =
-    useState<SubagentCollaboration | null>(null);
   const [scope, setScope] = useState<"turn" | "all">("turn");
-  const [collabMode, setCollabMode] = useState<"parallel" | "workflow" | "swarm">("parallel");
-  const [expandedChatResults, setExpandedChatResults] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    setSelectedKey(null);
-    setSelectedCollabSnapshot(null);
-  }, [inspector]);
 
   const { turnRunning, turnCompleted, allRunning, allCompleted } = useMemo(() => {
     const liveRunning: SubagentCollaboration[] = liveSubagents
@@ -4945,92 +5066,115 @@ function CollaborationPanel({
   const totalCount = runningList.length + completedList.length;
 
   // Workflow pipeline ordered list
-  const workflowList = useMemo(() => {
-    const list = isTurnScope
-      ? [...turnCompleted, ...turnRunning]
-      : [...allCompleted, ...allRunning];
-    return list.slice().sort((a, b) => {
-      const aTime = a.started_at || 0;
-      const bTime = b.started_at || 0;
-      return aTime - bTime;
-    });
-  }, [isTurnScope, turnCompleted, turnRunning, allCompleted, allRunning]);
+  // ===== 微信式统一入口列表 =====
+  // 联系人：独立派发的智能体（并行分工，发了几个就是几个）
+  // 群组：串行工作流（每个任务一个入口）、集群群聊黑板（每次研讨一个入口）
+  const [selectedEntry, setSelectedEntry] = useState<ListEntry | null>(null);
+  useEffect(() => {
+    setSelectedEntry(null);
+  }, [inspector]);
 
-  // Swarm / Group Chat Blackboard Messages
-  const swarmMessages = useMemo(() => {
-    const fromInspector = inspector?.result_data?.shared_context?.blackboard_messages || [];
-    const fromHistory: BlackboardMessage[] = [];
+  const listEntries = useMemo<ListEntry[]>(() => {
+    const results: ChatResult[] = [];
+    const seenInv = new Set<string>();
     if (!isTurnScope) {
       for (const m of messages) {
-        const bb = m.result?.result_data?.shared_context?.blackboard_messages;
-        if (bb && Array.isArray(bb)) {
-          fromHistory.push(...bb);
+        if (m.result && !seenInv.has(m.result.invocation_id)) {
+          seenInv.add(m.result.invocation_id);
+          results.push(m.result);
         }
       }
     }
-    const combined = [...fromHistory, ...fromInspector, ...(liveBlackboardMessages || [])];
-    const seen = new Set<string>();
-    const deduped: BlackboardMessage[] = [];
-    for (const msg of combined) {
-      const key = msg.id || `${msg.sender_id}-${msg.content}-${msg.timestamp}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        deduped.push(msg);
-      }
+    if (inspector && !seenInv.has(inspector.invocation_id)) {
+      seenInv.add(inspector.invocation_id);
+      results.push(inspector);
     }
 
-    return deduped;
-  }, [inspector, messages, liveBlackboardMessages, isTurnScope]);
+    const entries: ListEntry[] = [];
+    const contactSeen = new Set<string>();
+    const isGroupInternalTask = (task: string) =>
+      task.includes("群聊黑板") || task.includes("【承接前序") || task.includes("【本阶段目标");
 
-  // 集群成员仅来自真实黑板消息的发言者
-  const swarmMembers = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; nickname: string; role: string }>();
-    for (const msg of swarmMessages) {
-      if (!map.has(msg.sender_id)) {
-        map.set(msg.sender_id, {
-          id: msg.sender_id,
-          name: msg.sender_name || msg.sender_id,
-          nickname: msg.nickname || `@${(msg.sender_name || msg.sender_id).replace("智能体", "").trim()}专家`,
-          role: msg.role || "expert",
+    const pushContacts = (collabs: SubagentCollaboration[]) => {
+      for (const c of collabs) {
+        const taskText = c.task || "";
+        if (isGroupInternalTask(taskText)) continue;
+        const key = c.task_id || `${c.agent_id}-${c.task}`;
+        if (contactSeen.has(key)) continue;
+        contactSeen.add(key);
+        entries.push({
+          kind: "contact",
+          key,
+          collab: c,
+          timeText: formatSubagentTime(
+            c.started_at,
+            c.completed_at,
+            c.latency_ms || (c.elapsed_seconds ? c.elapsed_seconds * 1000 : undefined),
+          ),
         });
       }
+    };
+
+    for (const res of results) {
+      const rd = res.result_data;
+      // 集群群组：真实黑板消息
+      const bb = rd?.shared_context?.blackboard_messages || [];
+      if (bb.length > 0) {
+        entries.push({ kind: "swarm", key: `swarm-${res.invocation_id}`, messages: [...bb] });
+      }
+      // 串行群组：execute_workflow 工具调用
+      for (const t of rd?.tool_executions || []) {
+        if (t.name !== "execute_workflow") continue;
+        const raw = typeof t.output === "string"
+          ? (() => { try { return JSON.parse(t.output as string); } catch { return {}; } })()
+          : (t.output || {});
+        const out = raw as Record<string, any>;
+        if (out?.ok && Array.isArray(out.steps) && out.steps.length) {
+          entries.push({
+            kind: "workflow",
+            key: `wf-${res.invocation_id}-${entries.length}`,
+            title: String(out.workflow_title || "串行工作流"),
+            steps: out.steps as WorkflowStep[],
+          });
+        }
+      }
+      pushContacts(dedupeCollabList(extractResultCollabs(res)));
     }
-    return Array.from(map.values());
-  }, [swarmMessages]);
+    // 进行中的实时派发（尚无最终结果）
+    pushContacts(runningList);
+    // 当前集群的实时黑板并入最新的集群群组
+    if ((liveBlackboardMessages || []).length > 0) {
+      const lastSwarm = [...entries].reverse().find((e) => e.kind === "swarm");
+      if (lastSwarm && lastSwarm.kind === "swarm") {
+        const merged = [...lastSwarm.messages];
+        for (const m of liveBlackboardMessages) {
+          if (!merged.some((x) => x.id === m.id)) merged.push(m);
+        }
+        lastSwarm.messages = merged;
+      } else {
+        entries.push({ kind: "swarm", key: "swarm-live", messages: [...liveBlackboardMessages] });
+      }
+    }
+    return entries;
+  }, [inspector, messages, isTurnScope, runningList, liveBlackboardMessages]);
 
-  const onSelectCollab = (item: SubagentCollaboration) => {
-    const key = item.task_id || `${item.agent_id}-${item.task}`;
-    setSelectedKey(key);
-    setSelectedCollabSnapshot(item);
-  };
-
-  const activeCollab = useMemo(() => {
-    if (!selectedKey) return null;
-    const foundRunning = runningList.find(
-      (r) => (r.task_id && r.task_id === selectedKey) || `${r.agent_id}-${r.task}` === selectedKey,
-    );
-    if (foundRunning) return foundRunning;
-    const foundCompleted = completedList.find(
-      (c) => (c.task_id && c.task_id === selectedKey) || `${c.agent_id}-${c.task}` === selectedKey,
-    );
-    if (foundCompleted) return foundCompleted;
-    return selectedCollabSnapshot;
-  }, [selectedKey, runningList, completedList, selectedCollabSnapshot]);
-
-  if (activeCollab) {
+  if (selectedEntry) {
+    if (selectedEntry.kind === "workflow") {
+      return <WorkflowGroupView entry={selectedEntry} onBack={() => setSelectedEntry(null)} />;
+    }
+    if (selectedEntry.kind === "swarm") {
+      return <SwarmGroupView entry={selectedEntry} onBack={() => setSelectedEntry(null)} />;
+    }
     return (
       <SubagentConversationView
-        collab={activeCollab}
-        onBack={() => {
-          setSelectedKey(null);
-          setSelectedCollabSnapshot(null);
-        }}
+        collab={selectedEntry.collab}
+        onBack={() => setSelectedEntry(null)}
         toolNames={toolNames}
       />
     );
   }
 
-  if (totalCount === 0) {
+  if (listEntries.length === 0) {
     return (
       <div className="collab-empty">
         <Bot size={28} className="empty-icon" />
@@ -5045,7 +5189,7 @@ function CollaborationPanel({
       {/* Overview Top Bar */}
       <div className="collab-overview-bar">
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span>协同智能体 ({totalCount})</span>
+          <span>协同会话 ({listEntries.length})</span>
           {hasMultipleTurns && (
             <div className="collab-scope-switch">
               <button
@@ -5069,364 +5213,72 @@ function CollaborationPanel({
         </div>
       </div>
 
-      {/* Three Modes Switcher */}
-      <div className="collab-mode-tabs">
-        <button
-          type="button"
-          className={`collab-mode-tab ${collabMode === "parallel" ? "active" : ""}`}
-          onClick={() => setCollabMode("parallel")}
-          title="并行分工模式：各子智能体独立并发推进并回传成果"
-        >
-          <Layers size={13} />
-          <span>并行分工</span>
-        </button>
-        <button
-          type="button"
-          className={`collab-mode-tab ${collabMode === "workflow" ? "active" : ""}`}
-          onClick={() => setCollabMode("workflow")}
-          title="串行工作流模式：智能体链路串接，点击展开各棒次输入输出"
-        >
-          <GitBranch size={13} />
-          <span>串行工作流</span>
-        </button>
-        <button
-          type="button"
-          className={`collab-mode-tab ${collabMode === "swarm" ? "active" : ""}`}
-          onClick={() => setCollabMode("swarm")}
-          title="智能体集群模式：群聊黑板实时交流、广播与协作"
-        >
-          <MessageSquareText size={13} />
-          <span>智能体集群</span>
-        </button>
-      </div>
-
-      {/* Mode 1: 并行分工 (Parallel Mode) */}
-      {collabMode === "parallel" && (
-        <>
-          <div className="collab-concise-section">
-            <div className="collab-concise-heading">
-              <span>已开启 · {runningList.length}</span>
-            </div>
-            {runningList.length === 0 ? (
-              <div className="collab-concise-empty">没有已开启的子代理</div>
-            ) : (
-              <div className="collab-concise-list">
-                {runningList.map((item, idx) => {
-                  const palette = getSubagentPalette(idx, item.agent_id || item.agent_name);
-                  const Icon = palette.icon;
-                  const toolLabel = item.current_tool
-                    ? (toolNames[item.current_tool] || item.current_tool)
-                    : item.tools?.length
-                      ? (toolNames[item.tools[item.tools.length - 1].name] || item.tools[item.tools.length - 1].name)
-                      : null;
-                  return (
-                    <button
-                      type="button"
-                      key={item.task_id || `${item.agent_id}-${idx}`}
-                      className="collab-concise-item running"
-                      onClick={() => onSelectCollab(item)}
-                    >
-                      <div
-                        className="collab-concise-icon"
-                        style={{ color: palette.color, backgroundColor: palette.bg }}
-                      >
-                        <Icon size={16} />
-                      </div>
-                      <div className="collab-concise-meta">
-                        <span className="collab-concise-title">{item.agent_name || item.task}</span>
-                      </div>
-                      <div className="collab-concise-right">
-                        <span className="collab-live-tag">
-                          <span className="pulse" />
-                          {toolLabel ? `调用${toolLabel}` : "进行中"}
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <div className="collab-concise-section">
-            <div className="collab-concise-heading">
-              <span>完成 · {completedList.length}</span>
-            </div>
-            {completedList.length === 0 ? (
-              <div className="collab-concise-empty">暂无已完成的子代理</div>
-            ) : (
-              <div className="collab-concise-list">
-                {completedList.map((item, idx) => {
-                  const palette = getSubagentPalette(idx + runningList.length, item.agent_id || item.agent_name);
-                  const Icon = palette.icon;
-                  const timeText = formatSubagentTime(
-                    item.started_at,
-                    item.completed_at,
-                    item.latency_ms || (item.elapsed_seconds ? item.elapsed_seconds * 1000 : undefined),
-                  );
-                  return (
-                    <button
-                      type="button"
-                      key={item.task_id || `${item.agent_id}-${idx}`}
-                      className="collab-concise-item"
-                      onClick={() => onSelectCollab(item)}
-                    >
-                      <div
-                        className="collab-concise-icon"
-                        style={{ color: palette.color, backgroundColor: palette.bg }}
-                      >
-                        <Icon size={16} />
-                      </div>
-                      <div className="collab-concise-meta">
-                        <span className="collab-concise-title">{item.agent_name || item.task}</span>
-                      </div>
-                      <div className="collab-concise-right">
-                        {item.status === "failed" ? (
-                          <span className="status-pill failed" style={{ fontSize: 10, padding: "1px 6px" }}>
-                            <span className="pill-dot failed" />
-                            失败
-                          </span>
-                        ) : (
-                          <span className="collab-concise-time">{timeText}</span>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
-      {/* Mode 2: 串行工作流 (Workflow Mode) */}
-      {collabMode === "workflow" && (
-        <div className="collab-workflow-container">
-          <div className="collab-workflow-toolbar">
-            <span className="collab-workflow-summary-text">
-              串行工作流链路 · 共 {workflowList.length} 棒次
-            </span>
-          </div>
-          {workflowList.map((item, idx) => {
-            const stepKey = item.task_id || `${item.agent_id}-${idx}`;
-            const palette = getSubagentPalette(idx, item.agent_id || item.agent_name);
-            const Icon = palette.icon;
-            const timeText = formatSubagentTime(
-              item.started_at,
-              item.completed_at,
-              item.latency_ms || (item.elapsed_seconds ? item.elapsed_seconds * 1000 : undefined),
-            );
-            const expertNick = `@${(item.agent_name || item.agent_id).replace("智能体", "").trim() || "领域"}专家`;
-
+      <div className="collab-workflow-container">
+        {listEntries.map((entry, idx) => {
+          const palette = getSubagentPalette(idx, entry.kind === "contact" ? entry.collab.agent_id || entry.collab.agent_name : entry.key);
+          const Icon = palette.icon;
+          if (entry.kind === "workflow") {
+            const lastStep = entry.steps[entry.steps.length - 1];
             return (
-              <div key={stepKey} className="collab-workflow-step">
-                {idx > 0 && (
-                  <div className="collab-workflow-connector">
-                    <div className="collab-workflow-connector-line" />
-                    <span className="collab-workflow-connector-tag">
-                      第 {idx} 棒 ➔ 第 {idx + 1} 棒 接力承接
-                    </span>
-                    <div className="collab-workflow-connector-line" />
-                  </div>
-                )}
-                <div className={`collab-workflow-card ${item.status === "running" ? "running" : ""}`}>
-                  <div
-                    className="collab-workflow-header"
-                    onClick={() => onSelectCollab(item)}
-                    role="button"
-                    tabIndex={0}
-                  >
-                    <span className="collab-workflow-badge">第 {idx + 1} 棒</span>
-                    <div
-                      className="collab-concise-icon"
-                      style={{ color: palette.color, backgroundColor: palette.bg }}
-                    >
-                      <Icon size={16} />
-                    </div>
-                    <div className="collab-workflow-header-info">
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <span className="collab-workflow-name">{item.agent_name || item.task}</span>
-                        <span style={{ fontSize: 11, color: palette.color, fontWeight: 500 }}>
-                          {expertNick}
-                        </span>
-                      </div>
-                      <span className="collab-workflow-task-preview">{item.task}</span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                      {item.status === "running" ? (
-                        <span className="collab-live-tag">
-                          <span className="pulse" />
-                          进行中
-                        </span>
-                      ) : item.status === "failed" ? (
-                        <span className="status-pill failed" style={{ fontSize: 10, padding: "1px 6px" }}>
-                          失败
-                        </span>
-                      ) : (
-                        <span className="collab-concise-time">{timeText}</span>
-                      )}
-                    </div>
-                  </div>
-
+              <button key={entry.key} type="button" className="collab-entry-row" onClick={() => setSelectedEntry(entry)}>
+                <div className="collab-concise-icon" style={{ color: palette.color, backgroundColor: palette.bg }}>
+                  <GitBranch size={16} />
                 </div>
-              </div>
+                <div className="collab-entry-main">
+                  <div className="collab-entry-top">
+                    <strong>{entry.title}</strong>
+                    <span className="collab-entry-tag">串行工作流</span>
+                  </div>
+                  <span className="collab-entry-preview">
+                    {entry.steps.length} 棒 · 最新：{lastStep?.agent || "—"} · {lastStep?.step_title || ""}
+                  </span>
+                </div>
+                <ChevronRight size={15} color="var(--muted)" />
+              </button>
             );
-          })}
-        </div>
-      )}
-
-      {/* Mode 3: 智能体集群 (Swarm / Group Chat Blackboard Mode) */}
-      {collabMode === "swarm" && (
-        <div className="collab-swarm-container">
-          {/* Swarm Banner & Active Members */}
-          <div className="collab-swarm-banner">
-            <div className="collab-swarm-banner-title">
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <Users size={14} color="#6366f1" />
-                <span>协同集群群聊黑板 · 实时交流</span>
-              </div>
-              <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                {swarmMessages.length} 条广播 · {completedList.length} 项成果沉淀
-              </span>
-            </div>
-            <div className="collab-swarm-members">
-              {swarmMembers.map((m, midx) => {
-                const palette = getSubagentPalette(midx, m.id || m.name);
-                const Icon = palette.icon;
-                return (
-                  <div key={m.id} className="collab-swarm-member-chip">
-                    <div
-                      style={{
-                        width: 14,
-                        height: 14,
-                        borderRadius: 3,
-                        display: "grid",
-                        placeItems: "center",
-                        backgroundColor: palette.bg,
-                        color: palette.color,
-                      }}
-                    >
-                      <Icon size={10} />
-                    </div>
-                    <span>{m.nickname}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Group Chat Messages List */}
-          <div className="collab-swarm-chat-list">
-            {swarmMessages.length === 0 && (
-              <div className="collab-empty">
-                <Bot size={28} className="empty-icon" />
-                <p>本次运行没有集群黑板消息</p>
-                <span>发送任务时选择「集群群聊」协作方式，主智能体将通过 run_swarm_discussion 组织多方在黑板上研讨</span>
-              </div>
-            )}
-            {swarmMessages.map((msg, idx) => {
-              const isLeader = msg.role === "leader" || msg.sender_id === "leader";
-              const palette = getSubagentPalette(idx, msg.sender_id || msg.sender_name);
-              const Icon = isLeader ? Bot : palette.icon;
-              const timeStr = msg.timestamp
-                ? new Date(msg.timestamp * 1000).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit",
-                  })
-                : "";
-              const msgKey = msg.id || `msg-${idx}`;
-              const isFullResultExpanded = expandedChatResults.has(msgKey);
-              const hasFullResult = Boolean(
-                msg.metadata?.full_result && typeof msg.metadata.full_result === "string",
-              );
-
-              return (
-                <div key={msgKey} className="collab-chat-msg">
-                  <div
-                    className="collab-chat-avatar"
-                    style={{
-                      backgroundColor: isLeader ? "rgba(99, 102, 241, 0.12)" : palette.bg,
-                      color: isLeader ? "#4f46e5" : palette.color,
-                    }}
-                  >
-                    <Icon size={14} />
-                  </div>
-                  <div className="collab-chat-main">
-                    <div className="collab-chat-header">
-                      <span className="collab-chat-nickname">{msg.nickname}</span>
-                      <span className={`collab-chat-role-badge ${isLeader ? "leader" : ""}`}>
-                        {isLeader ? "主控协调" : "领域专家"}
-                      </span>
-                      <span className={`collab-chat-type-badge ${msg.type || "chat"}`}>
-                        {msg.type === "dispatch"
-                          ? "任务派发"
-                          : msg.type === "report"
-                            ? "成果汇报"
-                            : msg.type === "error"
-                              ? "异常警报"
-                              : "集群广播"}
-                      </span>
-                      {timeStr && <span className="collab-chat-time">{timeStr}</span>}
-                    </div>
-                    <div className={`collab-chat-bubble ${msg.type || "chat"}`}>
-                      <div>{msg.content}</div>
-                      {hasFullResult && (
-                        <div style={{ marginTop: 6, borderTop: "1px dashed var(--line)", paddingTop: 6 }}>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setExpandedChatResults((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(msgKey)) next.delete(msgKey);
-                                else next.add(msgKey);
-                                return next;
-                              });
-                            }}
-                            style={{
-                              background: "transparent",
-                              border: "none",
-                              color: "var(--accent)",
-                              fontSize: 11,
-                              cursor: "pointer",
-                              padding: 0,
-                              display: "inline-flex",
-                              alignItems: "center",
-                              gap: 4,
-                              fontWeight: 500,
-                            }}
-                          >
-                            {isFullResultExpanded ? "收起完整成果" : "展开完整交付成果"}
-                            {isFullResultExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                          </button>
-                          {isFullResultExpanded && (
-                            <div
-                              style={{
-                                marginTop: 6,
-                                padding: 8,
-                                background: "var(--paper)",
-                                borderRadius: 6,
-                                border: "1px solid var(--line)",
-                                fontSize: 11.5,
-                                lineHeight: 1.45,
-                                whiteSpace: "pre-wrap",
-                                maxHeight: 200,
-                                overflowY: "auto",
-                              }}
-                            >
-                              {String(msg.metadata?.full_result)}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+          }
+          if (entry.kind === "swarm") {
+            const members = new Set(entry.messages.map((m) => m.nickname || m.sender_name || m.sender_id));
+            return (
+              <button key={entry.key} type="button" className="collab-entry-row" onClick={() => setSelectedEntry(entry)}>
+                <div className="collab-concise-icon" style={{ color: palette.color, backgroundColor: palette.bg }}>
+                  <Users size={16} />
                 </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+                <div className="collab-entry-main">
+                  <div className="collab-entry-top">
+                    <strong>集群群聊黑板</strong>
+                    <span className="collab-entry-tag swarm">集群群聊</span>
+                  </div>
+                  <span className="collab-entry-preview">
+                    {entry.messages.length} 条发言 · {members.size} 位成员 · {entry.messages.at(-1)?.content?.slice(0, 30) || ""}
+                  </span>
+                </div>
+                <ChevronRight size={15} color="var(--muted)" />
+              </button>
+            );
+          }
+          const c = entry.collab;
+          return (
+            <button key={entry.key} type="button" className="collab-entry-row" onClick={() => setSelectedEntry(entry)}>
+              <div className="collab-concise-icon" style={{ color: palette.color, backgroundColor: palette.bg }}>
+                <Icon size={16} />
+              </div>
+              <div className="collab-entry-main">
+                <div className="collab-entry-top">
+                  <strong>{c.agent_name || c.agent_id}</strong>
+                  {c.status === "running" ? (
+                    <span className="collab-live-tag"><span className="pulse" />进行中</span>
+                  ) : (
+                    <span className="collab-entry-time">{entry.timeText}</span>
+                  )}
+                </div>
+                <span className="collab-entry-preview">{c.task}</span>
+              </div>
+              <ChevronRight size={15} color="var(--muted)" />
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -5449,12 +5301,6 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const [feedbackBusy, setFeedbackBusy] = useState("");
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentId, setAgentId] = useState(initialActive?.agentId || activeMeta?.agentId || "");
-  const [collabStyle, setCollabStyle] = useState("auto");
-  const collabStyleRef = useRef("auto");
-  const setCollabStyleTracked = (value: string) => {
-    collabStyleRef.current = value;
-    setCollabStyle(value);
-  };
   const [pendingAgentSwitch, setPendingAgentSwitch] = useState<{
     targetId: string;
     targetName: string;
@@ -5902,7 +5748,6 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
           currentTaskIdRef.current = taskId;
         },
         messageAttachments,
-        collabStyleRef.current,
       );
       setSession(result.session_id);
       sessionRef.current = result.session_id;
@@ -5971,9 +5816,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
         const next = queueRef.current[0];
         if (next) {
           setQueue(queueRef.current.slice(1));
-          collabStyleRef.current = next.collabStyle || "auto";
-          setCollabStyle(next.collabStyle || "auto");
-          void runMessage(next.text, next.agentId, next.attachments);
+void runMessage(next.text, next.agentId, next.attachments);
         }
       }
     }
@@ -6021,7 +5864,6 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
           text: finalMsg,
           agentId,
           attachments: currentAttachments,
-          collabStyle: collabStyleRef.current,
         },
       ]);
       return;
@@ -6649,19 +6491,6 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
                     value: agent.id,
                     label: `${agent.name} · ${agent.role === "leader" ? "协调型" : "执行型"}`,
                   }))}
-                />
-                <Dropdown
-                  className="runtime-mode collab-style-mode"
-                  value={collabStyle}
-                  onChange={setCollabStyleTracked}
-                  placeholder="协作方式"
-                  title="指定主智能体本次任务采用的协作模式（仅协调型智能体生效）"
-                  options={[
-                    { value: "auto", label: "协作方式 · 自动" },
-                    { value: "workflow", label: "协作方式 · 串行工作流" },
-                    { value: "swarm", label: "协作方式 · 集群群聊" },
-                    { value: "parallel", label: "协作方式 · 并行分工" },
-                  ]}
                 />
               </div>
               <div className="composer-bottom-right">

@@ -152,7 +152,7 @@ export const api = {
       body: formData,
     })
   },
-  chat: (message: string, sessionId?: string, agentId?: string, attachments?: Attachment[], collabStyle?: string) =>
+  chat: (message: string, sessionId?: string, agentId?: string, attachments?: Attachment[]) =>
     request<ChatResult>('/api/demo/chat', {
       method: 'POST',
       headers: jsonHeaders,
@@ -160,7 +160,6 @@ export const api = {
         message,
         session_id: sessionId,
         agent_id: agentId || undefined,
-        collab_style: collabStyle && collabStyle !== 'auto' ? collabStyle : undefined,
         interface: 'harness',
         attachments: attachments || [],
       }),
@@ -174,7 +173,6 @@ export const api = {
     signal?: AbortSignal,
     onTaskId?: (taskId: string) => void,
     attachments?: Attachment[],
-    collabStyle?: string,
   ) =>
     streamChat(
       '/api/demo/chat/stream',
@@ -182,7 +180,6 @@ export const api = {
         message,
         session_id: sessionId,
         agent_id: agentId || undefined,
-        collab_style: collabStyle && collabStyle !== 'auto' ? collabStyle : undefined,
         interface: 'harness',
         attachments: attachments || [],
       },

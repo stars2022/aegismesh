@@ -6021,3 +6021,15 @@ tr:last-child td { border-bottom: 0; }
 .trace-json-toggle { margin: 4px 0 10px; }
 .trace-json-toggle button { padding: 5px 10px; color: var(--c555550); background: var(--cefefeb); border: 1px solid var(--ce0e0da); border-radius: 6px; cursor: pointer; font-size: 9px; }
 .trace-raw-json { max-height: 420px; overflow: auto; margin: 0 0 14px; padding: 12px; background: var(--cf4f4f1); border: 1px solid var(--ce1e1dc); border-radius: 8px; color: var(--c555550); font-family: "DM Mono", monospace; font-size: 9px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+
+/* ===== 微信式统一入口列表 ===== */
+.collab-entry-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 12px; background: var(--cffffff); border: 0; border-bottom: 1px solid var(--ce9e9e5); cursor: pointer; text-align: left; }
+.collab-entry-row:hover { background: var(--cf7f7f4); }
+.collab-entry-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.collab-entry-top { display: flex; align-items: center; gap: 6px; }
+.collab-entry-top strong { color: var(--c161614); font-size: 11px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.collab-entry-tag { flex: none; padding: 2px 6px; border-radius: 999px; color: var(--c686862); background: var(--cecece7); font-size: 8px; }
+.collab-entry-tag.swarm { color: #4f46e5; background: rgb(99 102 241 / 12%); }
+.collab-entry-preview { overflow: hidden; color: var(--c999993); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.collab-entry-time { flex: none; color: var(--c999993); font-family: "DM Mono", monospace; font-size: 8px; }
+.collab-workflow-container { flex: 1; min-height: 0; overflow-y: auto; }

@@ -778,8 +778,6 @@ class ReliableOrchestrator:
         if tool_registry is not None:
             kwargs["tool_registry"] = tool_registry
             kwargs["max_rounds"] = max_rounds
-            if getattr(request, "collab_style", "auto") != "auto":
-                kwargs["collab_style"] = request.collab_style
 
         target_controller = controller or self.controller
         callback = on_text_override or (self.stream_callback if stream_output else None)

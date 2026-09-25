@@ -203,7 +203,6 @@ class ChatRequest(BaseModel):
     required_security: str | None = None
     required_transport: str | None = None
     mode: Literal["route", "collaborate"] = "route"
-    collab_style: Literal["auto", "workflow", "swarm"] = "auto"
     max_partners: int = Field(default=2, ge=2, le=5)
     interface: Literal["api", "harness"] = "api"
     delegation_depth: int = Field(default=0, ge=0)
