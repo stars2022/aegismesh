@@ -1,0 +1,44 @@
+import { FormEvent, useEffect, useState } from 'react'
+import { LockKeyhole, Network } from 'lucide-react'
+import App from './App'
+import { api } from './api'
+
+type Session = { enabled: boolean; authenticated: boolean; username: string | null }
+
+export default function Admin() {
+  const [session, setSession] = useState<Session | null>(null)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    api.adminSession().then(setSession).catch((reason) => {
+      setError(reason instanceof Error ? reason.message : '后台服务不可用')
+      setSession({ enabled: true, authenticated: false, username: null })
+    })
+  }, [])
+
+  const login = async (event: FormEvent) => {
+    event.preventDefault()
+    setSubmitting(true); setError('')
+    try {
+      setSession(await api.adminLogin(username, password))
+      setPassword('')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '登录失败')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const logout = async () => {
+    await api.adminLogout()
+    setSession({ enabled: true, authenticated: false, username: null })
+  }
+
+  if (session?.authenticated) return <App onLogout={session.enabled ? logout : undefined} />
+  if (!session) return <div className="admin-loading"><Network size={22} /></div>
+
+  return <main className="login-page"><section className="login-card"><div className="login-mark"><Network size={20} /></div><span className="eyebrow">AegisMesh Console</span><h1>管理后台</h1><form onSubmit={login}><label>用户名<input autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>密码<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <p className="login-error">{error}</p>}<button className="primary-button" disabled={submitting || !username || password.length < 8}><LockKeyhole size={15} />{submitting ? '登录中' : '登录'}</button></form><a href="/">返回聊天</a></section></main>
+}
