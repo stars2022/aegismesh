@@ -10,6 +10,7 @@ import {
   Activity,
   ArrowLeft,
   ArrowRight,
+  ArrowUp,
   Bot,
   Braces,
   ChartNoAxesCombined,
@@ -25,6 +26,7 @@ import {
   Flower2,
   Gauge,
   GitBranch,
+  GripVertical,
   Hash,
   Hourglass,
   Layers,
@@ -6583,6 +6585,25 @@ void runMessage(next.text, next.agentId, next.attachments);
       submit();
     }
   };
+
+  const handlePromoteTask = async (item: QueuedTask) => {
+    setQueue((items) => items.filter((entry) => entry.id !== item.id));
+    await handleStopTask();
+    void runMessage(item.text, item.agentId || agentId, item.attachments || []);
+  };
+
+  const handleEditTask = (item: QueuedTask) => {
+    setQueue((items) => items.filter((entry) => entry.id !== item.id));
+    setInput(item.text);
+    if (item.attachments) {
+      setAttachments(item.attachments);
+    }
+    composerTextareaRef.current?.focus();
+  };
+
+  const handleDeleteTask = (id: string) => {
+    setQueue((items) => items.filter((entry) => entry.id !== id));
+  };
   const suggestions = [
     "针对大模型多智能体协作，撰写系统性文献综述并分析研究空白",
     "推导自适应多智能体通信博弈模型，给出数学公式与命题假说",
@@ -7152,56 +7173,8 @@ void runMessage(next.text, next.agentId, next.attachments);
               </div>
             )}
           </div>
-          {queue.length > 0 && (
-            <div className={`queue-dock ${queueExpanded ? "expanded" : "compact"}`}>
-              <div className="queue-dock-header">
-                <button
-                  type="button"
-                  className="queue-header-toggle"
-                  onClick={() => setQueueExpanded((value) => !value)}
-                  aria-expanded={queueExpanded}
-                  title={queueExpanded ? "收起发送队列" : "展开发送队列"}
-                >
-                  <span className="queue-header-left">
-                    <strong>发送队列</strong>
-                    <span className="queue-count-badge">{queue.length}</span>
-                  </span>
-                  {!queueExpanded && (
-                    <span className="queue-preview-text">{queue[0]?.text}</span>
-                  )}
-                  {queueExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-                </button>
-                <button
-                  type="button"
-                  className="queue-clear-btn"
-                  onClick={() => setQueue([])}
-                  title="清空队列"
-                >
-                  <Trash2 size={12} />
-                  <span>清空队列</span>
-                </button>
-              </div>
-              {(queueExpanded ? queue : queue.slice(0, 1)).map((item, index) => (
-                <div className="queue-item" key={item.id}>
-                  <span>{index + 1}</span>
-                  <p>{item.text}</p>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setQueue((items) =>
-                        items.filter((entry) => entry.id !== item.id),
-                      )
-                    }
-                    title="移除此项"
-                  >
-                    <X size={13} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
           <form
-            className="composer"
+            className={`composer ${queue.length > 0 ? "has-queue" : ""}`}
             ref={composerRef}
             onSubmit={submit}
             onDragOver={(e) => {
@@ -7216,6 +7189,45 @@ void runMessage(next.text, next.agentId, next.attachments);
               }
             }}
           >
+            {queue.length > 0 && (
+              <div className="composer-queue-card">
+                {queue.map((item) => (
+                  <div className="composer-queue-row" key={item.id}>
+                    <div className="queue-row-left">
+                      <GripVertical size={13} className="queue-grip-icon" />
+                      <span className="queue-item-text">{item.text}</span>
+                    </div>
+                    <div className="queue-row-actions">
+                      <button
+                        type="button"
+                        className="queue-act-btn promote"
+                        onClick={() => handlePromoteTask(item)}
+                        title="立即执行此项"
+                      >
+                        <ArrowUp size={12} />
+                        <span>立即</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="queue-act-btn icon-only"
+                        onClick={() => handleEditTask(item)}
+                        title="编辑并放回输入框"
+                      >
+                        <Pencil size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        className="queue-act-btn icon-only"
+                        onClick={() => handleDeleteTask(item.id)}
+                        title="从队列中删除"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             <input
               type="file"
               ref={fileInputRef}
@@ -7286,7 +7298,9 @@ void runMessage(next.text, next.agentId, next.attachments);
                 activeMeta?.isGroup
                   ? `给 ${loadConversationData(activeId)?.groupConfig?.name || "群聊"} 发消息`
                   : sending
-                    ? "继续输入，消息将加入队列"
+                    ? queue.length > 0
+                      ? "继续输入以排队后续修改"
+                      : "继续输入，消息将加入队列"
                     : attachments.length > 0
                       ? "输入对已上传材料的研讨或分析指令（可直接回车发送）..."
                       : "请输入问题"

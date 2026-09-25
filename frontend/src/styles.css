@@ -7027,4 +7027,110 @@ tr:last-child td { border-bottom: 0; }
   color: #9ca3af !important;
 }
 
+/* ===== 极简流线型排队卡片 (Image 2 风格) ===== */
+.composer-queue-card {
+  margin: -12px -12px 10px -12px;
+  padding: 6px 10px;
+  background: var(--ui-panel, #19191d);
+  border-bottom: 1px solid var(--line);
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+[data-theme="dark"] .composer-queue-card {
+  background: #18181b;
+  border-bottom-color: #27272b;
+}
+
+.composer-queue-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px;
+  border-radius: 6px;
+  transition: background 0.12s ease;
+  min-height: 32px;
+}
+
+.composer-queue-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.queue-row-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.queue-grip-icon {
+  color: #71717a;
+  flex-shrink: 0;
+  cursor: grab;
+}
+
+.queue-item-text {
+  font-size: 13px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 12px;
+}
+
+.queue-act-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #a1a1aa;
+  cursor: pointer;
+  padding: 4px 6px;
+  font-size: 12px;
+  transition: all 0.15s ease;
+}
+
+.queue-act-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+}
+
+.queue-act-btn.promote {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  font-weight: 500;
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.queue-act-btn.promote:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.queue-act-btn.icon-only {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+.queue-act-btn.icon-only:hover {
+  color: var(--ink);
+}
+
+
 
