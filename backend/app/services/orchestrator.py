@@ -28,6 +28,7 @@ from .adaptive_lease import (
 )
 from .router import QualityRouter, RoutingRequirements, ScoredCandidate
 from .shared_context import SharedCollaborationContext
+from .aip_group import AipGroupBridgeError, ExternalPartner, run_aip_group_discussion
 from .tools import ToolRegistry
 from .transport import PartnerResult, StreamCallback, TransportRegistry, clean_model_output
 from .web_search import DeepSeekWebSearch, WEB_SEARCH_SCHEMA, supports_deepseek_search
@@ -1558,19 +1559,80 @@ class ReliableOrchestrator:
                 if not participants or not isinstance(participants, list):
                     return {"ok": False, "error": "participants 不能为空，必须指定参与研讨的专家列表"}
 
+                # 双传输智能路由：外部 aip-rpc 成员走国标 MQ 群组，内部成员走本地黑板；MQ 失败自动回退本地
+                external: list[ExternalPartner] = []
+                internal: list[str] = []
+                for p in participants:
+                    name = str(p)
+                    agent = self.db.get(Agent, name) or next(
+                        (a for a in self.db.query(Agent).filter(Agent.name == name).all() if a),
+                        None,
+                    )
+                    if agent and agent.transport == "aip-rpc" and agent.endpoint_url and agent.aic:
+                        external.append(ExternalPartner(aic=agent.aic, name=name, rpc_url=agent.endpoint_url))
+                    else:
+                        internal.append(name)
+
+                transport_label = "本地黑板"
+                speeches: list[dict[str, Any]] = []
+
+                def record_speech(sender: str, statement: str, round_no: int = 1) -> None:
+                    if not statement:
+                        return
+                    speeches.append({"round": round_no, "agent": sender, "statement": statement})
+                    if shared_context is not None:
+                        shared_context.add_blackboard_message(
+                            sender_id=sender,
+                            sender_name=sender,
+                            content=statement[:2000],
+                            role="expert",
+                            msg_type="chat",
+                            nickname=f"@{sender.replace('智能体', '').strip() or sender}专家",
+                        )
+
+                if external:
+                    settings = get_settings()
+                    if settings.aip_group_mq_host or settings.aip_group_mq_url:
+                        leader_aic = settings.leader_aic
+                        if leader_aic:
+                            try:
+                                result = await run_aip_group_discussion(
+                                    leader_aic=leader_aic,
+                                    partners=external,
+                                    topic=topic,
+                                    rounds=rounds,
+                                    initial_context=initial_context,
+                                    on_speech=lambda sender, statement: record_speech(sender, statement),
+                                    timeout_seconds=settings.aip_group_discussion_timeout_seconds,
+                                )
+                                transport_label = "国标 MQ 群组（AIP Group Mode）"
+                            except AipGroupBridgeError as exc:
+                                if shared_context is not None:
+                                    shared_context.add_blackboard_message(
+                                        sender_id="leader",
+                                        sender_name="主控协调员",
+                                        role="leader",
+                                        msg_type="error",
+                                        content=f"国标 MQ 群组不可用，已回退本地黑板：{exc}",
+                                    )
+                                internal.extend(p.name for p in external)
+                                external.clear()
+
                 if shared_context is not None:
                     shared_context.add_blackboard_message(
                         sender_id="leader",
                         sender_name="主控协调员",
                         role="leader",
                         msg_type="broadcast",
-                        content=f"已开启关于【{topic}】的智能体集群群聊研讨。参与专家：{', '.join(participants)}",
-                        metadata={"topic": topic, "participants": participants},
+                        content=(
+                            f"已开启关于【{topic}】的智能体集群群聊研讨（{transport_label}）。"
+                            f"参与专家：{', '.join(participants)}"
+                        ),
+                        metadata={"topic": topic, "participants": participants, "transport": transport_label},
                     )
 
-                speeches: list[dict[str, Any]] = []
                 for r in range(rounds):
-                    for p in participants:
+                    for p in internal:
                         prev_speeches_text = "\n".join([f"- @{s['agent']}: {s['statement'][:200]}" for s in speeches[-3:]])
                         task_text = (
                             f"【智能体集群群聊黑板第 {r + 1} 轮发言】\n"
@@ -1585,25 +1647,12 @@ class ReliableOrchestrator:
                             "wait": True,
                         })
                         if disp_res.get("ok"):
-                            statement = disp_res.get("result", "")
-                            speeches.append({
-                                "round": r + 1,
-                                "agent": p,
-                                "statement": statement,
-                            })
-                            if shared_context is not None and statement:
-                                shared_context.add_blackboard_message(
-                                    sender_id=str(p),
-                                    sender_name=str(p),
-                                    content=str(statement)[:2000],
-                                    role="expert",
-                                    msg_type="chat",
-                                    nickname=f"@{str(p).replace('智能体', '').strip() or p}专家",
-                                )
+                            record_speech(str(p), str(disp_res.get("result", "")), r + 1)
 
                 return {
                     "ok": True,
                     "topic": topic,
+                    "transport": transport_label,
                     "total_speeches": len(speeches),
                     "speeches": speeches,
                 }

@@ -9,6 +9,7 @@ AegisMesh 是一个 ACPs/AIP 兼容的多智能体构建与运营平台。平台
 - `backend/app/services/hosted_aip.py`：平台托管 Partner 的 AIP 任务生命周期
 - `backend/app/services/acs.py`：标准 ACS 能力声明生成与校验
 - `backend/app/services/router.py`：协议兼容硬约束筛选与贝叶斯反馈校准的混合熵权 TOPSIS 路由
+- `backend/app/services/aip_group.py`：AIP 国标群组模式桥——配置 `AIP_GROUP_MQ_URL`（或 `AIP_GROUP_MQ_HOST` 等）后，集群研讨中登记为 AIP 智能体的外部参与者经 RabbitMQ 群组 Exchange 邀请入群、群发议题并收集发言（`run_swarm_discussion` 自动双传输：外部成员走国标 MQ，内部成员走本地黑板，MQ 不可用自动回退）；`aip_group_partner.py` 在 `AIP_GROUP_PARTNER_ENABLED=true` 时让本平台智能体作为 Partner 接受外部群组邀请并执行群任务
 - `backend/app/services/orchestrator.py`：智能体主导的任务运行时——执行型智能体直接执行（含声明工具）；协调型智能体注入平台 harness 协调提示词，通过 `list_agents` / `dispatch_task` 平台调度工具规划、派发子任务并汇总结果；未指定智能体时按质量路由自动选择，保留广播协同、熔断与自动迁移
 - `backend/app/services/discovery.py`：基于官方 SDK 的 ADP 跨平台发现客户端
 - `backend/app/services/tools.py`：受控工具注册与执行

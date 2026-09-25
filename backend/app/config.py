@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     aip_tls_client_ca_file: str = ""
     aip_tls_port: int = 0
     aip_notification_allowed_origins: list[str] = []
+    aip_group_mq_url: str = ""
+    aip_group_mq_host: str = ""
+    aip_group_mq_port: int = 5672
+    aip_group_mq_vhost: str = "/"
+    aip_group_mq_user: str = "guest"
+    aip_group_mq_password: str = "guest"
+    aip_group_discussion_timeout_seconds: float = 120.0
+    aip_group_partner_enabled: bool = False
+    aip_group_partner_agent_id: str = ""
     registry_api_url: str = "https://wt.ioa.pub/registry-server/api/v1"
     registry_atr_url: str = "https://wt.ioa.pub/registry"
     registry_username: str = ""

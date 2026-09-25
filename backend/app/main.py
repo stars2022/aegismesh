@@ -78,6 +78,7 @@ from .schemas import (
 from .seed import seed_database
 from .services.tools import ToolRegistry
 from .services.orchestrator import NoEligibleAgentError, ReliableOrchestrator
+from .services.aip_group_partner import start_partner_listener
 from .services.probe import AgentProbe, probe_loop
 from .services.acs import LOCAL_AIC_PREFIX, build_acs, public_aic
 from .services.hosted_aip import HostedAipService
@@ -238,9 +239,12 @@ async def lifespan(_: FastAPI):
                 amp_service.update_aic(leader_agent.aic)
     amp_task = asyncio.create_task(amp_service.start())
     task = asyncio.create_task(probe_loop(SessionLocal, settings.probe_interval_seconds))
+    group_partner_task = await start_partner_listener()
     yield
     await amp_service.stop()
     task.cancel()
+    if group_partner_task:
+        group_partner_task.cancel()
     with suppress(asyncio.CancelledError):
         await task
 
