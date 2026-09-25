@@ -4084,6 +4084,7 @@ type ConversationMeta = {
   messageCount?: number;
   isGroup?: boolean;
   groupMemberCount?: number;
+  updatedAt?: number; // 最近一次有新消息的时间（纯点击浏览不更新）
 };
 
 function loadConversationIndex(): ConversationMeta[] {
@@ -6328,6 +6329,8 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
       name: string;
       description: string;
       source: string;
+      match_score?: number;
+      eligible?: boolean;
     }> = [];
     const seen = new Set<string>();
     for (const m of messages.slice(-5)) {
@@ -6344,6 +6347,8 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
                     name: item.name || item.agent_id,
                     description: item.description || "全网发现协同同伴",
                     source: item.source === "adp_network" ? "ADP 全网发现" : (item.source || "协同同伴"),
+                    match_score: typeof item.match_score === "number" ? item.match_score : undefined,
+                    eligible: typeof item.eligible === "boolean" ? item.eligible : undefined,
                   });
                 }
               }
@@ -7682,7 +7687,9 @@ void runMessage(next.text, next.agentId, next.attachments);
           )}
         </div>
         <nav>
-          {conversations.map((conversation) => (
+          {[...conversations]
+            .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+            .map((conversation) => (
             <div
               className={`history-item ${conversation.id === activeId ? "active" : ""} ${conversation.isGroup ? "is-group" : ""}`}
               key={conversation.id}
@@ -8474,6 +8481,9 @@ void runMessage(next.text, next.agentId, next.attachments);
                       <div key={c.id} className="discovered-cand-card">
                         <div className="discovered-name-row">
                           <strong>{c.name}</strong>
+                          {typeof c.match_score === "number" && c.match_score > 0 && (
+                            <span className="score-tag">{c.match_score} 分{c.eligible === false ? " · 不可用" : ""}</span>
+                          )}
                           <span className="source-tag">{c.source}</span>
                         </div>
                         <p className="discovered-desc">{c.description}</p>
@@ -8508,15 +8518,8 @@ void runMessage(next.text, next.agentId, next.attachments);
                         <b>{candidate.eligible ? candidate.score : "未入选"}</b>
                       </div>
                       {candidate.eligible && <ScoreBar value={candidate.score} />}
-                      {candidate.eligible && (
-                        <p className="muted">
-                          {Object.entries(candidate.breakdown)
-                            .map(([key, value]) => `${metricLabels[key] || key} ${value}`)
-                            .join(" · ")}
-                        </p>
-                      )}
                       {candidate.reasons.length > 0 && (
-                        <p className="muted">{candidate.reasons.join(" · ")}</p>
+                        <p className="muted">{candidate.reasons.slice(0, 2).join(" · ")}</p>
                       )}
                     </div>
                   ))}

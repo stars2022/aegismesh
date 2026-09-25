@@ -1146,7 +1146,7 @@ class ReliableOrchestrator:
                 "type": "function",
                 "function": {
                     "name": "list_agents",
-                    "description": "查看平台当前可用的执行型智能体及其能力状态（调用链中已存在的智能体不可重复调用）。支持指定 scope 查询范围（local 为本地/已固定同伴，network 为全网 ADP 发现池，all 为全网与本地联合发现）。",
+                    "description": "发现阶段工具：返回按质量评分排序的候选智能体名单（本地 ACS List + 全网 ADP 发现，含 match_score 匹配分与资格说明）。请参考排名自行选择派发对象；若用户指名道姓要求某智能体，直接点名派发即可，无需再看评分。调用链中已存在的智能体不可重复调用。",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -1413,7 +1413,7 @@ class ReliableOrchestrator:
                     "type": "function",
                     "function": {
                         "name": "list_agents",
-                        "description": "查看平台当前可用的执行型智能体及其能力状态（已在当前调用链中的智能体将被标注为不可重复调用）。支持指定 scope 查询范围（local 为本地/已固定同伴，network 为全网 ADP 发现池，all 为全网与本地联合发现）。",
+                        "description": "发现阶段工具：返回按质量评分排序的候选智能体名单（本地 ACS List + 全网 ADP 发现，含 match_score 匹配分与资格说明）。请参考排名自行选择派发对象；若用户指名道姓要求某智能体，直接点名派发即可，无需再看评分。已在当前调用链中的智能体将被标注为不可重复调用。",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -1770,6 +1770,10 @@ class ReliableOrchestrator:
         blocked_set = set(current_chain or [])
         results: list[dict[str, Any]] = []
         seen_aics: set[str] = set()
+        # 发现阶段即完成路由排名：每个候选都带质量分，供主智能体参考选择；
+        # 主智能体点名直派时不重复评分。
+        policy = self.db.get(RoutingPolicy, 1)
+        requirements = RoutingRequirements(query=query or "智能体协作")
 
         # 1. 本地及已固定的内部协同智能体
         if scope in ("all", "local"):
@@ -1781,6 +1785,7 @@ class ReliableOrchestrator:
                     if not any(t in haystack for t in tokens):
                         continue
                 seen_aics.add(agent.aic)
+                scored = self.router.score(agent, policy, requirements) if policy else None
                 results.append(
                     {
                         "agent_id": agent.id,
@@ -1794,6 +1799,9 @@ class ReliableOrchestrator:
                         "is_pinned": True,
                         "in_call_chain": agent.id in blocked_set,
                         "callable": agent.id not in blocked_set,
+                        "match_score": round(scored.score, 1) if scored else 0.0,
+                        "eligible": scored.eligible if scored else False,
+                        "score_note": "；".join(scored.reasons[:2]) if scored else "",
                     }
                 )
 
@@ -1809,6 +1817,7 @@ class ReliableOrchestrator:
                     if cand.aic in seen_aics:
                         continue
                     seen_aics.add(cand.aic)
+                    scored = self.router.score(cand, policy, requirements) if policy else None
                     results.append(
                         {
                             "agent_id": cand.id,
@@ -1822,11 +1831,15 @@ class ReliableOrchestrator:
                             "is_pinned": False,
                             "in_call_chain": cand.id in blocked_set,
                             "callable": cand.id not in blocked_set,
+                            "match_score": round(scored.score, 1) if scored else 0.0,
+                            "eligible": scored.eligible if scored else False,
+                            "score_note": "；".join(scored.reasons[:2]) if scored else "",
                         }
                     )
             except Exception as exc:
                 logger.warning("ADP discovery in _list_agents failed: %s", exc)
 
+        results.sort(key=lambda item: (-item.get("match_score", 0.0), item["agent_id"]))
         return results
 
     def _check_subagent_status(
@@ -2153,7 +2166,7 @@ class ReliableOrchestrator:
                                 break
 
                     if explicit_agent and explicit_agent.active is not False:
-                        target = ScoredCandidate(agent=explicit_agent, score=1.0, eligible=True, breakdown={}, reasons=[])
+                        target = ScoredCandidate(agent=explicit_agent, score=0.0, eligible=True, breakdown={}, reasons=["点名直派，无需评分"])
                     elif explicit_agent is None:
                         try:
                             discovered = await self._discover_external_agents(
@@ -2176,7 +2189,7 @@ class ReliableOrchestrator:
                                     None,
                                 )
                             if match:
-                                target = ScoredCandidate(agent=match, score=1.0, eligible=True, breakdown={}, reasons=[])
+                                target = ScoredCandidate(agent=match, score=0.0, eligible=True, breakdown={}, reasons=["动态发现直派，无需评分"])
                             else:
                                 return {
                                     "ok": False,
