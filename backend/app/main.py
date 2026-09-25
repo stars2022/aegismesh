@@ -39,6 +39,8 @@ from .database import Base, SessionLocal, engine, get_db
 from .models import (
     AdminAccount,
     Agent,
+    GroupChat,
+    GroupChatMessage,
     HostedTask,
     Invocation,
     InvocationFeedback,
@@ -62,6 +64,8 @@ from .schemas import (
     DiscoveryQuery,
     DiscoveryImportRequest,
     DemoLogin,
+    GroupChatCreate,
+    GroupChatMessageIn,
     FeedbackRead,
     FeedbackRequest,
     DatabaseImportPayload,
@@ -77,6 +81,7 @@ from .schemas import (
 )
 from .seed import seed_database
 from .services.tools import ToolRegistry
+from .services.transport import TransportRegistry
 from .services.orchestrator import NoEligibleAgentError, ReliableOrchestrator
 from .services.aip_group_partner import start_partner_listener
 from .services.probe import AgentProbe, probe_loop
@@ -1319,6 +1324,195 @@ async def cancel_task(task_id: str, request: Request) -> dict[str, Any]:
 )
 async def demo_chat(payload: ChatRequest, db: DbSession, request: Request) -> ChatResponse:
     return await chat(payload, db, request=request)
+
+
+def _group_transport_for(members: list[str], db: Session) -> str:
+    has_external = any(
+        (agent := db.get(Agent, m)) is not None and agent.transport == "aip-rpc"
+        for m in members
+    )
+    if has_external and (settings.aip_group_mq_host or settings.aip_group_mq_url):
+        return "aip-mq"
+    return "local"
+
+
+async def run_group_agent_reply(db: Session, agent: Agent, prompt: str, timeout: float, group_session_id: str) -> str:
+    """本地传输执行群发言：托管模型走各自传输层，外部 aip-rpc 走点对点 RPC。"""
+    provider = db.get(ProviderConfig, agent.model_provider) if agent.transport == "provider" else None
+    registry = TransportRegistry()
+    transport = registry.get(provider.kind if provider else agent.transport)
+    kwargs: dict[str, Any] = {"session_id": group_session_id}
+    if provider:
+        kwargs["provider"] = provider
+    kwargs["tool_registry"] = ToolRegistry()
+    result = await transport.execute(agent, prompt, timeout, **kwargs)
+    return result.text
+
+
+def _group_members_row(group: GroupChat, db: Session) -> str:
+    rows = []
+    for m in group.members:
+        agent = db.get(Agent, m)
+        rows.append(f"- {agent.name if agent else m}（ID: {m}，专长: {(agent.description or '领域专家')[:60] if agent else '领域专家'}）")
+    return "\n".join(rows) or "-（暂无成员）"
+
+
+def _group_history_text(group_id: str, db: Session, limit: int = 14) -> str:
+    rows = list(
+        db.scalars(
+            select(GroupChatMessage)
+            .where(GroupChatMessage.group_id == group_id)
+            .order_by(GroupChatMessage.id.desc())
+            .limit(limit)
+        ).all()
+    )
+    return "\n\n".join(
+        f"【{row.nickname or row.sender_name or row.sender_id}】: {row.content}" for row in reversed(rows)
+    ) or "（暂无历史发言）"
+
+
+@app.post("/api/group-chat", dependencies=[Depends(require_demo)], tags=["group-chat"])
+def create_group_chat(payload: GroupChatCreate, db: DbSession) -> dict:
+    members = [m for m in payload.members if db.get(Agent, m)]
+    if not members:
+        raise HTTPException(status_code=422, detail="群成员中没有任何有效智能体")
+    transport = _group_transport_for(members, db)
+    group_id = f"group-{uuid.uuid4().hex[:10]}"
+    group = GroupChat(
+        id=group_id,
+        name=payload.name.strip()[:120] or "群聊",
+        host_agent_id=payload.host_agent_id if payload.host_agent_id in members else "",
+        members=members,
+        transport=transport,
+    )
+    db.add(group)
+    db.commit()
+    return {"id": group.id, "name": group.name, "transport": group.transport, "members": members}
+
+
+@app.get("/api/group-chat/{group_id}", dependencies=[Depends(require_demo)], tags=["group-chat"])
+def get_group_chat(group_id: str, db: DbSession) -> dict:
+    group = db.get(GroupChat, group_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="群聊不存在")
+    messages = list(
+        db.scalars(
+            select(GroupChatMessage)
+            .where(GroupChatMessage.group_id == group_id)
+            .order_by(GroupChatMessage.id)
+        ).all()
+    )
+    return {
+        "id": group.id,
+        "name": group.name,
+        "host_agent_id": group.host_agent_id,
+        "members": group.members,
+        "transport": group.transport,
+        "messages": [
+            {
+                "sender_id": m.sender_id,
+                "sender_name": m.sender_name,
+                "role": m.role,
+                "msg_type": m.msg_type,
+                "nickname": m.nickname,
+                "content": m.content,
+                "created_at": m.created_at.isoformat(),
+            }
+            for m in messages
+        ],
+    }
+
+
+@app.post("/api/group-chat/{group_id}/messages", dependencies=[Depends(require_demo)], tags=["group-chat"])
+async def post_group_chat_message(group_id: str, payload: GroupChatMessageIn, db: DbSession) -> dict:
+    group = db.get(GroupChat, group_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="群聊不存在")
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="消息不能为空")
+
+    user_nick = "群主 (用户)" if not group.host_agent_id else "我 (群成员)"
+    db.add(
+        GroupChatMessage(
+            group_id=group_id, sender_id="user", sender_name="用户",
+            role="user", msg_type="chat", nickname=user_nick, content=text,
+        )
+    )
+    db.commit()
+
+    target_id = payload.mentioned or group.host_agent_id or (group.members[0] if group.members else "")
+    target_agent = db.get(Agent, target_id) if target_id else None
+    if target_agent is None:
+        db.commit()
+        return {"reply": None, "agent_id": None, "agent_name": None, "transport": group.transport}
+
+    is_host = target_id == group.host_agent_id
+    prompt = (
+        f"【AIP 国标规范·智能体多方协作群聊】\n"
+        f"你正在参与群聊「{group.name}」。\n"
+        f"你的身份：{target_agent.name}（角色：{'本群主持人' if is_host else '受邀群成员'}）。\n"
+        f"群内所有智能体成员：\n{_group_members_row(group, db)}\n\n"
+        f"【群聊规则与格式】：\n"
+        f"1. 这是一个开放、平等的专业群聊，你正在直接公开发言。\n"
+        f"2. 你的发言必须言简意赅、切中要害。直接给出公开回复，绝对不要包含内部思考草稿（如 <think>）。\n"
+        f"3. 如果你需要让群内某位专家处理具体任务，请在发言中明确使用「@专家名称」，系统将自动触发该专家继续响应。\n"
+        f"4. {'作为主持人，你负责统筹协调：直接解答疑问、拆解任务并艾特对应专家，或面向全群总结。' if is_host else '作为受邀专家，请针对艾特你的问题或主持人的委派，给出专业解答。'}\n\n"
+        f"【群聊历史公开记录】：\n{_group_history_text(group_id, db)}\n\n"
+        f"请作为「{target_agent.name}」在群聊中发表你的公开回复："
+    )
+
+    reply_text = ""
+    error_note = ""
+    if group.transport == "aip-mq":
+        if not settings.leader_aic:
+            error_note = "未配置 LEADER_AIC，无法使用国标 MQ 群组"
+        else:
+            partners = [
+                ExternalPartner(aic=agent.aic, name=agent.name, rpc_url=agent.endpoint_url)
+                for m in group.members
+                if (agent := db.get(Agent, m)) is not None and agent.transport == "aip-rpc" and agent.endpoint_url
+            ]
+            try:
+                session = await get_mq_session(f"group:{group_id}", settings.leader_aic, partners)
+                reply_text = await session.send_and_collect(
+                    prompt,
+                    session_id=group_id,
+                    target_aic=target_agent.aic if target_agent.transport == "aip-rpc" else None,
+                    timeout_seconds=90.0,
+                )
+            except (AipGroupBridgeError, asyncio.TimeoutError) as exc:
+                error_note = f"国标 MQ 群组异常：{exc}"
+            except Exception as exc:
+                error_note = f"国标 MQ 群组异常：{exc}"
+    else:
+        try:
+            reply_text = await run_group_agent_reply(db, target_agent, prompt, 90.0, group_id)
+        except Exception as exc:
+            error_note = str(exc)
+
+    if error_note:
+        db.add(
+            GroupChatMessage(
+                group_id=group_id, sender_id="system", sender_name="系统",
+                role="system", msg_type="error", nickname="系统",
+                content=f"⚠️ [{target_agent.name}] 发言失败：{error_note[:300]}",
+            )
+        )
+        db.commit()
+        return {"reply": None, "agent_id": target_id, "agent_name": target_agent.name, "transport": group.transport, "error": error_note[:300]}
+
+    reply_text = reply_text.strip()
+    db.add(
+        GroupChatMessage(
+            group_id=group_id, sender_id=target_agent.id, sender_name=target_agent.name,
+            role="agent", msg_type="chat",
+            nickname=f"@{target_agent.name.replace('智能体', '').strip() or target_agent.id}专家",
+            content=reply_text[:8000],
+        )
+    )
+    db.commit()
+    return {"reply": reply_text, "agent_id": target_agent.id, "agent_name": target_agent.name, "transport": group.transport}
 
 
 @app.post(

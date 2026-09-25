@@ -238,3 +238,28 @@ class AipNotification(Base):
     url: Mapped[str] = mapped_column(String(512))
     token: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class GroupChat(Base):
+    __tablename__ = "group_chats"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    host_agent_id: Mapped[str] = mapped_column(String(64), default="")
+    members: Mapped[list[str]] = mapped_column(JSON, default=list)
+    transport: Mapped[str] = mapped_column(String(16), default="local")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class GroupChatMessage(Base):
+    __tablename__ = "group_chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_id: Mapped[str] = mapped_column(String(64), index=True)
+    sender_id: Mapped[str] = mapped_column(String(128), default="")
+    sender_name: Mapped[str] = mapped_column(String(120), default="")
+    role: Mapped[str] = mapped_column(String(16), default="agent")
+    msg_type: Mapped[str] = mapped_column(String(16), default="chat")
+    nickname: Mapped[str] = mapped_column(String(120), default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

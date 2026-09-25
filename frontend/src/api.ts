@@ -152,6 +152,17 @@ export const api = {
       body: formData,
     })
   },
+  createGroupChat: (payload: { name: string; host_agent_id?: string; members: string[] }) =>
+    request<{ id: string; name: string; transport: "local" | "aip-mq"; members: string[] }>('/api/group-chat', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify(payload),
+    }),
+  sendGroupChatMessage: (groupId: string, text: string, mentioned?: string) =>
+    request<{ reply: string | null; agent_id: string | null; agent_name: string | null; transport: string; error?: string }>(
+      `/api/group-chat/${groupId}/messages`,
+      { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ text, mentioned: mentioned || undefined }) },
+    ),
   chat: (message: string, sessionId?: string, agentId?: string, attachments?: Attachment[]) =>
     request<ChatResult>('/api/demo/chat', {
       method: 'POST',

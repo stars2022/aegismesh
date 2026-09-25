@@ -4033,6 +4033,8 @@ type GroupConfig = {
   name: string;
   members: string[]; // agent IDs
   hostAgentId?: string | null; // agent ID or null for user host
+  backendId?: string; // 平台群聊会话 ID（本地黑板 / 国标 MQ 群组）
+  transport?: "local" | "aip-mq";
 };
 
 type ChatMessage = {
@@ -5820,6 +5822,23 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     setMobileHistoryOpen(false);
   };
   const createGroupConversation = (config: GroupConfig) => {
+    void (async () => {
+      try {
+        const registered = await api.createGroupChat({
+          name: config.name || "智能体协作讨论群",
+          host_agent_id: config.hostAgentId || undefined,
+          members: config.members,
+        });
+        config.backendId = registered.id;
+        config.transport = registered.transport as "local" | "aip-mq";
+      } catch {
+        /* 平台群聊服务不可用时退化为纯前端群聊 */
+      }
+      createGroupConversationInner(config);
+    })();
+  };
+
+  const createGroupConversationInner = (config: GroupConfig) => {
     const newId = crypto.randomUUID();
     const newMeta: ConversationMeta = {
       id: newId,
@@ -5839,7 +5858,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
       messages: [
         {
           role: "assistant",
-          text: `📢 **群聊「${config.name}」已创建**\n\n- **群成员 (${config.members.length}位)**: ${membersNames}\n- **主持人**: ${hostName}\n\n欢迎各位专家进驻讨论，您可以在输入框直接发言，或使用 \`@专家名称\` 点名具体智能体处理！`,
+          text: `📢 **群聊「${config.name}」已创建**\n\n- **群成员 (${config.members.length}位)**: ${membersNames}\n- **主持人**: ${hostName}${config.transport ? `\n- **传输通道**: ${config.transport === "aip-mq" ? "国标 MQ 群组（AIP Group Mode）" : "平台本地黑板"}` : ""}\n\n欢迎各位专家进驻讨论，您可以在输入框直接发言，或使用 \`@专家名称\` 点名具体智能体处理！`,
           isHost: true,
           senderName: "群系统提示",
           createdAt: Date.now(),
@@ -6073,6 +6092,68 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
       firstSpeakerId = groupCfg.hostAgentId;
     } else {
       firstSpeakerId = agentId || groupCfg.members[0];
+    }
+
+    // 平台群聊通道：本地黑板 / 国标 MQ 群组（提示词与历史由服务端统一组装）
+    if (groupCfg.backendId) {
+      let chainTarget = firstSpeakerId;
+      let chainText = userText;
+      for (let round = 0; round < 2 && chainTarget; round += 1) {
+        const speakerAgent = agents.find((a) => a.id === chainTarget);
+        try {
+          const res = await api.sendGroupChatMessage(
+            groupCfg.backendId,
+            chainText,
+            chainTarget,
+          );
+          if (!res.reply) {
+            setMessages((items) => [
+              ...items,
+              {
+                role: "assistant",
+                text: res.error ? `⚠️ ${res.error}` : "（本次没有智能体发言）",
+                senderName: speakerAgent?.name || chainTarget,
+                createdAt: Date.now(),
+              },
+            ]);
+            break;
+          }
+          setMessages((items) => [
+            ...items,
+            {
+              role: "assistant",
+              text: res.reply || "",
+              senderAgentId: res.agent_id || chainTarget,
+              senderName: res.agent_name || speakerAgent?.name || chainTarget,
+              createdAt: Date.now(),
+            },
+          ]);
+          await onComplete();
+          const nextTarget = groupCfg.members.find((mId) => {
+            if (mId === res.agent_id) return false;
+            const a = agents.find((ag) => ag.id === mId);
+            return a && res.reply && (res.reply.includes(`@${a.name}`) || res.reply.includes(`@${a.id}`));
+          });
+          if (!nextTarget) break;
+          chainTarget = nextTarget;
+          chainText = `群内继续讨论：上一条发言 @了你，请接着回应（原话：${res.reply.slice(0, 200)}）`;
+        } catch (reason) {
+          setMessages((items) => [
+            ...items,
+            {
+              role: "assistant",
+              text: `⚠️ [${speakerAgent?.name || chainTarget}] 发言失败：${reason instanceof Error ? reason.message : "群聊服务异常"}`,
+              senderName: speakerAgent?.name || chainTarget,
+              createdAt: Date.now(),
+            },
+          ]);
+          break;
+        }
+      }
+      sendingRef.current = false;
+      setSending(false);
+      setSendingSince(null);
+      return;
     }
 
     const executeSpeaker = async (

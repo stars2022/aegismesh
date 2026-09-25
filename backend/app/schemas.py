@@ -229,6 +229,17 @@ class RegistrationRequest(BaseModel):
     rpc_url: str | None = Field(default=None, max_length=512)
 
 
+class GroupChatCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    host_agent_id: str = Field(default="", max_length=64)
+    members: list[str] = Field(min_length=1, max_length=20)
+
+
+class GroupChatMessageIn(BaseModel):
+    text: str = Field(min_length=1, max_length=10_000)
+    mentioned: str | None = Field(default=None, max_length=64)
+
+
 class DiscoveryQuery(BaseModel):
     query: str = Field(min_length=1, max_length=2_000)
     limit: int = Field(default=5, ge=1, le=50)
