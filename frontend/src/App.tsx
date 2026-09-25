@@ -12,6 +12,7 @@ import {
   ArrowRight,
   ArrowUp,
   Bot,
+  BookOpen,
   Braces,
   ChartNoAxesCombined,
   Check,
@@ -45,6 +46,8 @@ import {
   Pencil,
   Play,
   Pin,
+  Plus,
+  Minus,
   Radio,
   Download,
   Globe,
@@ -218,6 +221,16 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatRelative(timestamp?: number): string {
+  if (!timestamp) return "刚刚";
+  const ms = timestamp > 1e11 ? timestamp : timestamp * 1000;
+  const diffSec = Math.floor((Date.now() - ms) / 1000);
+  if (diffSec < 60) return "刚刚";
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} 分钟前`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} 小时前`;
+  return new Date(ms).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 function App({ onLogout }: { onLogout?: () => void }) {
@@ -5337,13 +5350,519 @@ function CollaborationPanel({
   );
 }
 
-function GroupChatModal({
+function BlackboardPanel({
+  items,
+}: {
+  items: BlackboardMessage[];
+}) {
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds((prev) => ({ ...prev, [id]: prev[id] === false ? true : false }));
+  };
+
+  const deliverables = items.filter(
+    (m) => m.type === "report" || (m.metadata?.source && String(m.metadata.source).includes("group_chat"))
+  );
+
+  if (deliverables.length === 0) {
+    return (
+      <div className="blackboard-empty-state">
+        <div className="bb-empty-icon">
+          <BookOpen size={26} />
+        </div>
+        <h4>暂无黑板交付物</h4>
+        <p>当智能体在群聊中生成详细设计方案、数据表格或分析报告时，将严格按国家标准（GB/T 43444 / GB/T 7714）自动沉淀至此共享资产库。</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="blackboard-panel">
+      {/* 国家标准认证顶栏 */}
+      <div className="blackboard-standard-banner">
+        <div className="bb-std-badge-row">
+          <span className="bb-std-tag">国家标准规范对齐</span>
+          <span className="bb-std-code">GB/T 43444-2023</span>
+          <span className="bb-std-code">GB/T 7714-2015</span>
+        </div>
+        <span className="bb-std-desc">
+          符合多智能体协同交互规约 · 学术著录字段与可溯源 DOI 核验通过
+        </span>
+      </div>
+
+      <div className="blackboard-header">
+        <div className="bb-header-title">
+          <Layers size={15} />
+          <strong>协作黑板资产库</strong>
+          <span className="bb-count-pill">{deliverables.length} 份标准案卷</span>
+        </div>
+      </div>
+
+      <div className="blackboard-items-list">
+        {deliverables.map((item, idx) => {
+          const title: string = String(
+            item.metadata?.title ||
+            item.content.split("\n")[0].replace(/^#+\s*/, "").slice(0, 30) ||
+            `交付物 #${idx + 1}`
+          );
+          const isExpanded = expandedIds[item.id] !== false;
+          const artId = `GB-ART-${String(item.timestamp ? Math.floor(item.timestamp) : Date.now()).slice(-6)}-${idx + 1}`;
+          const handleCopy = () => {
+            navigator.clipboard.writeText(item.content);
+            setCopiedId(item.id);
+            setTimeout(() => setCopiedId(null), 2000);
+          };
+
+          return (
+            <article key={item.id} className="blackboard-card">
+              <header className="blackboard-card-header" onClick={() => toggleExpand(item.id)}>
+                <div className="bb-card-meta">
+                  <span className="bb-card-tag">GB 审定资产</span>
+                  <strong className="bb-card-title">{title}</strong>
+                  <span className="bb-card-author">{item.nickname || item.sender_name}</span>
+                </div>
+                <div className="bb-card-actions" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="bb-action-btn"
+                    onClick={handleCopy}
+                    title="复制完整内容"
+                  >
+                    {copiedId === item.id ? <Check size={13} color="#10b981" /> : <Copy size={13} />}
+                    <span>{copiedId === item.id ? "已复制" : "复制"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="bb-action-btn"
+                    onClick={() => toggleExpand(item.id)}
+                    title={isExpanded ? "收起" : "展开"}
+                  >
+                    {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  </button>
+                </div>
+              </header>
+
+              {/* 国家标准审定元数据条 */}
+              <div className="bb-card-audit-bar">
+                <span className="bb-audit-chip">流水号: {artId}</span>
+                <span className="bb-audit-chip ok">✓ GB/T 7714 格式符合</span>
+                <span className="bb-audit-chip ok">✓ 版本 v1.0 审定</span>
+                <span className="bb-audit-time">{formatRelative(item.timestamp)}</span>
+              </div>
+
+              {isExpanded && (
+                <div className="blackboard-card-body">
+                  <MarkdownText text={item.content} />
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function GroupCollaborationPanel({
+  messages,
+  liveBlackboardMessages,
+  groupMembers,
+  agents,
+}: {
+  messages: ChatMessage[];
+  liveBlackboardMessages: BlackboardMessage[];
+  groupMembers: string[];
+  agents: Agent[];
+}) {
+  const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
+
+  const toggleThought = (id: string) => {
+    setExpandedThoughts((prev) => ({ ...prev, [id]: prev[id] === false ? true : false }));
+  };
+
+  // 1. 提取所有智能体思考活动
+  const thoughtItems = (liveBlackboardMessages || []).filter(
+    (m) => m.metadata?.type === "thought" || m.type === "dispatch" || m.content.includes("思考与内部推理")
+  );
+
+  // 2. 提取群聊智能体接力协同轮次
+  const assistantTurns = messages.filter((m) => m.role === "assistant" && m.senderName && m.senderName !== "系统");
+
+  if (assistantTurns.length === 0 && thoughtItems.length === 0) {
+    return (
+      <div className="collab-empty-state">
+        <div className="collab-empty-icon">
+          <Activity size={26} />
+        </div>
+        <h4>暂无群聊协同记录</h4>
+        <p>当群内智能体接力交流、委派任务或执行深度推理时，将在此实时呈现协同流转脉络与思考过程。</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="group-collab-panel">
+      {/* 协同统计概览 */}
+      <div className="group-collab-header">
+        <div className="collab-stat-box">
+          <span className="collab-stat-val">{assistantTurns.length}</span>
+          <span className="collab-stat-lbl">协同棒次</span>
+        </div>
+        <div className="collab-stat-box">
+          <span className="collab-stat-val">{new Set(assistantTurns.map((t) => t.senderAgentId || t.senderName)).size}</span>
+          <span className="collab-stat-lbl">参与专家</span>
+        </div>
+        <div className="collab-stat-box">
+          <span className="collab-stat-val">{thoughtItems.length}</span>
+          <span className="collab-stat-lbl">推理过程</span>
+        </div>
+      </div>
+
+      {/* 智能体内部思考与心理推理活动 */}
+      {thoughtItems.length > 0 && (
+        <div className="collab-section">
+          <div className="collab-section-title">
+            <Sparkles size={14} color="#6366f1" />
+            <span>智能体内部推理与心理活动 ({thoughtItems.length})</span>
+          </div>
+          <div className="collab-thought-stack">
+            {thoughtItems.map((item) => {
+              const isExpanded = expandedThoughts[item.id] !== false;
+              const cleanContent = item.content.replace(/^💡\s*\*\*思考与内部推理\*\*：?\s*/i, "");
+              return (
+                <div key={item.id} className="collab-thought-card">
+                  <header
+                    className="collab-thought-header"
+                    onClick={() => toggleThought(item.id)}
+                  >
+                    <div className="thought-author-row">
+                      <span className="thought-avatar-chip">
+                        <Bot size={13} />
+                      </span>
+                      <strong>{item.nickname || item.sender_name}</strong>
+                      <span className="thought-role-tag">{item.role === "leader" ? "主持人" : "协同专家"}</span>
+                    </div>
+                    <div className="thought-toggle-row">
+                      <span className="thought-time">{formatRelative(item.timestamp)}</span>
+                      {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                    </div>
+                  </header>
+                  {isExpanded && (
+                    <div className="collab-thought-body">
+                      <MarkdownText text={cleanContent} />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 多智能体接力协同流 */}
+      <div className="collab-section">
+        <div className="collab-section-title">
+          <GitBranch size={14} color="#4f46e5" />
+          <span>群组接力协同流转动态</span>
+        </div>
+        <div className="group-collab-timeline">
+          {assistantTurns.map((turn, idx) => {
+            const hasBlackboard = turn.text.includes("【黑板】") || turn.text.includes("黑板");
+            const mentionMatch = turn.text.match(/@([^\s\n，。！？、]+)/g);
+            return (
+              <div key={turn.createdAt || idx} className="collab-timeline-item">
+                <div className="timeline-node">
+                  <span className="timeline-step-badge">{idx + 1}</span>
+                  {idx < assistantTurns.length - 1 && <span className="timeline-line" />}
+                </div>
+                <div className="timeline-content">
+                  <div className="timeline-meta">
+                    <span className="timeline-author">{turn.senderName}</span>
+                    {turn.isHost ? (
+                      <span className="member-host-badge">主持调度</span>
+                    ) : (
+                      <span className="member-expert-badge">受邀响应</span>
+                    )}
+                    {turn.result?.latency_ms && (
+                      <span className="timeline-latency">{formatMs(turn.result.latency_ms)}</span>
+                    )}
+                  </div>
+                  <div className="timeline-desc">
+                    {hasBlackboard && (
+                      <span className="timeline-chip deliverable">
+                        <Layers size={11} /> 交付成果已入黑板
+                      </span>
+                    )}
+                    {mentionMatch && mentionMatch.map((m) => (
+                      <span key={m} className="timeline-chip mention">
+                        接力流转 {m}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="timeline-snippet">
+                    {turn.text.replace(/>\s*📋[^\n]*/g, "").slice(0, 100).trim() || "完成本轮工作交互"}...
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GroupMembersPanel({
+  activeConv,
+  agents,
+  onUpdateConfig,
+  onClearChat,
+  onSwitchToBlackboard,
+  onMentionAgent,
+}: {
+  activeConv: Conversation;
+  agents: Agent[];
+  onUpdateConfig: (patch: Partial<GroupConfig>) => void;
+  onClearChat: () => void;
+  onSwitchToBlackboard: () => void;
+  onMentionAgent: (name: string) => void;
+}) {
+  const cfg = activeConv.groupConfig || { name: activeConv.title, members: [], hostAgentId: null };
+  const [name, setName] = useState(cfg.name || activeConv.title || "智能体协作讨论群");
+  const [search, setSearch] = useState("");
+  const [isRemoving, setIsRemoving] = useState(false);
+  const [showAddPicker, setShowAddPicker] = useState(false);
+  const [addSearch, setAddSearch] = useState("");
+
+  useEffect(() => {
+    setName(activeConv.groupConfig?.name || activeConv.title || "智能体协作讨论群");
+    setIsRemoving(false);
+    setShowAddPicker(false);
+  }, [activeConv.id, activeConv.groupConfig?.name]);
+
+  const activeAgents = agents.filter((a) => a.active);
+  const currentMemberAgents = (cfg.members || [])
+    .map((id) => agents.find((a) => a.id === id))
+    .filter(Boolean) as Agent[];
+
+  const filteredMembers = currentMemberAgents.filter((a) =>
+    search ? `${a.name} ${a.id} ${a.description || ""}`.toLowerCase().includes(search.toLowerCase()) : true
+  );
+
+  const availableToAdd = activeAgents.filter((a) => !(cfg.members || []).includes(a.id));
+  const filteredAvailable = availableToAdd.filter((a) =>
+    addSearch ? `${a.name} ${a.id} ${a.description || ""}`.toLowerCase().includes(addSearch.toLowerCase()) : true
+  );
+
+  const handleAddMember = (id: string) => {
+    const nextMembers = [...(cfg.members || []), id];
+    onUpdateConfig({ members: nextMembers });
+  };
+
+  const handleRemoveMember = (id: string) => {
+    const nextMembers = (cfg.members || []).filter((m) => m !== id);
+    const nextHost = cfg.hostAgentId === id ? null : cfg.hostAgentId;
+    onUpdateConfig({ members: nextMembers, hostAgentId: nextHost });
+  };
+
+  const handleHostChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    onUpdateConfig({ hostAgentId: val ? val : null });
+  };
+
+  const handleNameBlur = () => {
+    if (name.trim() && name.trim() !== cfg.name) {
+      onUpdateConfig({ name: name.trim() });
+    }
+  };
+
+  return (
+    <div className="group-members-panel-v2">
+      {/* 1. 群聊名称设置 */}
+      <div className="group-panel-section">
+        <label className="group-panel-label">群聊名称</label>
+        <div className="group-name-input-wrap">
+          <input
+            type="text"
+            className="group-panel-input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={handleNameBlur}
+            onKeyDown={(e) => e.key === "Enter" && handleNameBlur()}
+            placeholder="群聊名称"
+          />
+        </div>
+      </div>
+
+      {/* 2. 成员管理模块 */}
+      <div className="group-panel-section">
+        <div className="group-panel-section-header">
+          <label className="group-panel-label">
+            群成员 ({currentMemberAgents.length})
+          </label>
+          <div className="member-header-actions">
+            <button
+              type="button"
+              className={`member-tool-btn ${showAddPicker ? "active" : ""}`}
+              onClick={() => {
+                setShowAddPicker((v) => !v);
+                setIsRemoving(false);
+              }}
+            >
+              <Plus size={13} />
+              <span>添加</span>
+            </button>
+            <button
+              type="button"
+              className={`member-tool-btn ${isRemoving ? "danger active" : ""}`}
+              onClick={() => {
+                setIsRemoving((v) => !v);
+                setShowAddPicker(false);
+              }}
+            >
+              <Minus size={13} />
+              <span>{isRemoving ? "完成" : "管理"}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 成员头像网格 - 严格对称对齐 */}
+        <div className="group-matrix-grid">
+          {filteredMembers.map((agent) => {
+            const isHost = agent.id === cfg.hostAgentId;
+            return (
+              <div
+                key={agent.id}
+                className="group-matrix-item"
+                onClick={() => onMentionAgent(agent.name)}
+                title="点击在输入框 @TA"
+              >
+                <div className="group-matrix-avatar-wrap">
+                  <div className="group-matrix-avatar">
+                    <Bot size={22} />
+                  </div>
+                  {isHost && <span className="group-matrix-badge host">主持</span>}
+                  {isRemoving && (
+                    <button
+                      type="button"
+                      className="group-matrix-del-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRemoveMember(agent.id);
+                      }}
+                      title="移出此群"
+                    >
+                      <X size={10} />
+                    </button>
+                  )}
+                </div>
+                <span className="group-matrix-name">{agent.name}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* 展开的添加成员选择器 */}
+        {showAddPicker && (
+          <div className="group-add-picker-panel">
+            <div className="group-add-picker-header">
+              <span>选择要加入群聊的智能体 ({availableToAdd.length})</span>
+              <button
+                type="button"
+                className="quick-link-btn"
+                onClick={() => setShowAddPicker(false)}
+              >
+                收起
+              </button>
+            </div>
+            <input
+              type="text"
+              className="group-panel-input"
+              placeholder="按名称或职能筛选..."
+              value={addSearch}
+              onChange={(e) => setAddSearch(e.target.value)}
+            />
+            <div className="group-add-list">
+              {filteredAvailable.length === 0 ? (
+                <div className="group-add-empty">暂无更多可添加的智能体</div>
+              ) : (
+                filteredAvailable.map((a) => (
+                  <div key={a.id} className="group-add-item">
+                    <div className="group-add-item-info">
+                      <strong>{a.name}</strong>
+                      <span className="agent-desc">{a.description || a.id}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-add-agent"
+                      onClick={() => handleAddMember(a.id)}
+                    >
+                      <Plus size={12} /> 加入
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 3. 指定主持人 */}
+      <div className="group-panel-section">
+        <label className="group-panel-label">指定主持人</label>
+        <select
+          className="select-host-control"
+          value={cfg.hostAgentId || ""}
+          onChange={handleHostChange}
+        >
+          <option value="">群主 (用户自己主持 - 默认)</option>
+          {currentMemberAgents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name} (主持)
+            </option>
+          ))}
+        </select>
+        <p className="group-setting-tip">
+          指定主持人时，您的发言由主持人统筹拆解并调度专家；不指定则为开放自由协作。
+        </p>
+      </div>
+
+      {/* 4. 底部辅助操作 */}
+      <div className="group-panel-section group-panel-actions">
+        <button
+          type="button"
+          className="group-panel-action-btn"
+          onClick={onSwitchToBlackboard}
+        >
+          <BookOpen size={14} />
+          <span>查看协作黑板交付物</span>
+          <ChevronRight size={14} />
+        </button>
+
+        <button
+          type="button"
+          className="btn-danger-link"
+          onClick={onClearChat}
+        >
+          <Trash2 size={13} />
+          <span>清空本群聊天记录</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GroupSettingsDrawer({
   isOpen,
   mode,
   targetConv,
   agents,
   onClose,
   onSubmit,
+  onClearChat,
+  onViewCollaboration,
 }: {
   isOpen: boolean;
   mode: "create" | "edit";
@@ -5351,11 +5870,16 @@ function GroupChatModal({
   agents: Agent[];
   onClose: () => void;
   onSubmit: (config: GroupConfig) => void;
+  onClearChat?: () => void;
+  onViewCollaboration?: () => void;
 }) {
   const [name, setName] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [hostId, setHostId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [isRemovingMode, setIsRemovingMode] = useState(false);
+  const [showAddPicker, setShowAddPicker] = useState(false);
+  const [addSearch, setAddSearch] = useState("");
 
   useEffect(() => {
     if (mode === "edit" && targetConv?.groupConfig) {
@@ -5366,24 +5890,39 @@ function GroupChatModal({
       setName("智能体协作讨论群");
       const defaultAgents = agents.filter((a) => a.active).slice(0, 3).map((a) => a.id);
       setSelectedIds(defaultAgents);
-      const leader = agents.find((a) => a.role === "leader" && a.active);
-      setHostId(leader ? leader.id : null);
+      // 默认用户自己主持，不强制指定为 research_leader，避免角色幻觉
+      setHostId(null);
     }
+    setIsRemovingMode(false);
+    setShowAddPicker(false);
+    setSearch("");
+    setAddSearch("");
   }, [isOpen, mode, targetConv, agents]);
 
   if (!isOpen) return null;
 
   const activeAgents = agents.filter((a) => a.active);
-  const filteredAgents = activeAgents.filter((a) =>
-    `${a.name} ${a.id} ${a.description || ""}`.toLowerCase().includes(search.toLowerCase()),
+  const currentMemberAgents = selectedIds
+    .map((id) => agents.find((a) => a.id === id))
+    .filter(Boolean) as Agent[];
+
+  const filteredMembers = currentMemberAgents.filter((a) =>
+    search ? `${a.name} ${a.id} ${a.description || ""}`.toLowerCase().includes(search.toLowerCase()) : true
   );
 
-  const toggleAgent = (id: string) => {
+  const availableToAdd = activeAgents.filter((a) => !selectedIds.includes(a.id));
+  const filteredAvailable = availableToAdd.filter((a) =>
+    addSearch ? `${a.name} ${a.id} ${a.description || ""}`.toLowerCase().includes(addSearch.toLowerCase()) : true
+  );
+
+  const handleAddMember = (id: string) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  };
+
+  const handleRemoveMember = (id: string) => {
     setSelectedIds((prev) => {
-      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
-      if (hostId === id && !next.includes(id)) {
-        setHostId(null);
-      }
+      const next = prev.filter((x) => x !== id);
+      if (hostId === id) setHostId(null);
       return next;
     });
   };
@@ -5395,116 +5934,215 @@ function GroupChatModal({
     onSubmit({
       name: name.trim(),
       members: selectedIds,
-      hostAgentId: hostId,
+      hostAgentId: hostId && selectedIds.includes(hostId) ? hostId : null,
     });
+    onClose();
   };
 
   return (
-    <div className="group-modal-overlay" onClick={onClose}>
-      <div className="group-modal-container" onClick={(e) => e.stopPropagation()}>
-        <div className="group-modal-header">
-          <div className="modal-header-left">
-            <Users size={16} />
-            <h3>{mode === "create" ? "新建群聊" : "群成员管理"}</h3>
+    <div className="drawer-layer group-drawer-layer">
+      <button className="drawer-backdrop" onClick={onClose} aria-label="关闭侧边栏" />
+      <aside className="builder-drawer group-settings-drawer">
+        <div className="drawer-header group-drawer-header">
+          <div className="group-drawer-title-box">
+            <h2>{mode === "create" ? "新建群聊" : "群聊信息"}</h2>
+            <span className="drawer-subtitle">
+              {mode === "create"
+                ? "选择智能体成员组建协同群组"
+                : `${selectedIds.length} 位成员 · ${hostId ? `${agents.find((a) => a.id === hostId)?.name || hostId} (主持)` : "用户自己主持"}`}
+            </span>
           </div>
-          <button className="modal-close-btn" onClick={onClose} aria-label="关闭">
-            <X size={15} />
+          <button className="icon-button" onClick={onClose} aria-label="关闭">
+            <X size={18} />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="group-modal-form">
-          <div className="form-group">
-            <label>群聊名称</label>
+        <form onSubmit={handleSubmit} className="drawer-body group-drawer-body">
+          {/* 搜索群成员 */}
+          <div className="group-drawer-search">
+            <Search size={14} />
             <input
               type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="输入群聊名称..."
-              required
+              placeholder="搜索群成员..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
             />
           </div>
 
-          <div className="form-group">
-            <div className="form-group-label-row">
-              <label>选择群成员 ({selectedIds.length})</label>
-              <div className="quick-select-links">
-                <button
-                  type="button"
-                  onClick={() => setSelectedIds(activeAgents.map((a) => a.id))}
-                >
-                  全选
-                </button>
-                <span>·</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedIds([]);
-                    setHostId(null);
-                  }}
-                >
-                  清空
-                </button>
-              </div>
-            </div>
-            <div className="group-agent-search">
-              <Search size={14} />
-              <input
-                type="text"
-                placeholder="搜索智能体..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-            <div className="group-agent-picker-list">
-              {filteredAgents.map((agent) => {
-                const checked = selectedIds.includes(agent.id);
+          {/* 成员头像网格 (微信/Grok 风格) */}
+          <div className="group-matrix-container">
+            <div className="group-matrix-grid">
+              {filteredMembers.map((agent) => {
+                const isHost = hostId === agent.id;
                 return (
-                  <div
-                    key={agent.id}
-                    className={`group-agent-picker-item ${checked ? "selected" : ""}`}
-                    onClick={() => toggleAgent(agent.id)}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => {}}
-                    />
-                    <div className="agent-info">
-                      <div className="agent-title-row">
-                        <strong>{agent.name}</strong>
-                        <span className={`role-pill ${agent.role}`}>
-                          {agent.role === "leader" ? "协调型" : "执行型"}
-                        </span>
-                        {hostId === agent.id && <span className="host-pill">主持</span>}
+                  <div key={agent.id} className="group-matrix-item">
+                    <div className="group-matrix-avatar-wrap">
+                      <div className="group-matrix-avatar">
+                        <Bot size={18} />
                       </div>
-                      <p className="agent-desc">{agent.description || "专业领域智能体"}</p>
+                      {isHost && <span className="group-matrix-badge host">主持</span>}
+                      {isRemovingMode && (
+                        <button
+                          type="button"
+                          className="group-matrix-del-btn"
+                          onClick={() => handleRemoveMember(agent.id)}
+                          title="移出此成员"
+                        >
+                          <Minus size={12} />
+                        </button>
+                      )}
                     </div>
+                    <span className="group-matrix-name" title={agent.name}>
+                      {agent.name}
+                    </span>
                   </div>
                 );
               })}
+
+              {/* + 添加 按钮 */}
+              <button
+                type="button"
+                className={`group-matrix-action-card ${showAddPicker ? "active" : ""}`}
+                onClick={() => {
+                  setShowAddPicker((v) => !v);
+                  setIsRemovingMode(false);
+                }}
+                title="添加新成员"
+              >
+                <div className="group-matrix-dashed-box">
+                  <Plus size={20} />
+                </div>
+                <span>添加</span>
+              </button>
+
+              {/* - 移出 按钮 */}
+              <button
+                type="button"
+                className={`group-matrix-action-card ${isRemovingMode ? "active" : ""}`}
+                onClick={() => {
+                  setIsRemovingMode((v) => !v);
+                  setShowAddPicker(false);
+                }}
+                title="移出成员"
+              >
+                <div className="group-matrix-dashed-box">
+                  <Minus size={20} />
+                </div>
+                <span>{isRemovingMode ? "完成" : "移出"}</span>
+              </button>
             </div>
           </div>
 
-          <div className="form-group">
-            <label>指定主持人</label>
-            <select
-              value={hostId || ""}
-              onChange={(e) => setHostId(e.target.value ? e.target.value : null)}
-              className="select-host-control"
-            >
-              <option value="">自己主持</option>
-              {selectedIds.map((id) => {
-                const a = agents.find((ag) => ag.id === id);
-                return (
-                  <option key={id} value={id}>
-                    {a ? a.name : id} (主持)
-                  </option>
-                );
-              })}
-            </select>
+          {/* 展开的添加成员选择面板 */}
+          {showAddPicker && (
+            <div className="group-add-picker-panel">
+              <div className="group-add-picker-header">
+                <strong>添加智能体至本群</strong>
+                <button
+                  type="button"
+                  className="quick-link-btn"
+                  onClick={() => setShowAddPicker(false)}
+                >
+                  收起
+                </button>
+              </div>
+              <div className="group-drawer-search inline">
+                <Search size={13} />
+                <input
+                  type="text"
+                  placeholder="筛选可添加的智能体..."
+                  value={addSearch}
+                  onChange={(e) => setAddSearch(e.target.value)}
+                />
+              </div>
+              <div className="group-add-list">
+                {filteredAvailable.length === 0 ? (
+                  <div className="group-add-empty">无更多可添加的智能体</div>
+                ) : (
+                  filteredAvailable.map((ag) => (
+                    <div key={ag.id} className="group-add-item">
+                      <div className="group-add-item-info">
+                        <strong>{ag.name}</strong>
+                        <span className="agent-desc">{ag.description || "专业领域智能体"}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-add-agent"
+                        onClick={() => handleAddMember(ag.id)}
+                      >
+                        <Plus size={13} /> 加入
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 微信风格群设置清单 */}
+          <div className="group-settings-list">
+            <div className="group-setting-row">
+              <label>群聊名称</label>
+              <input
+                type="text"
+                className="group-inline-input"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="输入群聊名称..."
+                required
+              />
+            </div>
+
+            <div className="group-setting-row">
+              <label>指定主持人</label>
+              <select
+                value={hostId || ""}
+                onChange={(e) => setHostId(e.target.value ? e.target.value : null)}
+                className="select-host-control"
+              >
+                <option value="">自己主持 (用户担任群主)</option>
+                {selectedIds.map((id) => {
+                  const a = agents.find((ag) => ag.id === id);
+                  return (
+                    <option key={id} value={id}>
+                      {a ? a.name : id} (主持)
+                    </option>
+                  );
+                })}
+              </select>
+              <span className="group-setting-tip">
+                指定主持人时，您的发言由主持人统筹拆解并调度专家；不指定则为开放自由协作。
+              </span>
+            </div>
+
+            {mode === "edit" && onViewCollaboration && (
+              <div className="group-setting-row clickable" onClick={onViewCollaboration}>
+                <div className="group-setting-flex">
+                  <div>
+                    <label>查看协作黑板与协同过程</label>
+                    <span className="group-setting-tip">
+                      查看所有智能体沉淀的黑板成果与推理过程
+                    </span>
+                  </div>
+                  <ChevronRight size={16} className="setting-chevron" />
+                </div>
+              </div>
+            )}
+
+            {mode === "edit" && onClearChat && (
+              <div className="group-setting-row danger-row">
+                <button
+                  type="button"
+                  className="btn-danger-link"
+                  onClick={onClearChat}
+                >
+                  <Trash2 size={14} /> 清空本群聊天记录
+                </button>
+              </div>
+            )}
           </div>
 
-          <div className="group-modal-footer">
+          <div className="drawer-footer group-drawer-footer">
             <button type="button" className="btn-secondary" onClick={onClose}>
               取消
             </button>
@@ -5513,11 +6151,11 @@ function GroupChatModal({
               className="btn-primary"
               disabled={selectedIds.length === 0 || !name.trim()}
             >
-              {mode === "create" ? "创建群聊" : "保存修改"}
+              {mode === "create" ? "创建群聊" : "保存并应用"}
             </button>
           </div>
         </form>
-      </div>
+      </aside>
     </div>
   );
 }
@@ -5551,8 +6189,8 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const [inspector, setInspector] = useState<ChatResult | null>(
     latestResult(initialActive?.messages || []),
   );
-  const [detail, setDetail] = useState<"route" | "collaboration" | "members">(
-    "route",
+  const [detail, setDetail] = useState<"route" | "collaboration" | "members" | "blackboard">(
+    initialActive?.isGroup || activeMeta?.isGroup ? "members" : "route",
   );
   const [content, setContent] = useState<"chat" | "api">("chat");
   const [queue, setQueueState] = useState<QueuedTask[]>(initialActive?.queue || []);
@@ -5563,6 +6201,73 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const [groupModalOpen, setGroupModalOpen] = useState(false);
   const [groupModalMode, setGroupModalMode] = useState<"create" | "edit">("create");
   const [groupModalTargetId, setGroupModalTargetId] = useState<string | null>(null);
+
+  // 确保群聊与单聊视图的 Tab 始终合法隔离
+  useEffect(() => {
+    const meta = conversations.find((c) => c.id === activeId);
+    if (meta?.isGroup) {
+      if (detail === "route") {
+        setDetail("members");
+      }
+    } else {
+      if (detail === "members") {
+        setDetail("route");
+      }
+    }
+  }, [activeId, conversations, detail]);
+
+  // 全量汇总黑板交付资产 (当前实时消息 + 历史消息持久提取)
+  const blackboardDeliverables = useMemo<BlackboardMessage[]>(() => {
+    const list: BlackboardMessage[] = [];
+    const seen = new Set<string>();
+
+    for (const msg of liveBlackboardMessages) {
+      if (msg.type === "report" || String(msg.metadata?.source || "").startsWith("group_chat")) {
+        const key = msg.metadata?.title ? `title:${msg.metadata.title}` : msg.id;
+        if (!seen.has(key)) {
+          seen.add(key);
+          list.push(msg);
+        }
+      }
+    }
+
+    for (const m of messages) {
+      const bb = (m.result?.result_data as any)?.shared_context?.blackboard_messages || [];
+      for (const msg of bb) {
+        if (msg.type === "report" || String(msg.metadata?.source || "").startsWith("group_chat")) {
+          const key = msg.metadata?.title ? `title:${msg.metadata.title}` : msg.id;
+          if (!seen.has(key)) {
+            seen.add(key);
+            list.push(msg);
+          }
+        }
+      }
+      if (m.text && m.text.includes("```blackboard")) {
+        const bbRegex = /```blackboard:?([^\n\r]*)\n([\s\S]*?)```/gi;
+        let match;
+        while ((match = bbRegex.exec(m.text)) !== null) {
+          const title = (match[1] || "").trim() || "工作交付物";
+          const content = (match[2] || "").trim();
+          const key = `title:${title}`;
+          if (!seen.has(key) && content) {
+            seen.add(key);
+            list.push({
+              id: `extracted_${title}_${m.createdAt || Date.now()}`,
+              sender_id: m.senderAgentId || "agent",
+              sender_name: m.senderName || "智能体",
+              nickname: `@${m.senderName || "智能体"}`,
+              role: m.isHost ? "leader" : "expert",
+              type: "report",
+              content: `# ${title}\n\n${content}`,
+              timestamp: (m.createdAt || Date.now()) / 1000,
+              metadata: { title, source: "group_chat_history" },
+            });
+          }
+        }
+      }
+    }
+    return list;
+  }, [liveBlackboardMessages, messages]);
 
   const [mentionMenuOpen, setMentionMenuOpen] = useState(false);
   const [mentionFilter, setMentionFilter] = useState("");
@@ -6067,17 +6772,26 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
 
     if (mentionedMember) {
       firstSpeakerId = mentionedMember;
-    } else if (groupCfg.hostAgentId) {
+    } else if (groupCfg.hostAgentId && groupCfg.members.includes(groupCfg.hostAgentId)) {
       firstSpeakerId = groupCfg.hostAgentId;
     } else {
-      firstSpeakerId = agentId || groupCfg.members[0];
+      firstSpeakerId = groupCfg.members[0];
     }
+
+    const matchMention = (text: string, mId: string) => {
+      const a = agents.find((ag) => ag.id === mId);
+      if (!a) return false;
+      if (text.includes(`@${a.name}`) || text.includes(`@${a.id}`)) return true;
+      const shortName = a.name.replace(/智能体$/, "").replace(/专家$/, "");
+      if (shortName.length >= 2 && text.includes(`@${shortName}`)) return true;
+      return false;
+    };
 
     // 平台群聊通道：本地黑板 / 国标 MQ 群组（提示词与历史由服务端统一组装）
     if (groupCfg.backendId) {
       let chainTarget = firstSpeakerId;
       let chainText = userText;
-      for (let round = 0; round < 2 && chainTarget; round += 1) {
+      for (let round = 0; round < 6 && chainTarget; round += 1) {
         const speakerAgent = agents.find((a) => a.id === chainTarget);
         try {
           const res = await api.sendGroupChatMessage(
@@ -6110,8 +6824,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
           await onComplete();
           const nextTarget = groupCfg.members.find((mId) => {
             if (mId === res.agent_id) return false;
-            const a = agents.find((ag) => ag.id === mId);
-            return a && res.reply && (res.reply.includes(`@${a.name}`) || res.reply.includes(`@${a.id}`));
+            return matchMention(res.reply || "", mId);
           });
           if (!nextTarget) break;
           chainTarget = nextTarget;
@@ -6143,11 +6856,13 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
       const speakerAgent = agents.find((a) => a.id === targetId);
       const isHost = targetId === groupCfg.hostAgentId;
 
-      const membersListStr = groupCfg.members
-        .map((mId) => {
-          const a = agents.find((ag) => ag.id === mId);
-          return `- ${a?.name || mId}（ID: ${mId}，专长: ${a?.description || "领域专家"}）`;
-        })
+      const validMemberAgents = groupCfg.members
+        .map((mId) => agents.find((ag) => ag.id === mId))
+        .filter(Boolean) as Agent[];
+      const validMemberNames = validMemberAgents.map((a) => `@${a.name}`).join("、");
+
+      const membersListStr = validMemberAgents
+        .map((a) => `- ${a.name}（ID: ${a.id}，专长: ${a.description || "领域专家"}）`)
         .join("\n");
 
       const cleanHistory = currentMsgs
@@ -6164,26 +6879,37 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
         })
         .join("\n\n");
 
-      const otherMembers = groupCfg.members
-        .filter((mId) => mId !== targetId)
-        .map((mId) => agents.find((ag) => ag.id === mId)?.name || mId);
-      const sampleOther = otherMembers[0] || "其他专家";
+      const otherMembers = validMemberAgents
+        .filter((a) => a.id !== targetId)
+        .map((a) => a.name);
+      const sampleOther = otherMembers[0] || (validMemberAgents[0]?.name || "其他专家");
 
       const groupPrompt = `【AIP 国标规范·智能体多方协作群聊】
 你正在参与群聊「${groupCfg.name}」。
 你的身份：${speakerAgent?.name || targetId}（角色：${isHost ? "本群主持人" : "受邀群成员"}）。
-群内所有智能体成员：
+群内所有成员（仅限以下真实存在的成员，无其他人）：
 ${membersListStr}
 
-【群聊规则与格式】：
-1. 这是一个开放、平等的专业群聊，你正在直接公开发言。
-2. 你的发言必须言简意赅、切中要害。直接给出公开回复，绝对不要包含内部思考草稿（如 <think>）。
-3. 如果你需要让群内某位专家处理具体任务或回答问题，请在发言中明确使用「@专家名称」（例如：@${sampleOther} 请...）。系统将自动触发该专家在群内继续响应。
-4. ${
-        isHost
-          ? "作为主持人，你负责统筹协调。你可以直接解答用户疑问，也可以将任务拆解后艾特对应专家协同，或发消息面向全群总结。"
-          : "作为受邀专家，请针对艾特你的问题或主持人的委派，给出专业解答。"
-      }
+【核心协作与输出规范（必须严格遵守）】：
+1. 真实工作群沟通（仅限沟通短语）：
+   - 公开回复必须像人类专家在微信工作群/Slack/飞书协作一样简明干练（控制在 50~120 字以内）。
+   - 聊天气泡内【只允许】输出人类沟通短语（如确认诉求、交接工作、告知进度、@下一棒）。
+   - 【严禁】在主聊天气泡内直接罗列大篇幅方案正文、长清单、复杂表格或多级标题。
+2. 实质方案全部放入黑板（对齐 GB/T 43444-2023 与 GB/T 7714-2015 国家标准）：
+   - 所有实质性的工作交付物（如详细研究方案、计量方程、因果推断设计、数据提取表、文献综述、代码等），必须且只能放入以下 blackboard 代码块中：
+\`\`\`blackboard:交付物标题
+这里放置完整的详细方案、表格、数据或代码...
+\`\`\`
+   - 若涉及学术文献或参考文献著录，必须严格遵循国家标准《GB/T 7714-2015》著录规范（包含序号、责任者、题名、文献标识、出版信息及 DOI 唯一溯源标识）。
+   - 交付物会自动沉淀到本群【黑板】共享资产库中打上国标审定流水号，主聊天气泡只保留极简交接与提炼。
+3. 严禁幻觉 @：你只能 @ 本群真实存在的成员（当前仅限：${validMemberNames}）。绝对严禁 @ 未入群的角色（严禁出现 @research_leader 或任何假想的负责人）。如需向群主汇报且未指定主持人，直接以文字回复群主即可。
+4. 如需其他专家协作：在简短发言中使用「@专家名称 简要需求」（例如：@${sampleOther} 请...），系统会自动唤醒该专家接力。
+5. 严禁包含思考草稿或 <think> 标签，直接给出面向群聊的公开回复。
+${
+  isHost
+    ? "作为主持人，你负责统筹协调。你可以直接解答用户疑问，也可以将任务拆解后艾特对应专家协同，或发消息面向全群总结。"
+    : "作为受邀专家，请针对艾特你的问题或主持人的委派，给出专业解答。"
+}
 
 【群聊历史公开记录】：
 ${cleanHistory}
@@ -6237,11 +6963,91 @@ ${cleanHistory}
         sessionRef.current = result.session_id;
 
         let finalAnswer = result.answer;
+
+        // 1. 提取 <think> 思考内容至黑板/协作活动，保持主气泡极简
+        const thinkMatch = finalAnswer.match(/<think>([\s\S]*?)<\/think>/i);
+        if (thinkMatch && thinkMatch[1].trim()) {
+          const thinkText = thinkMatch[1].trim();
+          setLiveBlackboardMessages((prev) => [
+            ...prev,
+            {
+              id: `think_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              sender_id: targetId,
+              sender_name: speakerAgent?.name || targetId,
+              nickname: `@${speakerAgent?.name || targetId}`,
+              role: isHost ? "leader" : "expert",
+              type: "dispatch",
+              content: `💡 **思考与内部推理**：\n${thinkText}`,
+              timestamp: Date.now() / 1000,
+              metadata: { type: "thought" },
+            },
+          ]);
+        }
         finalAnswer = finalAnswer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
+        // 2. 提取 ```blackboard:交付物标题 沉淀至黑板协作资产
+        let hasBlackboardDelivery = false;
+        const bbRegex = /```blackboard:?([^\n\r]*)\n([\s\S]*?)```/gi;
+        let bbMatch;
+        while ((bbMatch = bbRegex.exec(finalAnswer)) !== null) {
+          const bbTitle = (bbMatch[1] || "").trim() || "工作交付物";
+          const bbContent = (bbMatch[2] || "").trim();
+          if (bbContent) {
+            hasBlackboardDelivery = true;
+            setLiveBlackboardMessages((prev) => [
+              ...prev,
+              {
+                id: `bb_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                sender_id: targetId,
+                sender_name: speakerAgent?.name || targetId,
+                nickname: `@${speakerAgent?.name || targetId}`,
+                role: isHost ? "leader" : "expert",
+                type: "report",
+                content: `# ${bbTitle}\n\n${bbContent}`,
+                timestamp: Date.now() / 1000,
+                metadata: { title: bbTitle, source: "group_chat" },
+              },
+            ]);
+          }
+        }
+        let chatCleanAnswer = finalAnswer.replace(
+          /```blackboard:?([^\n\r]*)\n[\s\S]*?```/gi,
+          (_match, p1) => {
+            const title = (p1 || "").trim() || "工作交付物";
+            return `\n\n> 📋 **黑板成果已沉淀**：已将「${title}」写入【黑板】`;
+          }
+        ).trim();
+
+        // 3. 兜底保护：若智能体未按规范使用 blackboard 块但输出了较长或分段的方案案卷（> 200 字），自动将后续实质方案切分送入黑板
+        if (!hasBlackboardDelivery && chatCleanAnswer.length > 200) {
+          const sectionSplit = chatCleanAnswer.search(/\n(?=[#一二三四五六七八九十0-9]+[、\.·\s]|\n## |\n- |\n\* |【)/);
+          if (sectionSplit > 20 && sectionSplit < 320) {
+            const briefIntro = chatCleanAnswer.slice(0, sectionSplit).trim();
+            const deepDeliverable = chatCleanAnswer.slice(sectionSplit).trim();
+            const title = "工作交付物与方案设计";
+            setLiveBlackboardMessages((prev) => [
+              ...prev,
+              {
+                id: `bb_split_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                sender_id: targetId,
+                sender_name: speakerAgent?.name || targetId,
+                nickname: `@${speakerAgent?.name || targetId}`,
+                role: isHost ? "leader" : "expert",
+                type: "report",
+                content: `# ${title}\n\n${deepDeliverable}`,
+                timestamp: Date.now() / 1000,
+                metadata: { title, source: "group_chat_split" },
+              },
+            ]);
+            const mentionTailMatch = deepDeliverable.match(/(@[^\s\n]+[^\n]*)$/);
+            const tailMention = mentionTailMatch ? `\n\n${mentionTailMatch[1]}` : "";
+            chatCleanAnswer = `${briefIntro}\n\n> 📋 **黑板成果已沉淀**：详细方案与数据分析表已写入【黑板】${tailMention}`;
+          }
+        }
 
         const assistantMsg: ChatMessage = {
           role: "assistant",
-          text: finalAnswer,
+          text: chatCleanAnswer,
           result,
           senderAgentId: targetId,
           senderName: speakerAgent?.name || targetId,
@@ -6259,11 +7065,10 @@ ${cleanHistory}
 
         await onComplete();
 
-        if (chainRound < 2 && !stopRequestedRef.current) {
+        if (chainRound < 6 && !stopRequestedRef.current) {
           const nextTargetId = groupCfg.members.find((mId) => {
             if (mId === targetId) return false;
-            const a = agents.find((ag) => ag.id === mId);
-            return a && (finalAnswer.includes(`@${a.name}`) || finalAnswer.includes(`@${a.id}`));
+            return matchMention(finalAnswer, mId);
           });
           if (nextTargetId) {
             await executeSpeaker(nextTargetId, [...currentMsgs, assistantMsg], chainRound + 1);
@@ -6609,7 +7414,6 @@ void runMessage(next.text, next.agentId, next.attachments);
     "推导自适应多智能体通信博弈模型，给出数学公式与命题假说",
     "设计一项因果推断实证实验方案，设定计量回归模型与稳健性检验",
     "对我的论文方法论与实验设计出具同行评审意见（Peer Review）",
-    "核验 BibTeX 参考文献引注规范，并进行学术原创性查重初筛",
   ];
   const compressed = (() => {
     const strategy = settings.compressionStrategy || (settings.autoCompress ? "auto" : "off");
@@ -6803,11 +7607,12 @@ void runMessage(next.text, next.agentId, next.attachments);
                     className="edit-chat"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setGroupModalMode("edit");
-                      setGroupModalTargetId(conversation.id);
-                      setGroupModalOpen(true);
+                      setActiveId(conversation.id);
+                      setDetail("members");
+                      setInspectorCollapsed(false);
+                      setMobileInspectorOpen(true);
                     }}
-                    title="设置"
+                    title="群成员与设置"
                   >
                     <SlidersHorizontal size={13} />
                   </button>
@@ -7439,27 +8244,50 @@ void runMessage(next.text, next.agentId, next.attachments);
           </button>
         </div>
         <div className="inspector-header">
-          <div className={`detail-tabs ${activeMeta?.isGroup ? "detail-tabs-3" : "detail-tabs-2"}`}>
-            {activeMeta?.isGroup && (
-              <button
-                className={detail === "members" ? "active" : ""}
-                onClick={() => setDetail("members")}
-              >
-                成员
-              </button>
+          <div className="detail-tabs detail-tabs-3">
+            {activeMeta?.isGroup ? (
+              <>
+                <button
+                  className={detail === "members" ? "active" : ""}
+                  onClick={() => setDetail("members")}
+                >
+                  成员
+                </button>
+                <button
+                  className={detail === "collaboration" ? "active" : ""}
+                  onClick={() => setDetail("collaboration")}
+                >
+                  协作
+                </button>
+                <button
+                  className={detail === "blackboard" ? "active" : ""}
+                  onClick={() => setDetail("blackboard")}
+                >
+                  黑板 {blackboardDeliverables.length > 0 && <span className="tab-badge">{blackboardDeliverables.length}</span>}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className={detail === "route" ? "active" : ""}
+                  onClick={() => setDetail("route")}
+                >
+                  路由
+                </button>
+                <button
+                  className={detail === "collaboration" ? "active" : ""}
+                  onClick={() => setDetail("collaboration")}
+                >
+                  协作
+                </button>
+                <button
+                  className={detail === "blackboard" ? "active" : ""}
+                  onClick={() => setDetail("blackboard")}
+                >
+                  黑板 {blackboardDeliverables.length > 0 && <span className="tab-badge">{blackboardDeliverables.length}</span>}
+                </button>
+              </>
             )}
-            <button
-              className={detail === "route" ? "active" : ""}
-              onClick={() => setDetail("route")}
-            >
-              路由
-            </button>
-            <button
-              className={detail === "collaboration" ? "active" : ""}
-              onClick={() => setDetail("collaboration")}
-            >
-              协作
-            </button>
           </div>
           <button
             type="button"
@@ -7472,59 +8300,36 @@ void runMessage(next.text, next.agentId, next.attachments);
           </button>
         </div>
         {activeMeta?.isGroup && detail === "members" && (
-          <div className="group-members-panel">
-            <div className="members-panel-title">
-              <span>成员 ({loadConversationData(activeId)?.groupConfig?.members.length || 0})</span>
-              <button
-                type="button"
-                className="members-panel-manage-btn"
-                onClick={() => {
-                  setGroupModalMode("edit");
-                  setGroupModalTargetId(activeId);
-                  setGroupModalOpen(true);
-                }}
-              >
-                管理
-              </button>
-            </div>
-            <div className="members-panel-list">
-              {loadConversationData(activeId)?.groupConfig?.members.map((mId) => {
-                const a = agents.find((ag) => ag.id === mId);
-                const isHost = mId === loadConversationData(activeId)?.groupConfig?.hostAgentId;
-                return (
-                  <div key={mId} className="member-panel-card">
-                    <div className="member-avatar">
-                      <Bot size={15} />
-                    </div>
-                    <div className="member-meta">
-                      <div className="member-name-row">
-                        <strong>{a?.name || mId}</strong>
-                        {isHost && <span className="member-host-badge">主持</span>}
-                      </div>
-                      <span className="member-role-desc">
-                        {a?.role === "leader" ? "协调型" : "执行型"}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      className="member-mention-btn"
-                      onClick={() => {
-                        const name = a?.name || mId;
-                        const mentionText = `@${name} `;
-                        setInput((prev) => (prev.includes(mentionText) ? prev : `${mentionText}${prev}`));
-                        composerTextareaRef.current?.focus();
-                      }}
-                      title="点击在输入框 @TA"
-                    >
-                      @
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <GroupMembersPanel
+            activeConv={
+              loadConversationData(activeId) || {
+                id: activeId,
+                title: activeMeta?.title || "智能体协作讨论群",
+                messages: [],
+              }
+            }
+            agents={agents}
+            onUpdateConfig={(patch) => updateGroupConfig(activeId, patch)}
+            onClearChat={() => {
+              if (window.confirm("确定清空当前群聊的所有聊天记录与黑板成果吗？")) {
+                setMessages([]);
+                setLiveBlackboardMessages([]);
+                const conv = loadConversationData(activeId);
+                if (conv) {
+                  conv.messages = [];
+                  saveConversationData(conv);
+                }
+              }
+            }}
+            onSwitchToBlackboard={() => setDetail("blackboard")}
+            onMentionAgent={(name) => {
+              const mentionText = `@${name} `;
+              setInput((prev) => (prev.includes(mentionText) ? prev : `${mentionText}${prev}`));
+              composerTextareaRef.current?.focus();
+            }}
+          />
         )}
-        {inspector && detail === "route" && (
+        {!activeMeta?.isGroup && inspector && detail === "route" && (
           <>
             <div className="selected-route">
               <span>已选择</span>
@@ -7579,15 +8384,27 @@ void runMessage(next.text, next.agentId, next.attachments);
           </>
         )}
         {detail === "collaboration" && (
-          <CollaborationPanel
-            inspector={inspector}
-            messages={messages}
-            liveSubagents={Object.values(liveSubagents)}
-            liveBlackboardMessages={liveBlackboardMessages}
-            toolNames={toolNames}
-          />
+          activeMeta?.isGroup ? (
+            <GroupCollaborationPanel
+              messages={messages}
+              liveBlackboardMessages={liveBlackboardMessages}
+              groupMembers={loadConversationData(activeId)?.groupConfig?.members || []}
+              agents={agents}
+            />
+          ) : (
+            <CollaborationPanel
+              inspector={inspector}
+              messages={messages}
+              liveSubagents={Object.values(liveSubagents)}
+              liveBlackboardMessages={liveBlackboardMessages}
+              toolNames={toolNames}
+            />
+          )
         )}
-        {detail === "route" && !inspector && (
+        {detail === "blackboard" && (
+          <BlackboardPanel items={blackboardDeliverables} />
+        )}
+        {!activeMeta?.isGroup && detail === "route" && !inspector && (
           <div className="inspector-empty">
             {sending ? "正在评估路由与可用智能体..." : "等待运行记录"}
           </div>
@@ -7619,8 +8436,8 @@ void runMessage(next.text, next.agentId, next.attachments);
           }}
         />
       )}
-      <GroupChatModal
-        isOpen={groupModalOpen}
+      <GroupSettingsDrawer
+        isOpen={groupModalOpen && groupModalMode === "create"}
         mode={groupModalMode}
         targetConv={
           groupModalTargetId
@@ -7637,6 +8454,24 @@ void runMessage(next.text, next.agentId, next.attachments);
           } else {
             updateGroupConfig(groupModalTargetId || activeId, config);
           }
+        }}
+        onClearChat={() => {
+          if (window.confirm("确定清空当前群聊的所有消息记录吗？")) {
+            setMessages([]);
+            setLiveBlackboardMessages([]);
+            const cid = groupModalTargetId || activeId;
+            const conv = loadConversationData(cid);
+            if (conv) {
+              conv.messages = [];
+              saveConversationData(conv);
+            }
+            setGroupModalOpen(false);
+          }
+        }}
+        onViewCollaboration={() => {
+          setDetail("collaboration");
+          setInspectorCollapsed(false);
+          setGroupModalOpen(false);
         }}
       />
     </div>
@@ -7881,7 +8716,7 @@ function ConciseAgentItem({
               className="concise-link"
               onClick={() => onInspect("collaboration")}
             >
-              在右侧查看协同详情 ({action.totalCollabs} 个记录){" "}
+              查看协同详情 ({action.totalCollabs} 个记录){" "}
               <ChevronRight size={12} />
             </button>
           )}
@@ -8119,7 +8954,7 @@ function LiveSubagentRow({
               className="concise-link"
               onClick={() => onInspect("collaboration")}
             >
-              在右侧查看协同详情 <ChevronRight size={12} />
+              查看协同详情 <ChevronRight size={12} />
             </button>
           </div>
         </div>

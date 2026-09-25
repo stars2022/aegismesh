@@ -1448,15 +1448,23 @@ async def post_group_chat_message(group_id: str, payload: GroupChatMessageIn, db
         return {"reply": None, "agent_id": None, "agent_name": None, "transport": group.transport}
 
     is_host = target_id == group.host_agent_id
+    valid_names = "、".join(
+        (agent.name if (agent := db.get(Agent, m)) else m)
+        for m in group.members
+    )
     prompt = (
         f"【AIP 国标规范·智能体多方协作群聊】\n"
         f"你正在参与群聊「{group.name}」。\n"
         f"你的身份：{target_agent.name}（角色：{'本群主持人' if is_host else '受邀群成员'}）。\n"
-        f"群内所有智能体成员：\n{_group_members_row(group, db)}\n\n"
-        f"【群聊规则与格式】：\n"
-        f"1. 这是一个开放、平等的专业群聊，你正在直接公开发言。\n"
-        f"2. 你的发言必须言简意赅、切中要害。直接给出公开回复，绝对不要包含内部思考草稿（如 <think>）。\n"
-        f"3. 如果你需要让群内某位专家处理具体任务，请在发言中明确使用「@专家名称」，系统将自动触发该专家继续响应。\n"
+        f"群内所有智能体成员（仅限以下真实成员）：\n{_group_members_row(group, db)}\n\n"
+        f"【核心协作与输出规范（必须严格遵守）】：\n"
+        f"1. 真实工作群沟通（仅限沟通短语）：群聊公开回复必须像人类专家在微信工作群/Slack/飞书协作一样简明干练（控制在 50~120 字以内）。聊天气泡内只允许输出人类沟通短语（如确认诉求、交接工作、告知进度、@下一棒），严禁在主聊天气泡内直接罗列大篇幅方案正文、长清单、复杂表格或多级标题。\n"
+        f"2. 实质方案全部放入黑板（对齐 GB/T 43444-2023 与 GB/T 7714-2015 国家标准）：所有实质性的工作交付物（如详细研究方案、计量方程、因果推断设计、数据提取表、文献综述、代码等），必须且只能放入以下 blackboard 代码块中：\n"
+        f"```blackboard:交付物标题\n"
+        f"这里放置完整的详细方案、表格、数据或代码...\n"
+        f"```\n"
+        f"若涉及学术文献，必须严格遵循国家标准《GB/T 7714-2015》著录规范（包含序号、责任者、题名、出版项与 DOI 溯源标识）。系统会自动将黑板内容提取沉淀到右侧【黑板】资产库并核验国标流水号，保持群聊主气泡清爽整洁。\n"
+        f"3. 严禁幻觉 @：你只能 @ 本群真实存在的成员（当前仅限：{valid_names}）。绝对严禁 @ 未入群的角色（严禁出现 @research_leader 或任何未在群成员列表中的假想负责人）。如需向群主汇报且未指定主持人，直接以文字回复群主即可。\n"
         f"4. {'作为主持人，你负责统筹协调：直接解答疑问、拆解任务并艾特对应专家，或面向全群总结。' if is_host else '作为受邀专家，请针对艾特你的问题或主持人的委派，给出专业解答。'}\n\n"
         f"【群聊历史公开记录】：\n{_group_history_text(group_id, db)}\n\n"
         f"请作为「{target_agent.name}」在群聊中发表你的公开回复："

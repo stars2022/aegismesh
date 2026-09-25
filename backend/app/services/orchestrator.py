@@ -1178,7 +1178,7 @@ class ReliableOrchestrator:
                             "call_chain": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "可选，调用链追踪列表（如 ['research_leader']）。系统会自动注入并校验当前调用链，防止循环调用。",
+                                "description": "可选，调用链追踪列表。系统会自动注入并校验当前调用链，防止循环调用。",
                             },
                             "wait": {
                                 "type": "boolean",
@@ -2488,7 +2488,7 @@ class ReliableOrchestrator:
                     )
                     asyncio.create_task(
                         amp_service.record_access(
-                            caller_aic=invocation.selected_agent_id or "local:research_leader",
+                            caller_aic=invocation.selected_agent_id or f"local:{effective_caller}",
                             callee_aic=agent.aic,
                             task_id=subtask_id,
                             duration_ms=int(latency_ms),
@@ -2581,7 +2581,7 @@ class ReliableOrchestrator:
                     )
                     asyncio.create_task(
                         amp_service.record_access(
-                            caller_aic=invocation.selected_agent_id or "local:research_leader",
+                            caller_aic=invocation.selected_agent_id or f"local:{effective_caller}",
                             callee_aic=agent.aic,
                             task_id=subtask_id,
                             duration_ms=int(latency_ms),
