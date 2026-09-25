@@ -6570,9 +6570,10 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     const frame = window.requestAnimationFrame(() => {
       const thread = document.querySelector<HTMLElement>(".chat-thread");
       if (!thread) return;
+      const farFromBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight > 900;
       thread.scrollTo({
         top: thread.scrollHeight,
-        behavior: messages.at(-1)?.streaming ? "auto" : "smooth",
+        behavior: messages.at(-1)?.streaming || farFromBottom ? "auto" : "smooth",
       });
     });
     return () => window.cancelAnimationFrame(frame);
@@ -6585,6 +6586,13 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
       m.streaming ? { ...m, streaming: false, text: m.text || "（任务已中断）" } : m,
     );
     setMessages(msgs);
+    // 打开历史会话：直接瞬时定位到最新消息（smooth 会从顶部滚很久，像"蹦到前面"）
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const thread = document.querySelector<HTMLElement>(".chat-thread");
+        if (thread) thread.scrollTo({ top: thread.scrollHeight, behavior: "auto" });
+      });
+    });
     setShowAllMessages(false);
     setSession(data?.session || target.session);
     sessionRef.current = data?.session || target.session;
