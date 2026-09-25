@@ -174,6 +174,7 @@ class OpenAICompatibleTransport:
         harness: bool = False,
         tool_registry: ToolRegistry | None = None,
         max_rounds: int = 4,
+        collab_style: str = "auto",
         on_text: StreamCallback | None = None,
         controller: Any | None = None,
         **kwargs: Any,
@@ -187,7 +188,7 @@ class OpenAICompatibleTransport:
         api_base = provider.base_url if provider else settings.llm_api_base
         started = time.monotonic()
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": build_system_prompt(agent, harness)},
+            {"role": "system", "content": build_system_prompt(agent, harness, collab_style)},
             *(history or []),
             {"role": "user", "content": query},
         ]
@@ -345,7 +346,7 @@ class OpenAICompatibleTransport:
                             )
                         summary_context = "\n\n".join(tool_summaries)
                         synth_messages = [
-                            {"role": "system", "content": build_system_prompt(agent, harness)},
+                            {"role": "system", "content": build_system_prompt(agent, harness, collab_style)},
                             *(history or []),
                             {"role": "user", "content": query},
                             {
@@ -965,6 +966,7 @@ class OpenAIResponsesTransport:
         harness: bool = False,
         tool_registry: ToolRegistry | None = None,
         max_rounds: int = 4,
+        collab_style: str = "auto",
         on_text: StreamCallback | None = None,
         controller: Any | None = None,
         **kwargs: Any,
@@ -986,7 +988,7 @@ class OpenAIResponsesTransport:
             }
             for item in chat_schemas
         ]
-        instructions = build_system_prompt(agent, harness)
+        instructions = build_system_prompt(agent, harness, collab_style)
         input_items: list[dict[str, Any]] = [*(history or []), {"role": "user", "content": query}]
         executions: list[dict[str, Any]] = []
         prompt_tokens = completion_tokens = llm_calls = 0
@@ -1128,6 +1130,7 @@ class AnthropicTransport:
         harness: bool = False,
         tool_registry: ToolRegistry | None = None,
         max_rounds: int = 4,
+        collab_style: str = "auto",
         on_text: StreamCallback | None = None,
         controller: Any | None = None,
         **kwargs: Any,
@@ -1148,7 +1151,7 @@ class AnthropicTransport:
             for item in registry.schemas(effective_tool_names(agent))
         ]
         messages: list[dict[str, Any]] = [*(history or []), {"role": "user", "content": query}]
-        system = build_system_prompt(agent, harness)
+        system = build_system_prompt(agent, harness, collab_style)
         executions: list[dict[str, Any]] = []
         prompt_tokens = completion_tokens = llm_calls = 0
         started = time.monotonic()

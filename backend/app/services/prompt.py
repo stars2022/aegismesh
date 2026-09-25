@@ -25,6 +25,24 @@ PARTNER_DELIVERY = (
     "- 建议的后续步骤："
 )
 
+STYLE_DIRECTIVES = {
+    "workflow": (
+        "本次任务由用户明确指定使用【模式二：串行工作流】。"
+        "必须按棒次单步顺序流转：先派发第 1 棒，待其回传后提炼输出作为第 2 棒输入，依序推进；"
+        "禁止并发派发或调用 run_swarm_discussion。完成后汇总各棒次成果。"
+    ),
+    "swarm": (
+        "本次任务由用户明确指定使用【模式三：智能体集群群聊黑板】。"
+        "必须调用 run_swarm_discussion：给出研讨议题、参与专家列表（先 list_agents 确认可用）与轮次；"
+        "各专家在黑板上按轮次发表观点、交叉质证，之后你汇总黑板共识作为最终答复。"
+        "禁止使用串行棒次或并行批量派发替代群聊研讨。"
+    ),
+    "parallel": (
+        "本次任务由用户明确指定使用【模式一：并行分工】。"
+        "将相互独立的子任务用 dispatch_task(wait=False) 并发派发，全部回传后统一汇总。"
+    ),
+}
+
 LEADER_COORDINATION = (
     "你是负责任务规划与结果汇总的主控协调智能体。\n"
     "1. 直接解答与会话衔接：\n"
@@ -65,7 +83,7 @@ def effective_tool_names(agent: Agent) -> list[str]:
     return names
 
 
-def build_system_prompt(agent: Agent, harness: bool = False) -> str:
+def build_system_prompt(agent: Agent, harness: bool = False, collab_style: str = "auto") -> str:
     authored = (agent.system_prompt or "").strip()
     if not harness:
         return authored
@@ -75,7 +93,7 @@ def build_system_prompt(agent: Agent, harness: bool = False) -> str:
     tools = "、".join(effective_tool_names(agent))
     sections = [
         PromptSection(-100, "身份", f"你是 {agent.name}。"),
-        PromptSection(0, "系统提示词", authored or agent.description.strip() or "完成当前任务。"),
+        PromptSection(0, "系统提示词", authored or (agent.description or "").strip() or "完成当前任务。"),
         PromptSection(100, "能力", skills or "通用任务处理"),
         PromptSection(120, "工具执行", f"可用工具：{tools}。按需调用工具，根据每轮结果继续处理；完成后再输出答案。" if tools else "当前未提供工具。"),
         PromptSection(180, "数据边界", DATA_BOUNDARY),
@@ -85,6 +103,9 @@ def build_system_prompt(agent: Agent, harness: bool = False) -> str:
         sections.append(PromptSection(160, "交付规范", PARTNER_DELIVERY))
     if agent.role == "leader":
         sections.append(PromptSection(150, "智能体协调", LEADER_COORDINATION))
+        style_directive = STYLE_DIRECTIVES.get(collab_style)
+        if style_directive:
+            sections.append(PromptSection(155, "协作方式指定", style_directive))
     return "\n\n".join(
         f"## {section.title}\n{section.content}" for section in sorted(sections, key=lambda item: item.order)
     )

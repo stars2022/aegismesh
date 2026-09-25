@@ -26,7 +26,7 @@ export function ScoreBar({ value, max = 100 }: { value: number; max?: number }) 
 
 export type DropdownOption = { value: string; label: string }
 
-export function Dropdown({ value, options, onChange, placeholder, className, align }: { value: string; options: DropdownOption[]; onChange: (value: string) => void; placeholder?: string; className?: string; align?: 'left' | 'right' }) {
+export function Dropdown({ value, options, onChange, placeholder, className, align, title }: { value: string; options: DropdownOption[]; onChange: (value: string) => void; placeholder?: string; className?: string; align?: 'left' | 'right'; title?: string }) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -48,7 +48,7 @@ export function Dropdown({ value, options, onChange, placeholder, className, ali
   const emptyText = placeholder || (options.length === 0 ? '暂无可用选项' : '请选择')
   return (
     <div className={`dropdown ${className || ''}`} ref={root}>
-      <button type="button" className="dropdown-trigger" onClick={() => setOpen((state) => !state)} aria-haspopup="listbox" aria-expanded={open}>
+      <button type="button" className="dropdown-trigger" onClick={() => setOpen((state) => !state)} aria-haspopup="listbox" aria-expanded={open} title={title}>
         <span>{current?.label || emptyText}</span>
         <ChevronDown size={13} className={`chev ${open ? 'open' : ''}`} />
       </button>

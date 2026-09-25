@@ -400,7 +400,7 @@ function App({ onLogout }: { onLogout?: () => void }) {
           {view === "probes" && (
             <Probes agents={agents} probes={probes} onRun={load} />
           )}
-          {view === "traces" && <Traces />}
+          {view === "traces" && <Traces traces={traces} />}
           {view === "access" && <AccessControl />}
         </div>
       </main>
@@ -3752,142 +3752,63 @@ function Probes({
   );
 }
 
-const traceStatusFilters: { value: string; label: string }[] = [
-  { value: "all", label: "全部" },
-  { value: "completed", label: "已完成" },
-  { value: "failed", label: "失败" },
-  { value: "working", label: "运行中" },
-];
-
-const PAGE_SIZE = 50;
-
-function Traces() {
-  const [traces, setTraces] = useState<Trace[]>([]);
-  const [selected, setSelected] = useState<Trace | null>(null);
+function Traces({ traces }: { traces: Trace[] }) {
+  const [selected, setSelected] = useState<Trace | null>(traces[0] || null);
   const [keyword, setKeyword] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(false);
-  const [rawJson, setRawJson] = useState(false);
-
-  const applyPage = (existing: Trace[], incoming: Trace[]) => {
-    const seen = new Set(existing.map((item) => item.id));
-    return [...existing, ...incoming.filter((item) => !seen.has(item.id))];
-  };
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const page = await api.traces(PAGE_SIZE, 0);
-      setTraces(page);
-      setHasMore(page.length >= PAGE_SIZE);
-      setSelected(page[0] || null);
-    } catch {
-      /* 顶部横幅已展示连接错误 */
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadMore = async () => {
-    setLoadingMore(true);
-    try {
-      const page = await api.traces(PAGE_SIZE, traces.length);
-      setTraces((current) => applyPage(current, page));
-      setHasMore(page.length >= PAGE_SIZE);
-    } finally {
-      setLoadingMore(false);
-    }
-  };
-
-  useEffect(() => {
-    void load();
-  }, []);
-
-  const filtered = traces.filter((trace) => {
-    if (statusFilter !== "all" && trace.status !== statusFilter) return false;
-    const haystack = `${trace.query} ${trace.id} ${trace.selected_agent_id || ""} ${trace.result_text || ""}`.toLowerCase();
+  const visible = traces.filter((trace) => {
+    const haystack = `${trace.query} ${trace.id} ${trace.selected_agent_id || ""}`.toLowerCase();
     return haystack.includes(keyword.trim().toLowerCase());
   });
-
   useEffect(() => {
-    if (selected && !filtered.some((item) => item.id === selected.id)) {
-      setSelected(filtered[0] || null);
-    }
-  }, [filtered, selected]);
-
-  const selectedContributions = selected?.result_data?.contributions || [];
-  const selectedTools = selected?.result_data?.tool_executions || [];
-  const selectedBlackboard = selected?.result_data?.shared_context?.blackboard_messages || [];
-
+    if (!selected && traces[0]) setSelected(traces[0]);
+  }, [traces, selected]);
   return (
     <div className="traces-layout">
       <section className="panel trace-list-panel">
         <div className="trace-search">
           <Search size={15} />
           <input
-            placeholder="搜索任务、ID、智能体或结果"
+            placeholder="搜索运行记录"
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
           />
         </div>
-        <div className="trace-filters">
-          {traceStatusFilters.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              className={statusFilter === item.value ? "active" : ""}
-              onClick={() => setStatusFilter(item.value)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
         <div className="trace-list">
-          {filtered.map((trace) => (
+          {visible.map((trace) => (
             <button
               key={trace.id}
               className={selected?.id === trace.id ? "active" : ""}
-              onClick={() => { setSelected(trace); setRawJson(false); }}
+              onClick={() => setSelected(trace)}
             >
               <StatusDot status={trace.status} />
               <div>
                 <strong>{trace.query}</strong>
                 <span>
-                  {trace.id} · {formatMs(trace.total_latency_ms)} ·{" "}
-                  {new Date(trace.created_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                  {trace.id} · {formatMs(trace.total_latency_ms)}
                 </span>
               </div>
               <ChevronRight size={15} />
             </button>
           ))}
-          {filtered.length === 0 && !loading && <EmptyState>没有符合条件的运行记录</EmptyState>}
-          {loading && <EmptyState>正在加载运行记录…</EmptyState>}
+          {visible.length === 0 && <EmptyState>暂无运行记录</EmptyState>}
         </div>
-        {hasMore && (
-          <button type="button" className="trace-load-more" onClick={() => void loadMore()} disabled={loadingMore}>
-            {loadingMore ? "加载中…" : `加载更多（已显示 ${traces.length} 条）`}
-          </button>
-        )}
-        {!hasMore && traces.length > 0 && <div className="trace-end-note">已加载全部 {traces.length} 条记录</div>}
       </section>
       <section className="panel trace-detail">
         {selected ? (
           <>
             <div className="panel-heading">
               <div>
-                <span className="eyebrow">
-                  {selected.id} · {new Date(selected.created_at).toLocaleString("zh-CN")}
-                </span>
+                <span className="eyebrow">{selected.id}</span>
                 <h2>{selected.query}</h2>
               </div>
-              <span className="role-pill">{stateNames[selected.status] || selected.status}</span>
+              <span className="role-pill">
+                {stateNames[selected.status] || selected.status}
+              </span>
             </div>
             <div className="trace-summary">
               <div>
                 <span>最终智能体</span>
-                <strong>{selected.selected_agent_id || "—"}</strong>
+                <strong>{selected.selected_agent_id}</strong>
               </div>
               <div>
                 <span>尝试</span>
@@ -3901,53 +3822,7 @@ function Traces() {
                 <span>模型调用</span>
                 <strong>{selected.llm_calls}</strong>
               </div>
-              <div>
-                <span>Token</span>
-                <strong>{selected.prompt_tokens} / {selected.completion_tokens}</strong>
-              </div>
             </div>
-
-            {selected.result_text && (
-              <div className="trace-answer-box">
-                <h3>最终回答</h3>
-                <MarkdownText text={selected.result_text} />
-              </div>
-            )}
-
-            {selectedContributions.length > 0 && (
-              <div className="finding-list">
-                <h3>协同贡献（{selectedContributions.length} 个智能体）</h3>
-                {selectedContributions.map((item, index) => (
-                  <div key={`${item.agent_id}-${index}`}>
-                    <span>{index + 1}</span>
-                    <div>
-                      <strong>{item.agent_name || item.agent_id}</strong>
-                      <p>{item.text}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {selectedTools.length > 0 && (
-              <div className="finding-list">
-                <h3>工具调用（{selectedTools.length} 次）</h3>
-                {selectedTools.map((item, index) => (
-                  <div key={`${item.name}-${index}`}>
-                    <span>{index + 1}</span>
-                    <div>
-                      <strong>{toolNames[item.name] || item.name}</strong>
-                      <p>
-                        {JSON.stringify(item.arguments)}
-                        {" → "}
-                        {JSON.stringify(item.output).slice(0, 400)}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
             {selected.attempts.length > 0 && (
               <div className="finding-list">
                 <h3>路由评分</h3>
@@ -3969,31 +3844,6 @@ function Traces() {
                 ))}
               </div>
             )}
-
-            {selectedBlackboard.length > 0 && (
-              <div className="finding-list">
-                <h3>黑板消息（{selectedBlackboard.length} 条）</h3>
-                {selectedBlackboard.map((msg, index) => (
-                  <div key={`bb-${index}`}>
-                    <span>{index + 1}</span>
-                    <div>
-                      <strong>{String(msg.sender_name || msg.sender_id || "系统")}</strong>
-                      <p>{String(msg.content || JSON.stringify(msg)).slice(0, 300)}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="trace-json-toggle">
-              <button type="button" onClick={() => setRawJson((value) => !value)}>
-                {rawJson ? "收起原始日志" : "查看完整原始 JSON"}
-              </button>
-            </div>
-            {rawJson && (
-              <pre className="trace-raw-json">{JSON.stringify(selected, null, 2)}</pre>
-            )}
-
             <div className="timeline">
               {selected.events.map((event, index) => (
                 <div className="timeline-item" key={`${event.type}-${index}`}>
@@ -4186,7 +4036,7 @@ type ChatMessage = {
   attachments?: Attachment[];
   feedback?: "positive" | "negative";
 };
-type QueuedTask = { id: string; text: string; agentId: string; attachments?: Attachment[] };
+type QueuedTask = { id: string; text: string; agentId: string; attachments?: Attachment[]; collabStyle?: string };
 type Conversation = {
   id: string;
   title: string;
@@ -4954,17 +4804,21 @@ function CollaborationPanel({
   inspector,
   messages = [],
   liveSubagents = [],
+  liveBlackboardMessages = [],
   toolNames = {},
 }: {
   inspector: ChatResult | null;
   messages?: ChatMessage[];
   liveSubagents?: LiveSubagentState[];
+  liveBlackboardMessages?: BlackboardMessage[];
   toolNames?: Record<string, string>;
 }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectedCollabSnapshot, setSelectedCollabSnapshot] =
     useState<SubagentCollaboration | null>(null);
   const [scope, setScope] = useState<"turn" | "all">("turn");
+  const [collabMode, setCollabMode] = useState<"parallel" | "workflow" | "swarm">("parallel");
+  const [expandedChatResults, setExpandedChatResults] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     setSelectedKey(null);
@@ -5102,6 +4956,48 @@ function CollaborationPanel({
     });
   }, [isTurnScope, turnCompleted, turnRunning, allCompleted, allRunning]);
 
+  // Swarm / Group Chat Blackboard Messages
+  const swarmMessages = useMemo(() => {
+    const fromInspector = inspector?.result_data?.shared_context?.blackboard_messages || [];
+    const fromHistory: BlackboardMessage[] = [];
+    if (!isTurnScope) {
+      for (const m of messages) {
+        const bb = m.result?.result_data?.shared_context?.blackboard_messages;
+        if (bb && Array.isArray(bb)) {
+          fromHistory.push(...bb);
+        }
+      }
+    }
+    const combined = [...fromHistory, ...fromInspector, ...(liveBlackboardMessages || [])];
+    const seen = new Set<string>();
+    const deduped: BlackboardMessage[] = [];
+    for (const msg of combined) {
+      const key = msg.id || `${msg.sender_id}-${msg.content}-${msg.timestamp}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        deduped.push(msg);
+      }
+    }
+
+    return deduped;
+  }, [inspector, messages, liveBlackboardMessages, isTurnScope]);
+
+  // 集群成员仅来自真实黑板消息的发言者
+  const swarmMembers = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; nickname: string; role: string }>();
+    for (const msg of swarmMessages) {
+      if (!map.has(msg.sender_id)) {
+        map.set(msg.sender_id, {
+          id: msg.sender_id,
+          name: msg.sender_name || msg.sender_id,
+          nickname: msg.nickname || `@${(msg.sender_name || msg.sender_id).replace("智能体", "").trim()}专家`,
+          role: msg.role || "expert",
+        });
+      }
+    }
+    return Array.from(map.values());
+  }, [swarmMessages]);
+
   const onSelectCollab = (item: SubagentCollaboration) => {
     const key = item.task_id || `${item.agent_id}-${item.task}`;
     setSelectedKey(key);
@@ -5171,14 +5067,141 @@ function CollaborationPanel({
             </div>
           )}
         </div>
-        <span className="collab-mode-tag">
-          {inspector?.result_data?.mode === "coordination"
-            ? "总监协调调度"
-            : "多智能体协同"}
-        </span>
       </div>
 
-      <div className="collab-workflow-container">
+      {/* Three Modes Switcher */}
+      <div className="collab-mode-tabs">
+        <button
+          type="button"
+          className={`collab-mode-tab ${collabMode === "parallel" ? "active" : ""}`}
+          onClick={() => setCollabMode("parallel")}
+          title="并行分工模式：各子智能体独立并发推进并回传成果"
+        >
+          <Layers size={13} />
+          <span>并行分工</span>
+        </button>
+        <button
+          type="button"
+          className={`collab-mode-tab ${collabMode === "workflow" ? "active" : ""}`}
+          onClick={() => setCollabMode("workflow")}
+          title="串行工作流模式：智能体链路串接，点击展开各棒次输入输出"
+        >
+          <GitBranch size={13} />
+          <span>串行工作流</span>
+        </button>
+        <button
+          type="button"
+          className={`collab-mode-tab ${collabMode === "swarm" ? "active" : ""}`}
+          onClick={() => setCollabMode("swarm")}
+          title="智能体集群模式：群聊黑板实时交流、广播与协作"
+        >
+          <MessageSquareText size={13} />
+          <span>智能体集群</span>
+        </button>
+      </div>
+
+      {/* Mode 1: 并行分工 (Parallel Mode) */}
+      {collabMode === "parallel" && (
+        <>
+          <div className="collab-concise-section">
+            <div className="collab-concise-heading">
+              <span>已开启 · {runningList.length}</span>
+            </div>
+            {runningList.length === 0 ? (
+              <div className="collab-concise-empty">没有已开启的子代理</div>
+            ) : (
+              <div className="collab-concise-list">
+                {runningList.map((item, idx) => {
+                  const palette = getSubagentPalette(idx, item.agent_id || item.agent_name);
+                  const Icon = palette.icon;
+                  const toolLabel = item.current_tool
+                    ? (toolNames[item.current_tool] || item.current_tool)
+                    : item.tools?.length
+                      ? (toolNames[item.tools[item.tools.length - 1].name] || item.tools[item.tools.length - 1].name)
+                      : null;
+                  return (
+                    <button
+                      type="button"
+                      key={item.task_id || `${item.agent_id}-${idx}`}
+                      className="collab-concise-item running"
+                      onClick={() => onSelectCollab(item)}
+                    >
+                      <div
+                        className="collab-concise-icon"
+                        style={{ color: palette.color, backgroundColor: palette.bg }}
+                      >
+                        <Icon size={16} />
+                      </div>
+                      <div className="collab-concise-meta">
+                        <span className="collab-concise-title">{item.agent_name || item.task}</span>
+                      </div>
+                      <div className="collab-concise-right">
+                        <span className="collab-live-tag">
+                          <span className="pulse" />
+                          {toolLabel ? `调用${toolLabel}` : "进行中"}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="collab-concise-section">
+            <div className="collab-concise-heading">
+              <span>完成 · {completedList.length}</span>
+            </div>
+            {completedList.length === 0 ? (
+              <div className="collab-concise-empty">暂无已完成的子代理</div>
+            ) : (
+              <div className="collab-concise-list">
+                {completedList.map((item, idx) => {
+                  const palette = getSubagentPalette(idx + runningList.length, item.agent_id || item.agent_name);
+                  const Icon = palette.icon;
+                  const timeText = formatSubagentTime(
+                    item.started_at,
+                    item.completed_at,
+                    item.latency_ms || (item.elapsed_seconds ? item.elapsed_seconds * 1000 : undefined),
+                  );
+                  return (
+                    <button
+                      type="button"
+                      key={item.task_id || `${item.agent_id}-${idx}`}
+                      className="collab-concise-item"
+                      onClick={() => onSelectCollab(item)}
+                    >
+                      <div
+                        className="collab-concise-icon"
+                        style={{ color: palette.color, backgroundColor: palette.bg }}
+                      >
+                        <Icon size={16} />
+                      </div>
+                      <div className="collab-concise-meta">
+                        <span className="collab-concise-title">{item.agent_name || item.task}</span>
+                      </div>
+                      <div className="collab-concise-right">
+                        {item.status === "failed" ? (
+                          <span className="status-pill failed" style={{ fontSize: 10, padding: "1px 6px" }}>
+                            <span className="pill-dot failed" />
+                            失败
+                          </span>
+                        ) : (
+                          <span className="collab-concise-time">{timeText}</span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Mode 2: 串行工作流 (Workflow Mode) */}
+      {collabMode === "workflow" && (
+        <div className="collab-workflow-container">
           <div className="collab-workflow-toolbar">
             <span className="collab-workflow-summary-text">
               串行工作流链路 · 共 {workflowList.length} 棒次
@@ -5244,11 +5267,166 @@ function CollaborationPanel({
                       )}
                     </div>
                   </div>
+
                 </div>
               </div>
             );
           })}
         </div>
+      )}
+
+      {/* Mode 3: 智能体集群 (Swarm / Group Chat Blackboard Mode) */}
+      {collabMode === "swarm" && (
+        <div className="collab-swarm-container">
+          {/* Swarm Banner & Active Members */}
+          <div className="collab-swarm-banner">
+            <div className="collab-swarm-banner-title">
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Users size={14} color="#6366f1" />
+                <span>协同集群群聊黑板 · 实时交流</span>
+              </div>
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                {swarmMessages.length} 条广播 · {completedList.length} 项成果沉淀
+              </span>
+            </div>
+            <div className="collab-swarm-members">
+              {swarmMembers.map((m, midx) => {
+                const palette = getSubagentPalette(midx, m.id || m.name);
+                const Icon = palette.icon;
+                return (
+                  <div key={m.id} className="collab-swarm-member-chip">
+                    <div
+                      style={{
+                        width: 14,
+                        height: 14,
+                        borderRadius: 3,
+                        display: "grid",
+                        placeItems: "center",
+                        backgroundColor: palette.bg,
+                        color: palette.color,
+                      }}
+                    >
+                      <Icon size={10} />
+                    </div>
+                    <span>{m.nickname}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Group Chat Messages List */}
+          <div className="collab-swarm-chat-list">
+            {swarmMessages.length === 0 && (
+              <div className="collab-empty">
+                <Bot size={28} className="empty-icon" />
+                <p>本次运行没有集群黑板消息</p>
+                <span>发送任务时选择「集群群聊」协作方式，主智能体将通过 run_swarm_discussion 组织多方在黑板上研讨</span>
+              </div>
+            )}
+            {swarmMessages.map((msg, idx) => {
+              const isLeader = msg.role === "leader" || msg.sender_id === "leader";
+              const palette = getSubagentPalette(idx, msg.sender_id || msg.sender_name);
+              const Icon = isLeader ? Bot : palette.icon;
+              const timeStr = msg.timestamp
+                ? new Date(msg.timestamp * 1000).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  })
+                : "";
+              const msgKey = msg.id || `msg-${idx}`;
+              const isFullResultExpanded = expandedChatResults.has(msgKey);
+              const hasFullResult = Boolean(
+                msg.metadata?.full_result && typeof msg.metadata.full_result === "string",
+              );
+
+              return (
+                <div key={msgKey} className="collab-chat-msg">
+                  <div
+                    className="collab-chat-avatar"
+                    style={{
+                      backgroundColor: isLeader ? "rgba(99, 102, 241, 0.12)" : palette.bg,
+                      color: isLeader ? "#4f46e5" : palette.color,
+                    }}
+                  >
+                    <Icon size={14} />
+                  </div>
+                  <div className="collab-chat-main">
+                    <div className="collab-chat-header">
+                      <span className="collab-chat-nickname">{msg.nickname}</span>
+                      <span className={`collab-chat-role-badge ${isLeader ? "leader" : ""}`}>
+                        {isLeader ? "主控协调" : "领域专家"}
+                      </span>
+                      <span className={`collab-chat-type-badge ${msg.type || "chat"}`}>
+                        {msg.type === "dispatch"
+                          ? "任务派发"
+                          : msg.type === "report"
+                            ? "成果汇报"
+                            : msg.type === "error"
+                              ? "异常警报"
+                              : "集群广播"}
+                      </span>
+                      {timeStr && <span className="collab-chat-time">{timeStr}</span>}
+                    </div>
+                    <div className={`collab-chat-bubble ${msg.type || "chat"}`}>
+                      <div>{msg.content}</div>
+                      {hasFullResult && (
+                        <div style={{ marginTop: 6, borderTop: "1px dashed var(--line)", paddingTop: 6 }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExpandedChatResults((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(msgKey)) next.delete(msgKey);
+                                else next.add(msgKey);
+                                return next;
+                              });
+                            }}
+                            style={{
+                              background: "transparent",
+                              border: "none",
+                              color: "var(--accent)",
+                              fontSize: 11,
+                              cursor: "pointer",
+                              padding: 0,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              fontWeight: 500,
+                            }}
+                          >
+                            {isFullResultExpanded ? "收起完整成果" : "展开完整交付成果"}
+                            {isFullResultExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                          </button>
+                          {isFullResultExpanded && (
+                            <div
+                              style={{
+                                marginTop: 6,
+                                padding: 8,
+                                background: "var(--paper)",
+                                borderRadius: 6,
+                                border: "1px solid var(--line)",
+                                fontSize: 11.5,
+                                lineHeight: 1.45,
+                                whiteSpace: "pre-wrap",
+                                maxHeight: 200,
+                                overflowY: "auto",
+                              }}
+                            >
+                              {String(msg.metadata?.full_result)}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -5271,6 +5449,12 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const [feedbackBusy, setFeedbackBusy] = useState("");
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentId, setAgentId] = useState(initialActive?.agentId || activeMeta?.agentId || "");
+  const [collabStyle, setCollabStyle] = useState("auto");
+  const collabStyleRef = useRef("auto");
+  const setCollabStyleTracked = (value: string) => {
+    collabStyleRef.current = value;
+    setCollabStyle(value);
+  };
   const [pendingAgentSwitch, setPendingAgentSwitch] = useState<{
     targetId: string;
     targetName: string;
@@ -5718,6 +5902,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
           currentTaskIdRef.current = taskId;
         },
         messageAttachments,
+        collabStyleRef.current,
       );
       setSession(result.session_id);
       sessionRef.current = result.session_id;
@@ -5786,6 +5971,8 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
         const next = queueRef.current[0];
         if (next) {
           setQueue(queueRef.current.slice(1));
+          collabStyleRef.current = next.collabStyle || "auto";
+          setCollabStyle(next.collabStyle || "auto");
           void runMessage(next.text, next.agentId, next.attachments);
         }
       }
@@ -5834,6 +6021,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
           text: finalMsg,
           agentId,
           attachments: currentAttachments,
+          collabStyle: collabStyleRef.current,
         },
       ]);
       return;
@@ -6462,6 +6650,19 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
                     label: `${agent.name} · ${agent.role === "leader" ? "协调型" : "执行型"}`,
                   }))}
                 />
+                <Dropdown
+                  className="runtime-mode collab-style-mode"
+                  value={collabStyle}
+                  onChange={setCollabStyleTracked}
+                  placeholder="协作方式"
+                  title="指定主智能体本次任务采用的协作模式（仅协调型智能体生效）"
+                  options={[
+                    { value: "auto", label: "协作方式 · 自动" },
+                    { value: "workflow", label: "协作方式 · 串行工作流" },
+                    { value: "swarm", label: "协作方式 · 集群群聊" },
+                    { value: "parallel", label: "协作方式 · 并行分工" },
+                  ]}
+                />
               </div>
               <div className="composer-bottom-right">
                 {settings.showContextMeter && (
@@ -6666,6 +6867,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
             inspector={inspector}
             messages={messages}
             liveSubagents={Object.values(liveSubagents)}
+            liveBlackboardMessages={liveBlackboardMessages}
             toolNames={toolNames}
           />
         )}
