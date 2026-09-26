@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from ..config import get_settings
 from ..database import SessionLocal
 from ..models import Agent, Invocation, ProviderConfig, RouteAttempt, RoutingPolicy, TraceEvent
 from ..schemas import ChatRequest

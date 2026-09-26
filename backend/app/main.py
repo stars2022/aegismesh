@@ -1890,10 +1890,19 @@ def preview_agent_acs(agent_id: str, request: Request, db: DbSession) -> dict:
 
 
 
+def _platform_leader(db: Session) -> Agent | None:
+    """平台对外的协调型智能体：取第一个持有公开 AIC 且非外接传输的 leader。"""
+    leaders = db.scalars(select(Agent).where(Agent.role == "leader").order_by(Agent.id)).all()
+    for candidate in leaders:
+        if public_aic(candidate) and candidate.transport != "aip-rpc":
+            return candidate
+    return None
+
+
 @app.get("/.well-known/acs.json", tags=["acps"])
 def platform_acs(request: Request, db: DbSession) -> dict:
-    leader = db.scalar(select(Agent).where(Agent.role == "leader").order_by(Agent.id))
-    if not leader or not public_aic(leader):
+    leader = _platform_leader(db)
+    if not leader:
         raise HTTPException(status_code=404, detail="Leader not configured")
     rpc_url = settings.platform_rpc_url or f"{_public_base_url(request)}:8443/aip/platform/rpc"
     return build_acs(leader, rpc_url)
@@ -1902,8 +1911,8 @@ def platform_acs(request: Request, db: DbSession) -> dict:
 @app.post("/aip/platform/rpc", tags=["aip"])
 async def platform_rpc(request: Request, db: DbSession):
     """平台级 AIP RPC 入口：对外代表协调型智能体受理国标任务（含探活兼容）。"""
-    leader = db.scalar(select(Agent).where(Agent.role == "leader").order_by(Agent.id))
-    if not leader or not public_aic(leader) or leader.transport == "aip-rpc":
+    leader = _platform_leader(db)
+    if not leader:
         raise HTTPException(status_code=404, detail="Platform leader not configured")
     require_hosted_aip_runtime()
     try:

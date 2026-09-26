@@ -12,6 +12,7 @@ AegisMesh 是一个 ACPs/AIP 兼容的多智能体构建与运营平台。平台
 - `backend/app/services/aip_group.py`：AIP 国标群组模式桥——配置 `AIP_GROUP_MQ_URL`（或 `AIP_GROUP_MQ_HOST` 等）后，集群研讨中登记为 AIP 智能体的外部参与者经 RabbitMQ 群组 Exchange 邀请入群、群发议题并收集发言（`run_swarm_discussion` 自动双传输：外部成员走国标 MQ，内部成员走本地黑板，MQ 不可用自动回退）；`aip_group_partner.py` 在 `AIP_GROUP_PARTNER_ENABLED=true` 时让本平台智能体作为 Partner 接受外部群组邀请并执行群任务
 - `backend/app/services/orchestrator.py`：智能体主导的任务运行时——执行型智能体直接执行（含声明工具）；协调型智能体注入平台 harness 协调提示词，通过 `list_agents` / `dispatch_task` 平台调度工具规划、派发子任务并汇总结果；未指定智能体时按质量路由自动选择，保留广播协同、熔断与自动迁移
 - `backend/app/services/discovery.py`：基于官方 SDK 的 ADP 跨平台发现客户端
+- `backend/app/seed.py`：默认路由策略与预置智能体目录；内置方式三「发现智能体」（智能体发现助手），自然语言需求经协调者工具链检索本地注册表 + ADP 全网发现，输出带质量评分的推荐名单与智能体/技能组合建议
 - `backend/app/services/tools.py`：受控工具注册与执行
 - `backend/app/services/probe.py`：ACS/AIP 探针与兼容性分析
 - `frontend/`：根路径聊天端与 `/admin` 管理后台
@@ -49,7 +50,7 @@ npm run dev
 
 在管理后台“模型供应商”中可以添加兼容聊天补全、OpenAI Responses 和 Anthropic Messages 配置，填写接口地址、密钥与默认模型，并进行真实连接测试。智能体可选择其中一个供应商，也可接入外部 AIP RPC。
 
-同一 `session_id` 的已完成轮次会作为真实会话上下文传给后续智能体。平台以智能体为运行单位：聊天界面按智能体发起任务，选择执行型智能体即直接对话（可使用其声明工具）；选择协调型智能体则由平台执行其协同调度（子任务由平台按质量路由派发给执行型智能体，结果回传给协调者汇总）。配置 `ADP_DISCOVERY_URL` 后，可通过 `POST /api/discovery/search` 发现其他平台发布的智能体。
+同一 `session_id` 的已完成轮次会作为真实会话上下文传给后续智能体。平台以智能体为运行单位：聊天界面按智能体发起任务，选择执行型智能体即直接对话（可使用其声明工具）；选择协调型智能体则由平台执行其协同调度（子任务由平台按质量路由派发给执行型智能体，结果回传给协调者汇总）。配置 `ADP_DISCOVERY_URL` 后，可通过 `POST /api/discovery/search` 发现其他平台发布的智能体。平台预置方式三「发现智能体」（agent_discovery，协调型）：在聊天端直接对它用自然语言描述需求，即可得到带质量评分的候选名单与智能体/技能组合建议；其 ACS 中声明了 `discovery.nl_agent_discovery` 技能，外部平台也可经 AIP 调用。
 
 工作区默认不创建 Agent，也不生成调用记录或统计占位值。面板数据来自数据库中的实际配置、探针结果与运行记录。
 
