@@ -6494,6 +6494,7 @@ tr:last-child td { border-bottom: 0; }
   top: 0;
   right: 0;
   transform: translate(45%, -45%);
+  padding: 0;
   width: 18px;
   height: 18px;
   border-radius: 50%;
