@@ -6491,8 +6491,9 @@ tr:last-child td { border-bottom: 0; }
 
 .group-matrix-del-btn {
   position: absolute;
-  top: -5px;
-  right: -5px;
+  top: 0;
+  right: 0;
+  transform: translate(45%, -45%);
   width: 18px;
   height: 18px;
   border-radius: 50%;
