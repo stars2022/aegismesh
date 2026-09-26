@@ -170,6 +170,11 @@ def test_platform_acs_declares_endpoint(monkeypatch) -> None:
         test_client.delete(f"/api/agents/{leader_id}")
 
 
+def test_canvas_read_endpoint() -> None:
+    with client() as test_client:
+        assert test_client.get("/api/canvas/canvas-none").status_code == 404
+
+
 def test_stream_endpoint_fails_closed_without_mtls(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "aip_tls_port", 0)
     agent = create_agent(

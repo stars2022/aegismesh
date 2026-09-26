@@ -263,3 +263,30 @@ class GroupChatMessage(Base):
     nickname: Mapped[str] = mapped_column(String(120), default="")
     content: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CanvasDoc(Base):
+    __tablename__ = "canvas_docs"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    title: Mapped[str] = mapped_column(String(160), default="协同画布")
+    content: Mapped[str] = mapped_column(Text, default="")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class CanvasRevision(Base):
+    __tablename__ = "canvas_revisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    canvas_id: Mapped[str] = mapped_column(String(80), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    editor_id: Mapped[str] = mapped_column(String(128), default="")
+    editor_name: Mapped[str] = mapped_column(String(120), default="")
+    op: Mapped[str] = mapped_column(String(32), default="write_section")
+    summary: Mapped[str] = mapped_column(String(255), default="")
+    content_after: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

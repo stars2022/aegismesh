@@ -1,0 +1,170 @@
+from __future__ import annotations
+
+import json
+import re
+import uuid
+from dataclasses import dataclass
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from ..models import CanvasDoc, CanvasRevision
+
+
+class CanvasError(RuntimeError):
+    pass
+
+
+SECTION_HEADING = re.compile(r"^##\s+.+$", re.MULTILINE)
+
+
+def canvas_id_for(root_invocation_id: str) -> str:
+    return f"canvas-{root_invocation_id}"
+
+
+def get_or_create_canvas(db: Session, canvas_id: str, title: str = "协同画布") -> CanvasDoc:
+    doc = db.get(CanvasDoc, canvas_id)
+    if doc is None:
+        doc = CanvasDoc(id=canvas_id, title=title, content=f"# {title}\n", version=1)
+        db.add(doc)
+        db.commit()
+    return doc
+
+
+def read_section(content: str, section: str | None) -> str:
+    """按 `## 标题` 切分段落读取；section 为空返回全文。"""
+    if not section:
+        return content
+    matches = list(SECTION_HEADING.finditer(content))
+    bounds: list[tuple[str, int, int]] = []
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+        bounds.append((m.group(0).lstrip("# ").strip(), m.start(), end))
+    for title, start, end in bounds:
+        if section.lower() in title.lower():
+            return content[start:end].strip()
+    raise CanvasError(f"画布中不存在段落「{section}」；现有段落：{[b[0] for b in bounds] or '无'}")
+
+
+def write_section(content: str, section: str, body: str) -> str:
+    """替换指定段落（按 `## 标题` 匹配）；不存在则追加到末尾。"""
+    new_block = f"## {section}\n{body.strip()}\n"
+    matches = list(SECTION_HEADING.finditer(content))
+    for i, m in enumerate(matches):
+        title = m.group(0).lstrip("# ").strip()
+        if section.lower() in title.lower():
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+            return content[: m.start()] + new_block + ("\n" if end < len(content) else "") + content[end:]
+    return content.rstrip() + "\n\n" + new_block
+
+
+def apply_op(
+    db: Session,
+    doc: CanvasDoc,
+    *,
+    editor_id: str,
+    editor_name: str,
+    op: str,  # "write_section" | "append"
+    section: str | None,
+    content: str,
+    base_version: int | None,
+) -> dict[str, Any]:
+    """应用一次画布编辑；版本冲突时抛 CanvasError 并携带当前版本。"""
+    if base_version is not None and base_version != doc.version:
+        raise CanvasError(
+            f"版本冲突：你基于 v{base_version} 编辑，画布当前为 v{doc.version}。"
+            f"请先 canvas_read 刷新内容后重试。"
+        )
+    if op == "write_section":
+        if not section:
+            raise CanvasError("write_section 需要提供 section（段落标题）")
+        doc.content = write_section(doc.content, section, content)
+    elif op == "append":
+        doc.content = doc.content.rstrip() + "\n\n" + content.strip() + "\n"
+    else:
+        raise CanvasError(f"未知画布操作：{op}")
+    doc.version += 1
+    summary = f"{op}" + (f"：「{section}」" if section and op == "write_section" else "")
+    db.add(
+        CanvasRevision(
+            canvas_id=doc.id,
+            version=doc.version,
+            editor_id=editor_id,
+            editor_name=editor_name,
+            op=op,
+            summary=summary[:255],
+            content_after=doc.content,
+        )
+    )
+    db.commit()
+    return {"version": doc.version, "summary": summary}
+
+
+def history(db: Session, canvas_id: str, limit: int = 20) -> list[dict[str, Any]]:
+    rows = list(
+        db.query(CanvasRevision)
+        .filter(CanvasRevision.canvas_id == canvas_id)
+        .order_by(CanvasRevision.version.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "version": r.version,
+            "editor_id": r.editor_id,
+            "editor_name": r.editor_name,
+            "op": r.op,
+            "summary": r.summary,
+            "created_at": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# 外部国标 Partner 的提示词协议：
+# 画布快照随任务下发（dataItems 文本），Partner 在回复文本中输出标准 JSON 块
+# {"name": "canvas_write_section", "parameters": {...}}，平台解析后应用。
+# ---------------------------------------------------------------------------
+
+CANVAS_PROTOCOL_INSTRUCTIONS = (
+    "【画布协作说明（国标载荷约定）】\n"
+    "下方提供共享画布的当前内容（v{version}）。如需修改报告，请在回复的末尾输出一个 JSON 代码块：\n"
+    '```json\n{{"name": "canvas_write_section", "parameters": {{"section": "段落标题", "content": "该段落的完整新内容", "base_version": {version}}}}}\n```\n'
+    "也可以使用 {\"name\": \"canvas_append\", \"parameters\": {{\"content\": \"追加内容\"}}。"
+    "正文里请先简要说明你做了什么修改；未修改则不要输出 JSON 块。\n\n"
+    "【画布当前内容 v{version}】\n{content}"
+)
+
+_CANVAS_OP_PATTERN = re.compile(
+    r"```(?:json)?\s*(\{[\s\S]*?\"name\"\s*:\s*\"canvas_(?:write_section|append)\"[\s\S]*?\})\s*```",
+    re.IGNORECASE,
+)
+
+
+def parse_canvas_ops(text: str) -> list[dict[str, Any]]:
+    """从 Partner 回复文本中解析画布编辑操作（提示词协议）。"""
+    ops: list[dict[str, Any]] = []
+    for m in _CANVAS_OP_PATTERN.finditer(text or ""):
+        try:
+            payload = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            continue
+        name = str(payload.get("name") or "")
+        parameters = payload.get("parameters")
+        if not isinstance(parameters, dict):
+            parameters = {k: v for k, v in payload.items() if k != "name"}
+        op = "write_section" if name == "canvas_write_section" else "append"
+        ops.append(
+            {
+                "op": op,
+                "section": str(parameters.get("section") or "") or None,
+                "content": str(parameters.get("content") or ""),
+                "base_version": parameters.get("base_version"),
+            }
+        )
+    return ops
+
+
+def new_canvas_key() -> str:
+    return uuid.uuid4().hex[:10]

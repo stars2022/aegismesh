@@ -31,6 +31,7 @@ import {
   Hash,
   Hourglass,
   Layers,
+  FileText,
   ListPlus,
   LayoutDashboard,
   Lock,
@@ -71,7 +72,6 @@ import {
   Users,
   Wrench,
   X,
-  FileText,
   Loader2,
   Paperclip,
 } from "lucide-react";
@@ -4074,6 +4074,7 @@ type Conversation = {
   queue?: QueuedTask[];
   isGroup?: boolean;
   groupConfig?: GroupConfig;
+  isCanvas?: boolean;
 };
 
 type ConversationMeta = {
@@ -4084,6 +4085,7 @@ type ConversationMeta = {
   messageCount?: number;
   isGroup?: boolean;
   groupMemberCount?: number;
+  isCanvas?: boolean;
   updatedAt?: number; // 最近一次有新消息的时间（纯点击浏览不更新）
 };
 
@@ -6218,7 +6220,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const [inspector, setInspector] = useState<ChatResult | null>(
     latestResult(initialActive?.messages || []),
   );
-  const [detail, setDetail] = useState<"route" | "collaboration" | "members" | "blackboard">(
+  const [detail, setDetail] = useState<"route" | "collaboration" | "members" | "blackboard" | "canvas">(
     initialActive?.isGroup || activeMeta?.isGroup ? "members" : "route",
   );
   const [content, setContent] = useState<"chat" | "api">("chat");
@@ -6636,13 +6638,14 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
       setDetail("route");
     }
   };
-  const createConversation = (targetAgentId?: string) => {
+  const createConversation = (targetAgentId?: string, isCanvas = false) => {
     const newId = crypto.randomUUID();
     setActiveId(newId);
     setMessages([]);
     setShowAllMessages(false);
     setSession(undefined);
     sessionRef.current = undefined;
+    setIsCanvasConv(isCanvas);
     if (detail === "blackboard" || detail === "members") {
       setDetail("route");
     }
@@ -7095,6 +7098,7 @@ ${cleanHistory}
             currentTaskIdRef.current = taskId;
           },
           messageAttachments,
+        isCanvasConv,
         );
 
         setSession(result.session_id);
@@ -7376,12 +7380,19 @@ ${cleanHistory}
             },
             setLiveBlackboardMessages,
           );
+          if (event.type === "canvas_updated" && event.data?.canvas_id) {
+            api
+              .getCanvas(event.data.canvas_id)
+              .then(setCanvasData)
+              .catch(() => undefined);
+          }
         },
         abortCtrl.signal,
         (taskId) => {
           currentTaskIdRef.current = taskId;
         },
         messageAttachments,
+        isCanvasConv,
       );
       if (activeIdRef.current === taskConvId) {
         setSession(result.session_id);
@@ -7500,7 +7511,16 @@ void runMessage(next.text, next.agentId, next.attachments);
     void runMessage(finalMsg, agentId, currentAttachments);
   };
 
+  const [isCanvasConv, setIsCanvasConv] = useState(false);
+  const [canvasData, setCanvasData] = useState<{
+    id: string; title: string; content: string; version: number;
+    revisions: { version: number; editor_name: string; summary: string; created_at: string }[];
+  } | null>(null);
   const groupConfig = activeMeta?.isGroup ? loadConversationData(activeId)?.groupConfig : null;
+  useEffect(() => {
+    const canvas = inspector?.result_data?.canvas;
+    if (canvas && canvas.id) setCanvasData(canvas);
+  }, [inspector]);
   const groupMemberAgents = useMemo(() => {
     if (!groupConfig) return [];
     return groupConfig.members.map((mId) => agents.find((a) => a.id === mId)).filter(Boolean) as Agent[];
@@ -7776,6 +7796,22 @@ void runMessage(next.text, next.agentId, next.attachments);
                     智能体群聊 <span className="beta-tag">实验性</span>
                   </strong>
                   <span className="subtext">类似微信群聊的多方协同研讨</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewChatDropdownOpen(false);
+                  createConversation(undefined, true);
+                  setDetail("canvas");
+                }}
+              >
+                <FileText size={15} />
+                <div>
+                  <strong>
+                    画布协作 <span className="beta-tag">实验性</span>
+                  </strong>
+                  <span className="subtext">多智能体共享画布，协同撰写与修改报告</span>
                 </div>
               </button>
             </div>
@@ -8475,6 +8511,14 @@ void runMessage(next.text, next.agentId, next.attachments);
         </div>
         <div className="inspector-header">
           <div className="detail-tabs detail-tabs-3">
+            {isCanvasConv && (
+              <button
+                className={detail === "canvas" ? "active" : ""}
+                onClick={() => setDetail("canvas")}
+              >
+                画布 {canvasData && <span className="tab-badge">v{canvasData.version}</span>}
+              </button>
+            )}
             {activeMeta?.isGroup ? (
               <>
                 <button
@@ -8690,6 +8734,32 @@ void runMessage(next.text, next.agentId, next.attachments);
               toolNames={toolNames}
             />
           )
+        )}
+        {isCanvasConv && detail === "canvas" && (
+          <div className="canvas-panel">
+            {canvasData ? (
+              <>
+                <div className="canvas-meta">
+                  <strong>{canvasData.title}</strong>
+                  <span className="score-tag">v{canvasData.version}</span>
+                </div>
+                <div className="canvas-revisions">
+                  {canvasData.revisions.slice(0, 8).map((r, i) => (
+                    <span key={i} className="canvas-revision-pill">
+                      v{r.version} · {r.editor_name} · {r.summary}
+                    </span>
+                  ))}
+                </div>
+                <div className="message-markdown">
+                  <MarkdownText text={canvasData.content} />
+                </div>
+              </>
+            ) : (
+              <EmptyState>
+                画布尚未创建——发送第一条消息后，主智能体将创建共享画布并组织协同撰写
+              </EmptyState>
+            )}
+          </div>
         )}
         {activeMeta?.isGroup && detail === "blackboard" && (
           <BlackboardPanel items={blackboardDeliverables} />

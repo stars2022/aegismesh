@@ -29,6 +29,16 @@ from .adaptive_lease import (
 from .router import QualityRouter, RoutingRequirements, ScoredCandidate
 from .shared_context import SharedCollaborationContext
 from .aip_group import AipGroupBridgeError, ExternalPartner, run_aip_group_discussion
+from .canvas import (
+    CanvasError,
+    apply_op,
+    canvas_id_for,
+    get_or_create_canvas,
+    history as canvas_history_rows,
+    parse_canvas_ops,
+    read_section as canvas_read_section,
+    CANVAS_PROTOCOL_INSTRUCTIONS,
+)
 from .tools import ToolRegistry
 from .transport import PartnerResult, StreamCallback, TransportRegistry, clean_model_output
 from .web_search import DeepSeekWebSearch, WEB_SEARCH_SCHEMA, supports_deepseek_search
@@ -1059,6 +1069,19 @@ class ReliableOrchestrator:
             leader_lease.mark_handled()
             invocation.status = "completed"
             invocation.result_text = result.text
+            canvas_snapshot = None
+            if request.canvas:
+                with self.session_factory() as cdb:
+                    cdoc = get_or_create_canvas(
+                        cdb, canvas_id_for(request.root_invocation_id or invocation.id)
+                    )
+                    canvas_snapshot = {
+                        "id": cdoc.id,
+                        "title": cdoc.title,
+                        "content": cdoc.content,
+                        "version": cdoc.version,
+                        "revisions": canvas_history_rows(cdb, cdoc.id, limit=30),
+                    }
             invocation.result_data = {
                 **(result.data or {}),
                 "mode": "coordination",
@@ -1066,6 +1089,7 @@ class ReliableOrchestrator:
                 "shared_context": shared_context.to_dict(),
                 "lineage": shared_context.lineage,
                 "context": self._context_info(history),
+                **({"canvas": canvas_snapshot} if canvas_snapshot else {}),
             }
             invocation.llm_calls += result.llm_calls
             invocation.prompt_tokens += result.prompt_tokens
@@ -1127,6 +1151,115 @@ class ReliableOrchestrator:
             # Release leader lease
             leader_lease.release(self.db)
 
+    def _canvas_tools(self, canvas_id: str, editor_id: str, editor_name: str) -> list[tuple[str, dict[str, Any], Any]]:
+        """画布协作工具组：托管智能体直接调用；外部 Partner 通过提示词协议使用同语义。"""
+
+        async def _read(args: dict[str, Any]) -> dict[str, Any]:
+            with self.session_factory() as db:
+                doc = get_or_create_canvas(db, canvas_id)
+                body = canvas_read_section(doc.content, args.get("section"))
+                return {"ok": True, "version": doc.version, "content": body}
+
+        async def _write(args: dict[str, Any]) -> dict[str, Any]:
+            with self.session_factory() as db:
+                doc = get_or_create_canvas(db, canvas_id)
+                try:
+                    applied = apply_op(
+                        db, doc,
+                        editor_id=editor_id, editor_name=editor_name,
+                        op="write_section",
+                        section=str(args.get("section") or ""),
+                        content=str(args.get("content") or ""),
+                        base_version=args.get("base_version"),
+                    )
+                except CanvasError as exc:
+                    return {"ok": False, "error": str(exc), "current_version": doc.version}
+                await self._notify_canvas(canvas_id, editor_id, editor_name, applied)
+                return {"ok": True, "version": applied["version"], "summary": applied["summary"]}
+
+        async def _append(args: dict[str, Any]) -> dict[str, Any]:
+            with self.session_factory() as db:
+                doc = get_or_create_canvas(db, canvas_id)
+                try:
+                    applied = apply_op(
+                        db, doc,
+                        editor_id=editor_id, editor_name=editor_name,
+                        op="append", section=None,
+                        content=str(args.get("content") or ""),
+                        base_version=args.get("base_version"),
+                    )
+                except CanvasError as exc:
+                    return {"ok": False, "error": str(exc), "current_version": doc.version}
+                await self._notify_canvas(canvas_id, editor_id, editor_name, applied)
+                return {"ok": True, "version": applied["version"], "summary": applied["summary"]}
+
+        async def _history(args: dict[str, Any]) -> dict[str, Any]:
+            with self.session_factory() as db:
+                return {"ok": True, "revisions": canvas_history_rows(db, canvas_id)}
+
+        read_schema: dict[str, Any] = {
+            "type": "function",
+            "function": {
+                "name": "canvas_read",
+                "description": "读取共享画布（协同报告）的当前内容；可指定 section 只读某一段落。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"section": {"type": "string", "description": "可选，段落标题（## 标题）"}},
+                    "additionalProperties": False,
+                },
+            },
+        }
+        write_schema: dict[str, Any] = {
+            "type": "function",
+            "function": {
+                "name": "canvas_write_section",
+                "description": "写入共享画布的一个段落（## 标题 组织）；段落存在则整体替换，不存在则追加。content 为该段落完整新内容。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "section": {"type": "string", "description": "段落标题"},
+                        "content": {"type": "string", "description": "段落完整新内容（Markdown）"},
+                        "base_version": {"type": "integer", "description": "你读取画布时的版本号，用于冲突检测"},
+                    },
+                    "required": ["section", "content"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+        append_schema: dict[str, Any] = {
+            "type": "function",
+            "function": {
+                "name": "canvas_append",
+                "description": "向共享画布末尾追加内容。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"content": {"type": "string", "description": "追加的内容（Markdown）"}},
+                    "required": ["content"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+        history_schema: dict[str, Any] = {
+            "type": "function",
+            "function": {
+                "name": "canvas_history",
+                "description": "查看共享画布的修改历史（版本、编辑者、摘要）。",
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+            },
+        }
+        return [
+            ("canvas_read", read_schema, _read),
+            ("canvas_write_section", write_schema, _write),
+            ("canvas_append", append_schema, _append),
+            ("canvas_history", history_schema, _history),
+        ]
+
+    async def _notify_canvas(self, canvas_id: str, editor_id: str, editor_name: str, applied: dict[str, Any]) -> None:
+        await self._emit_event(
+            "canvas_updated",
+            {"canvas_id": canvas_id, "version": applied["version"], "summary": applied["summary"], "editor_id": editor_id, "editor_name": editor_name},
+        )
+
     def _coordination_registry(
         self,
         leader: Agent,
@@ -1140,6 +1273,13 @@ class ReliableOrchestrator:
         subagent_leases: dict[str, AgentTaskLease] | None = None,
     ) -> ToolRegistry:
         registry = self._runtime_registry(self._provider_for(leader))
+        if request.canvas:
+            for item in self._canvas_tools(
+                canvas_id=canvas_id_for(request.root_invocation_id or invocation.id),
+                editor_id=leader.id,
+                editor_name=leader.name,
+            ):
+                registry.register(*item)
         registry.register(
             "list_agents",
             {
@@ -1379,6 +1519,14 @@ class ReliableOrchestrator:
                 return _wrapped_executor
 
             wrapped.register(name, schema, _bind(name, executor))
+
+        if request is not None and request.canvas:
+            for item in self._canvas_tools(
+                canvas_id=canvas_id_for(request.root_invocation_id or invocation.id),
+                editor_id=agent.id,
+                editor_name=agent.name,
+            ):
+                wrapped.register(*item)
 
         if shared_context is not None:
             def _read_ctx_fn(args: dict[str, Any]) -> dict[str, Any]:
@@ -2436,10 +2584,25 @@ class ReliableOrchestrator:
                             },
                         )
 
+                    sub_task_text = task
+                    if request.canvas and agent.transport == "aip-rpc":
+                        # 国标外部 Partner 的画布参与方式：快照随任务下发，回传文本解析编辑操作
+                        with self.session_factory() as cdb:
+                            cdoc = get_or_create_canvas(
+                                cdb, canvas_id_for(request.root_invocation_id or invocation.id)
+                            )
+                            sub_task_text = (
+                                task
+                                + "\n\n"
+                                + CANVAS_PROTOCOL_INSTRUCTIONS.format(
+                                    version=cdoc.version, content=cdoc.content[:6000]
+                                )
+                            )
+                            cdb.commit()
                     invoke_task = asyncio.create_task(
                         self._invoke(
                             agent,
-                            task,
+                            sub_task_text,
                             invocation,
                             child_request,
                             policy,
@@ -2464,6 +2627,31 @@ class ReliableOrchestrator:
                             else:
                                 raise AbsoluteTimeoutError(msg or "子任务达到绝对时长上限")
                     result = await invoke_task
+                    if request.canvas and agent.transport == "aip-rpc":
+                        for op_item in parse_canvas_ops(result.text or ""):
+                            with self.session_factory() as cdb:
+                                cdoc = get_or_create_canvas(
+                                    cdb, canvas_id_for(request.root_invocation_id or invocation.id)
+                                )
+                                try:
+                                    applied = apply_op(
+                                        cdb, cdoc,
+                                        editor_id=agent.id, editor_name=agent.name,
+                                        op=str(op_item["op"]),
+                                        section=op_item.get("section"),
+                                        content=str(op_item.get("content") or ""),
+                                        base_version=op_item.get("base_version"),
+                                    )
+                                    cdb.commit()
+                                    await self._notify_canvas(
+                                        cdoc.id, agent.id, agent.name, applied
+                                    )
+                                except CanvasError as exc:
+                                    self._event(
+                                        invocation,
+                                        "CANVAS_CONFLICT",
+                                        {"agentId": agent.id, "error": str(exc)[:200]},
+                                    )
                     latency_ms = (time.monotonic() - started) * 1000
                     with self.session_factory() as ok_db:
                         sub_agent = ok_db.get(Agent, agent.id)

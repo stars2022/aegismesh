@@ -220,6 +220,13 @@ export type ChatResult = {
     context?: { history_turns: number; history_messages: number; compressed_turns: number }
     shared_context?: SharedCollaborationContextData
     lineage?: Array<Record<string, unknown>>
+    canvas?: {
+      id: string
+      title: string
+      content: string
+      version: number
+      revisions: { version: number; editor_name: string; summary: string; created_at: string }[]
+    }
   } | null
 }
 
@@ -245,6 +252,13 @@ export type Trace = {
     contributions?: { agent_id: string; agent_name: string; text: string; data: Record<string, unknown> }[]
     context?: Record<string, unknown>
     shared_context?: { blackboard_messages?: Record<string, unknown>[] }
+    canvas?: {
+      id: string
+      title: string
+      content: string
+      version: number
+      revisions: { version: number; editor_name: string; summary: string; created_at: string }[]
+    }
   } | null
   total_latency_ms: number
   attempt_count: number

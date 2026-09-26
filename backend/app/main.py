@@ -1378,6 +1378,23 @@ def _group_history_text(group_id: str, db: Session, limit: int = 14) -> str:
     ) or "（暂无历史发言）"
 
 
+@app.get("/api/canvas/{canvas_id}", dependencies=[Depends(require_demo)], tags=["canvas"])
+def get_canvas(canvas_id: str, db: DbSession) -> dict:
+    from .models import CanvasDoc
+    from .services.canvas import history as canvas_history_rows
+
+    doc = db.get(CanvasDoc, canvas_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="画布不存在")
+    return {
+        "id": doc.id,
+        "title": doc.title,
+        "content": doc.content,
+        "version": doc.version,
+        "revisions": canvas_history_rows(db, canvas_id, limit=30),
+    }
+
+
 @app.post("/api/group-chat", dependencies=[Depends(require_demo)], tags=["group-chat"])
 def create_group_chat(payload: GroupChatCreate, db: DbSession) -> dict:
     members = [m for m in payload.members if db.get(Agent, m)]

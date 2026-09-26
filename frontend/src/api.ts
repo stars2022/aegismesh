@@ -163,6 +163,10 @@ export const api = {
       `/api/group-chat/${groupId}/messages`,
       { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ text, mentioned: mentioned || undefined }) },
     ),
+  getCanvas: (canvasId: string) =>
+    request<{ id: string; title: string; content: string; version: number; revisions: { version: number; editor_name: string; summary: string; created_at: string }[] }>(
+      `/api/canvas/${canvasId}`,
+    ),
   chat: (message: string, sessionId?: string, agentId?: string, attachments?: Attachment[]) =>
     request<ChatResult>('/api/demo/chat', {
       method: 'POST',
@@ -184,6 +188,7 @@ export const api = {
     signal?: AbortSignal,
     onTaskId?: (taskId: string) => void,
     attachments?: Attachment[],
+    canvas?: boolean,
   ) =>
     streamChat(
       '/api/demo/chat/stream',
@@ -191,6 +196,7 @@ export const api = {
         message,
         session_id: sessionId,
         agent_id: agentId || undefined,
+        canvas: canvas || undefined,
         interface: 'harness',
         attachments: attachments || [],
       },

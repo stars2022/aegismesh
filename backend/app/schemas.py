@@ -205,6 +205,7 @@ class ChatRequest(BaseModel):
     mode: Literal["route", "collaborate"] = "route"
     max_partners: int = Field(default=2, ge=2, le=5)
     interface: Literal["api", "harness"] = "api"
+    canvas: bool = False
     delegation_depth: int = Field(default=0, ge=0)
     delegation_path: list[str] = Field(default_factory=list)
     root_invocation_id: str | None = None
