@@ -4087,6 +4087,19 @@ type ConversationMeta = {
   updatedAt?: number; // 最近一次有新消息的时间（纯点击浏览不更新）
 };
 
+function relTime(ts?: number): string {
+  if (!ts) return "";
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return "刚刚";
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 60) return `${mins}分钟`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}小时`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}天`;
+  return `${Math.floor(days / 7)}周`;
+}
+
 function loadConversationIndex(): ConversationMeta[] {
   try {
     const raw = localStorage.getItem("aegismesh-conversations-index");
@@ -6198,6 +6211,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const activeIdRef = useRef(activeId);
   const taskConvRef = useRef<string | null>(null); // 正在运行的任务所属会话
   const streamTextRef = useRef(""); // 流式累积文本（切走后回来也能续上）
+  const lastStreamSaveRef = useRef(0);
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
@@ -7280,7 +7294,14 @@ ${cleanHistory}
       } else {
         const conv = loadConversationData(taskConvId);
         if (conv) {
-          conv.messages = [...conv.messages, msg];
+          const last = conv.messages.at(-1);
+          if (last && last.streaming && msg.role === "assistant") {
+            last.text = msg.text;
+            last.streaming = false;
+            last.result = msg.result;
+          } else {
+            conv.messages.push({ ...msg, streaming: false });
+          }
           saveConversationData(conv);
           setConversations((items) =>
             items.map((item) =>
@@ -7293,6 +7314,34 @@ ${cleanHistory}
       }
     };
 
+    const upsertStreamToSaved = (agentId: string) => {
+      const now = Date.now();
+      if (now - lastStreamSaveRef.current < 400) return;
+      lastStreamSaveRef.current = now;
+      const conv = loadConversationData(taskConvId);
+      if (!conv) return;
+      const last = conv.messages.at(-1);
+      if (last && last.streaming && last.senderAgentId === agentId) {
+        last.text = streamTextRef.current;
+      } else {
+        conv.messages.push({
+          role: "assistant",
+          text: streamTextRef.current,
+          streaming: true,
+          senderAgentId: agentId,
+          createdAt: Date.now(),
+        });
+      }
+      saveConversationData(conv);
+      setConversations((items) =>
+        items.map((item) =>
+          item.id === taskConvId
+            ? { ...item, messageCount: conv.messages.length, updatedAt: Date.now() }
+            : item,
+        ),
+      );
+    };
+
     try {
       const result = await api.chatStream(
         message,
@@ -7301,7 +7350,8 @@ ${cleanHistory}
         (delta) => {
           receivedDelta = true;
           streamTextRef.current += delta;
-          if (activeIdRef.current !== taskConvId) return; // 用户已切走：静默累积
+          upsertStreamToSaved(taskAgentId);
+          if (activeIdRef.current !== taskConvId) return; // 用户已切走：流内容仍实时写入所属会话
           setMessages((items) => {
             const last = items.at(-1);
             if (last?.role === "assistant" && last.streaming) {
@@ -7732,14 +7782,36 @@ void runMessage(next.text, next.agentId, next.attachments);
           )}
         </div>
         <nav>
-          {[...conversations]
-            .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-            .map((conversation) => (
+          {(() => {
+            const sorted = [...conversations].sort(
+              (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0),
+            );
+            const day = 86_400_000;
+            const now = Date.now();
+            const groups: { key: string; label: string; items: ConversationMeta[] }[] = [
+              { key: "today", label: "今天", items: [] },
+              { key: "week", label: "近 7 天", items: [] },
+              { key: "earlier", label: "更早", items: [] },
+            ];
+            for (const meta of sorted) {
+              const t = meta.updatedAt || 0;
+              const key = t && now - t < day ? "today" : t && now - t < 7 * day ? "week" : "earlier";
+              groups.find((g) => g.key === key)!.items.push(meta);
+            }
+            return groups
+              .filter((g) => g.items.length > 0)
+              .map((g) => (
+              <div key={g.key} className="history-group">
+                <div className="history-group-label">{g.label}</div>
+                {g.items.map((conversation) => (
             <div
               className={`history-item ${conversation.id === activeId ? "active" : ""} ${conversation.isGroup ? "is-group" : ""}`}
               key={conversation.id}
             >
               <button onClick={() => openConversation(conversation)}>
+                {sending && taskConvRef.current === conversation.id && (
+                  <span className="running-dot" title="任务运行中" />
+                )}
                 {conversation.isGroup ? (
                   <Users size={14} className="group-item-icon" />
                 ) : (
@@ -7750,6 +7822,9 @@ void runMessage(next.text, next.agentId, next.attachments);
                   <span className="group-count-badge">
                     {conversation.groupMemberCount || 0}人
                   </span>
+                )}
+                {conversation.updatedAt && (
+                  <span className="item-time">{relTime(conversation.updatedAt)}</span>
                 )}
               </button>
               <div className="history-actions-col">
@@ -7781,7 +7856,10 @@ void runMessage(next.text, next.agentId, next.attachments);
                 </button>
               </div>
             </div>
-          ))}
+            ))}
+              </div>
+              ));
+          })()}
         </nav>
         <button
           className={content === "api" ? "active api-entry" : "api-entry"}
