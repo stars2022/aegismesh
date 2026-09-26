@@ -1899,6 +1899,69 @@ def platform_acs(request: Request, db: DbSession) -> dict:
     return build_acs(leader, rpc_url)
 
 
+@app.post("/aip/platform/rpc", tags=["aip"])
+async def platform_rpc(request: Request, db: DbSession):
+    """平台级 AIP RPC 入口：对外代表协调型智能体受理国标任务（含探活兼容）。"""
+    leader = db.scalar(select(Agent).where(Agent.role == "leader").order_by(Agent.id))
+    if not leader or not public_aic(leader) or leader.transport == "aip-rpc":
+        raise HTTPException(status_code=404, detail="Platform leader not configured")
+    require_hosted_aip_runtime()
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, Exception) as exc:
+        raise HTTPException(status_code=400, detail="AIP 请求格式无效") from exc
+
+    # 兼容官方探针/探活请求（method="get" / "ping" 或 taskId="probe" / "ping"）
+    if isinstance(payload, dict):
+        method = str(payload.get("method") or "").lower()
+        params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+        if method in {"get", "ping"} or params.get("taskId") in {"probe", "ping"}:
+            return {
+                "jsonrpc": "2.0",
+                "id": payload.get("id"),
+                "result": {
+                    "taskId": params.get("taskId") or "probe",
+                    "status": {"state": "Completed", "progress": 1.0},
+                    "dataItems": [{"type": "text", "text": f"Platform {leader.name} is ready"}],
+                },
+            }
+
+    try:
+        rpc_request = RpcRequest.model_validate(payload)
+    except PydanticValidationError as exc:
+        raise HTTPException(status_code=400, detail="AIP 请求格式无效") from exc
+    peer_aic = require_inbound_identity(request, rpc_request.params.command.senderId)
+    service = HostedAipService(db, leader, owner_peer_aic=peer_aic)
+    t0 = time.monotonic()
+    status_code = 200
+    task_id = rpc_request.params.command.taskId or f"task_{int(t0 * 1000)}"
+    try:
+        return await handle_rpc_request(
+            request,
+            CommandHandlers(),
+            local_aic=leader.aic,
+            identity_binding_enabled=True,
+            dispatch_request=service.dispatch,
+        )
+    except Exception:
+        status_code = 500
+        raise
+    finally:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        asyncio.create_task(
+            amp_service.record_access(
+                caller_aic=peer_aic,
+                callee_aic=leader.aic,
+                task_id=task_id,
+                route="/aip/platform/rpc",
+                url="/aip/platform/rpc",
+                status_code=status_code,
+                duration_ms=duration_ms,
+                session_id=rpc_request.params.command.sessionId,
+            )
+        )
+
+
 def _hosted_partner(agent_id: str, db: Session) -> Agent:
     agent = db.get(Agent, agent_id)
     if not agent:
