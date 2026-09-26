@@ -6195,6 +6195,12 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const [liveBlackboardMessages, setLiveBlackboardMessages] = useState<BlackboardMessage[]>([]);
   const [session, setSession] = useState<string | undefined>(initialActive?.session || activeMeta?.session);
   const sessionRef = useRef(session);
+  const activeIdRef = useRef(activeId);
+  const taskConvRef = useRef<string | null>(null); // 正在运行的任务所属会话
+  const streamTextRef = useRef(""); // 流式累积文本（切走后回来也能续上）
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
   const [inspector, setInspector] = useState<ChatResult | null>(
     latestResult(initialActive?.messages || []),
   );
@@ -6859,6 +6865,27 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     setSendingSince(Date.now());
     setLiveSubagents({});
     setLiveBlackboardMessages([]);
+    const taskConvId = activeId;
+    taskConvRef.current = taskConvId;
+    // 群聊发言是离散消息：用户切走后回写到原群聊存储
+    const groupAppend = (msg: ChatMessage) => {
+      if (activeIdRef.current === taskConvId) {
+        setMessages((items) => [...items, msg]);
+      } else {
+        const conv = loadConversationData(taskConvId);
+        if (conv) {
+          conv.messages = [...conv.messages, msg];
+          saveConversationData(conv);
+          setConversations((items) =>
+            items.map((item) =>
+              item.id === taskConvId
+                ? { ...item, messageCount: conv.messages.length, updatedAt: Date.now() }
+                : item,
+            ),
+          );
+        }
+      }
+    };
 
     const userMsg: ChatMessage = {
       role: "user",
@@ -6905,27 +6932,21 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
             chainTarget,
           );
           if (!res.reply) {
-            setMessages((items) => [
-              ...items,
-              {
-                role: "assistant",
-                text: res.error ? `⚠️ ${res.error}` : "（本次没有智能体发言）",
-                senderName: speakerAgent?.name || chainTarget,
-                createdAt: Date.now(),
-              },
-            ]);
+            groupAppend({
+              role: "assistant",
+              text: res.error ? `⚠️ ${res.error}` : "（本次没有智能体发言）",
+              senderName: speakerAgent?.name || chainTarget,
+              createdAt: Date.now(),
+            });
             break;
           }
-          setMessages((items) => [
-            ...items,
-            {
-              role: "assistant",
-              text: res.reply || "",
-              senderAgentId: res.agent_id || chainTarget,
-              senderName: res.agent_name || speakerAgent?.name || chainTarget,
-              createdAt: Date.now(),
-            },
-          ]);
+          groupAppend({
+            role: "assistant",
+            text: res.reply || "",
+            senderAgentId: res.agent_id || chainTarget,
+            senderName: res.agent_name || speakerAgent?.name || chainTarget,
+            createdAt: Date.now(),
+          });
           await onComplete();
           const nextTarget = groupCfg.members.find((mId) => {
             if (mId === res.agent_id) return false;
@@ -6935,21 +6956,19 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
           chainTarget = nextTarget;
           chainText = `群内继续讨论：上一条发言 @了你，请接着回应（原话：${res.reply.slice(0, 200)}）`;
         } catch (reason) {
-          setMessages((items) => [
-            ...items,
-            {
-              role: "assistant",
-              text: `⚠️ [${speakerAgent?.name || chainTarget}] 发言失败：${reason instanceof Error ? reason.message : "群聊服务异常"}`,
-              senderName: speakerAgent?.name || chainTarget,
-              createdAt: Date.now(),
-            },
-          ]);
+          groupAppend({
+            role: "assistant",
+            text: `⚠️ [${speakerAgent?.name || chainTarget}] 发言失败：${reason instanceof Error ? reason.message : "群聊服务异常"}`,
+            senderName: speakerAgent?.name || chainTarget,
+            createdAt: Date.now(),
+          });
           break;
         }
       }
       sendingRef.current = false;
       setSending(false);
       setSendingSince(null);
+      taskConvRef.current = null;
       return;
     }
 
@@ -7235,6 +7254,9 @@ ${cleanHistory}
     setSendingSince(Date.now());
     setLiveSubagents({});
     setLiveBlackboardMessages([]);
+    const taskConvId = activeId; // 任务绑定发起它的会话
+    taskConvRef.current = taskConvId;
+    streamTextRef.current = "";
     setMessages((items) => [
       ...items,
       { role: "user", text: message, attachments: messageAttachments },
@@ -7245,6 +7267,32 @@ ${cleanHistory}
     currentTaskIdRef.current = null;
     stopRequestedRef.current = false;
 
+    // 任务完成/终止时：若用户已切到其他会话，把结果回写到原会话存储而不是当前视图
+    const finishTaskMessage = (msg: ChatMessage) => {
+      if (activeIdRef.current === taskConvId) {
+        setMessages((items) => {
+          const last = items.at(-1);
+          if (last?.role === "assistant" && last.streaming) {
+            return [...items.slice(0, -1), msg];
+          }
+          return [...items, msg];
+        });
+      } else {
+        const conv = loadConversationData(taskConvId);
+        if (conv) {
+          conv.messages = [...conv.messages, msg];
+          saveConversationData(conv);
+          setConversations((items) =>
+            items.map((item) =>
+              item.id === taskConvId
+                ? { ...item, messageCount: conv.messages.length, updatedAt: Date.now() }
+                : item,
+            ),
+          );
+        }
+      }
+    };
+
     try {
       const result = await api.chatStream(
         message,
@@ -7252,17 +7300,19 @@ ${cleanHistory}
         taskAgentId,
         (delta) => {
           receivedDelta = true;
+          streamTextRef.current += delta;
+          if (activeIdRef.current !== taskConvId) return; // 用户已切走：静默累积
           setMessages((items) => {
             const last = items.at(-1);
             if (last?.role === "assistant" && last.streaming) {
               return [
                 ...items.slice(0, -1),
-                { ...last, text: last.text + delta },
+                { ...last, text: streamTextRef.current },
               ];
             }
             return [
               ...items,
-              { role: "assistant", text: delta, streaming: true },
+              { role: "assistant", text: streamTextRef.current, streaming: true },
             ];
           });
         },
@@ -7283,18 +7333,22 @@ ${cleanHistory}
         },
         messageAttachments,
       );
-      setSession(result.session_id);
-      sessionRef.current = result.session_id;
-      setInspector(result);
-      setMessages((items) => {
-        const last = items.at(-1);
-        if (receivedDelta && last?.role === "assistant" && last.streaming) {
-          return [
-            ...items.slice(0, -1),
-            { role: "assistant", text: result.answer, result },
-          ];
+      if (activeIdRef.current === taskConvId) {
+        setSession(result.session_id);
+        sessionRef.current = result.session_id;
+        setInspector(result);
+      } else {
+        const conv = loadConversationData(taskConvId);
+        if (conv) {
+          conv.session = result.session_id;
+          saveConversationData(conv);
         }
-        return [...items, { role: "assistant", text: result.answer, result }];
+      }
+      finishTaskMessage({
+        role: "assistant",
+        text: result.answer,
+        result,
+        createdAt: Date.now(),
       });
       await onComplete();
     } catch (reason) {
@@ -7304,15 +7358,10 @@ ${cleanHistory}
         (reason instanceof Error && reason.name === "AbortError") ||
         (reason instanceof Error && reason.message.includes("任务已被用户取消"))
       ) {
-        setMessages((items) => {
-          const last = items.at(-1);
-          if (last?.role === "assistant" && last.streaming) {
-            return [
-              ...items.slice(0, -1),
-              { role: "assistant", text: `${last.text}\n\n[任务已被用户主动终止]` },
-            ];
-          }
-          return [...items, { role: "assistant", text: "[任务已被用户主动终止]" }];
+        finishTaskMessage({
+          role: "assistant",
+          text: `${streamTextRef.current}\n\n[任务已被用户主动终止]`,
+          createdAt: Date.now(),
         });
         return;
       }
@@ -7325,15 +7374,10 @@ ${cleanHistory}
       ) {
         error = "网络连接中断，后台任务仍在继续运行，请稍后刷新或重连查看";
       }
-      setMessages((items) => {
-        const last = items.at(-1);
-        if (last?.role === "assistant" && last.streaming) {
-          return [
-            ...items.slice(0, -1),
-            { role: "assistant", text: `${last.text}\n\n${error}` },
-          ];
-        }
-        return [...items, { role: "assistant", text: error }];
+      finishTaskMessage({
+        role: "assistant",
+        text: `${streamTextRef.current}\n\n${error}`,
+        createdAt: Date.now(),
       });
     } finally {
       sendingRef.current = false;
@@ -7343,6 +7387,7 @@ ${cleanHistory}
       setLiveBlackboardMessages([]);
       abortControllerRef.current = null;
       currentTaskIdRef.current = null;
+      taskConvRef.current = null;
       const shouldRunNext = !stopQueueRef.current;
       stopRequestedRef.current = false;
       stopQueueRef.current = false;
@@ -8039,7 +8084,7 @@ void runMessage(next.text, next.agentId, next.attachments);
                 ))}
               </>
             )}
-            {sending && !messages.some((m) => m.streaming) && (
+            {sending && activeIdRef.current === taskConvRef.current && !messages.some((m) => m.streaming) && (
               <div className="message assistant">
                 <div className="assistant-mark">
                   <Network size={15} />
@@ -8068,7 +8113,7 @@ void runMessage(next.text, next.agentId, next.attachments);
                       )}
                     </div>
                   </div>
-                  {Object.values(liveSubagents)
+                  {activeIdRef.current === taskConvRef.current && Object.values(liveSubagents)
                     .filter((s) => s.status === "running")
                     .map((sub) => (
                       <LiveSubagentRow
