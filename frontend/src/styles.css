@@ -10149,6 +10149,13 @@ tr:last-child td { border-bottom: 0; }
 .floating-assistant-body > * { animation: pill-tab-panel-in 220ms cubic-bezier(.2, .8, .2, 1) both; }
 
 @media (max-width: 820px) {
+  .history-sidebar {
+    left: 8px;
+    right: auto;
+    width: min(330px, calc(100vw - 24px)) !important;
+    max-width: none;
+    min-width: 0;
+  }
   .route-inspector {
     right: 8px;
     left: auto;

@@ -8420,7 +8420,7 @@ void runMessage(next.text, next.agentId, next.attachments);
           aria-label="关闭抽屉"
         />
       )}
-      {historyCollapsed && (
+      {historyCollapsed && (!isCanvasConv || !canvasData) && (
         <button
           className="chat-side-toggle left"
           onClick={() => setHistoryCollapsed(false)}
@@ -8675,7 +8675,14 @@ void runMessage(next.text, next.agentId, next.attachments);
             document={canvasData}
             agentBusy={sending}
             sessionTitle={activeMeta?.title || "协同画布"}
-            onOpenHistory={() => setMobileHistoryOpen(true)}
+            showHistoryToggle={historyCollapsed}
+            onOpenHistory={() => {
+              if (window.matchMedia("(max-width: 820px)").matches) {
+                setMobileHistoryOpen(true);
+              } else {
+                setHistoryCollapsed(false);
+              }
+            }}
             onAskAI={(selected, action) => {
               const instruction = { polish: "润色表达并保持原意", expand: "补充有依据的细节，不编造事实", correct: "纠正错别字、语法和明显事实错误", restructure: "重组段落结构，使论证更清晰" }[action];
               setInput(`请只针对画布中选中的文本${instruction}。先 canvas_read 获取最新版本，优先用 canvas_replace_selection 精确替换唯一原文；若无法唯一匹配，请说明原因，不要改动其他段落。选中文本：\n\n“${selected}”`);

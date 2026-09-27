@@ -3,6 +3,7 @@
 .canvas-wysiwyg-context { display: flex; align-items: center; gap: 8px; flex: 0 1 210px; min-width: 105px; max-width: 210px; color: var(--ink); }
 .canvas-wysiwyg-context strong { overflow: hidden; min-width: 0; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
 .canvas-wysiwyg-context .canvas-wysiwyg-history-toggle { display: none; }
+.canvas-wysiwyg-context .canvas-wysiwyg-history-toggle.is-visible { display: inline-flex; min-width: 34px; min-height: 34px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: color-mix(in srgb, var(--paper) 94%, var(--ink)); }
 .canvas-wysiwyg-tools, .canvas-wysiwyg-actions { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .canvas-wysiwyg-tools { flex: 1 1 auto; overflow-x: auto; scrollbar-width: none; }
 .canvas-wysiwyg.is-reading .canvas-wysiwyg-tools { display: none; }

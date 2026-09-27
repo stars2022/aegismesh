@@ -70,6 +70,7 @@ export function CanvasWorkspace({
   document,
   sessionTitle,
   onOpenHistory,
+  showHistoryToggle = false,
   onSave,
   onAskAI,
   onUploadImage,
@@ -78,6 +79,7 @@ export function CanvasWorkspace({
   document: CanvasDocument;
   sessionTitle: string;
   onOpenHistory: () => void;
+  showHistoryToggle?: boolean;
   onSave: (content: string, baseVersion: number) => Promise<CanvasDocument>;
   onAskAI?: (selection: string, action: SelectionAction) => void;
   onUploadImage?: (file: File) => Promise<string>;
@@ -351,7 +353,7 @@ export function CanvasWorkspace({
     <div className={`canvas-wysiwyg ${editing ? "is-editing" : "is-reading"}`}>
       <header className="canvas-wysiwyg-toolbar">
         <div className="canvas-wysiwyg-context">
-          <button type="button" className="canvas-wysiwyg-history-toggle" aria-label="打开会话列表" title="会话列表" onClick={onOpenHistory}><Menu size={18} /></button>
+          <button type="button" className={`canvas-wysiwyg-history-toggle ${showHistoryToggle ? "is-visible" : ""}`} aria-label="打开会话列表" title="会话列表" onClick={onOpenHistory}><Menu size={18} /></button>
           <strong title={sessionTitle}>{sessionTitle}</strong>
         </div>
         <div className="canvas-wysiwyg-tools">
