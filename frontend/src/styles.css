@@ -9606,9 +9606,7 @@ tr:last-child td { border-bottom: 0; }
 .canvas-floating-assistant.collapsed { width: 168px; height: 44px; border-radius: 22px; }
 .canvas-floating-assistant:not(.expanded) .header-brand strong,
 .canvas-floating-assistant:not(.expanded) .status-indicator { display: none; }
-.canvas-floating-assistant:not(.expanded) .floating-tabs { margin-left: auto; }
-.canvas-floating-assistant:not(.expanded) .floating-tab { gap: 0; padding: 6px 8px; }
-.canvas-floating-assistant:not(.expanded) .floating-tab span { max-width: 0; opacity: 0; }
+.canvas-floating-assistant:not(.expanded) .floating-tab { gap: 4px; padding: 5px 6px; }
 .canvas-floating-assistant:not(.collapsed) > .canvas-floating-pill { opacity: 0; visibility: hidden; pointer-events: none; }
 .canvas-floating-assistant.collapsed > .floating-assistant-header,
 .canvas-floating-assistant.collapsed > .floating-assistant-body { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .1s ease, visibility 0s linear .1s; }
@@ -9634,9 +9632,10 @@ tr:last-child td { border-bottom: 0; }
 .floating-assistant-header {
   height: 48px;
   border-bottom: 1px solid var(--line);
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 0 14px;
   background: color-mix(in srgb, var(--paper) 95%, var(--ink));
   user-select: none;
@@ -9647,6 +9646,7 @@ tr:last-child td { border-bottom: 0; }
   align-items: center;
   gap: 6px;
   font-size: 13px;
+  min-width: 0;
 }
 .floating-assistant-header .header-brand strong {
   font-weight: 700;
@@ -9673,6 +9673,8 @@ tr:last-child td { border-bottom: 0; }
 
 .floating-tabs {
   display: flex;
+  justify-content: center;
+  min-width: 0;
   gap: 3px;
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   padding: 2px;
@@ -9693,6 +9695,7 @@ tr:last-child td { border-bottom: 0; }
   transition: background 0.15s, color 0.15s;
 }
 .floating-tab span { display: inline-block; max-width: 3em; overflow: hidden; opacity: 1; white-space: nowrap; transition: max-width .24s cubic-bezier(.2,.8,.2,1), opacity .18s ease; }
+.floating-window-controls { display: flex; align-items: center; flex: none; gap: 2px; padding-left: 7px; border-left: 1px solid var(--line); }
 .floating-tab.active {
   background: var(--paper);
   color: var(--ink);
@@ -10029,9 +10032,9 @@ tr:last-child td { border-bottom: 0; }
   .canvas-floating-assistant .header-brand { flex: none; }
   .canvas-floating-assistant .header-brand strong,
   .canvas-floating-assistant .status-indicator { display: none; }
-  .canvas-floating-assistant .floating-tabs { flex: 1; justify-content: space-around; min-width: 0; background: transparent; }
-  .canvas-floating-assistant .floating-tab { justify-content: center; min-width: 32px; min-height: 32px; padding: 6px; white-space: nowrap; }
-  .canvas-floating-assistant .floating-tab span { max-width: 0; opacity: 0; }
+  .canvas-floating-assistant .floating-tabs { justify-content: space-around; min-width: 0; background: transparent; }
+  .canvas-floating-assistant .floating-tab { justify-content: center; min-width: 32px; min-height: 32px; padding: 5px 4px; white-space: nowrap; }
+  .canvas-floating-assistant .floating-tab span { max-width: 2.5em; opacity: 1; font-size: 11px; }
   .canvas-floating-assistant.expanded .floating-tab { gap: 3px; padding: 5px; }
   .canvas-floating-assistant.expanded .floating-tab span { max-width: 2.5em; opacity: 1; font-size: 11px; }
   .canvas-floating-assistant.expanded .header-brand { display: none; }
@@ -10059,6 +10062,11 @@ tr:last-child td { border-bottom: 0; }
   .canvas-floating-assistant.expanded .floating-agent-dropdown .dropdown-trigger > span:not(.dropdown-leading-icon) { display: inline-block; max-width: 150px; opacity: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: max-width .25s ease, opacity .18s ease; }
   .canvas-floating-assistant .floating-agent-dropdown .dropdown-trigger { width: auto; max-width: min(180px, 48vw); }
   .canvas-floating-assistant .floating-send-btn { flex: none; }
+}
+@media (max-width: 360px) {
+  .canvas-floating-assistant .floating-tab { gap: 0; padding: 6px; }
+  .canvas-floating-assistant .floating-tab span { max-width: 0; opacity: 0; }
+  .canvas-floating-assistant.expanded .floating-tab span { max-width: 0; opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .canvas-floating-backdrop, .canvas-floating-assistant > .floating-assistant-header,

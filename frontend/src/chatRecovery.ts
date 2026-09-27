@@ -41,6 +41,7 @@ export function upsertRecoveredAssistant<T extends RecoverableAssistantMessage>(
     next[index] = {
       ...existing,
       ...incoming,
+      streaming: incoming.streaming === true,
       createdAt: existing.createdAt ?? incoming.createdAt,
     };
     return next;
@@ -50,7 +51,7 @@ export function upsertRecoveredAssistant<T extends RecoverableAssistantMessage>(
     last.streaming ||
     (incoming.recoveryInvocationId && !last.result && !last.taskId && !last.recoveryInvocationId)
   )) {
-    return [...messages.slice(0, -1), { ...last, ...incoming }];
+    return [...messages.slice(0, -1), { ...last, ...incoming, streaming: incoming.streaming === true }];
   }
   return [...messages, incoming];
 }

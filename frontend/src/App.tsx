@@ -6487,17 +6487,19 @@ function CanvasFloatingAssistant({
           </button>
         </div>
 
-        <button type="button" className="floating-resize-btn" onClick={() => setExpanded((value) => !value)} aria-label={expanded ? "缩小协同助手" : "放大协同助手"} title={expanded ? "缩小" : "放大"}>
-          {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-        </button>
-        <button
-          type="button"
-          className="floating-minimize-btn"
-          onClick={() => { setCollapsed(true); setExpanded(false); }}
-          title="最小化为浮标"
-        >
-          <Minus size={15} />
-        </button>
+        <div className="floating-window-controls">
+          <button type="button" className="floating-resize-btn" onClick={() => setExpanded((value) => !value)} aria-label={expanded ? "缩小协同助手" : "放大协同助手"} title={expanded ? "缩小" : "放大"}>
+            {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
+          <button
+            type="button"
+            className="floating-minimize-btn"
+            onClick={() => { setCollapsed(true); setExpanded(false); }}
+            title="最小化为浮标"
+          >
+            <Minus size={15} />
+          </button>
+        </div>
       </header>
 
       <div className="floating-assistant-body">
@@ -6544,7 +6546,7 @@ function CanvasFloatingAssistant({
                               selectedAgent?.name ||
                               "协调智能体"}
                         </span>
-                        {message.streaming && (
+                        {message.streaming && sending && idx === messages.length - 1 && (
                           <span className="msg-streaming-indicator">
                             <span className="pulse" /> 正在落笔...
                           </span>
@@ -6560,7 +6562,7 @@ function CanvasFloatingAssistant({
                         </div>
                       )}
                       <div className="msg-content">
-                        <MarkdownText text={message.text} streaming={message.streaming} />
+                        <MarkdownText text={message.text} streaming={Boolean(message.streaming && sending)} />
                       </div>
                     </div>
                   ))}
@@ -8671,6 +8673,7 @@ void runMessage(next.text, next.agentId, next.attachments);
           {canvasData ? <Suspense fallback={<div className="canvas-loading-state">正在加载编辑器…</div>}><CanvasWorkspace
             key={canvasData.id}
             document={canvasData}
+            agentBusy={sending}
             sessionTitle={activeMeta?.title || "协同画布"}
             onOpenHistory={() => setMobileHistoryOpen(true)}
             onAskAI={(selected, action) => {

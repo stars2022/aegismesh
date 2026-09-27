@@ -8,7 +8,7 @@ import { Image } from "@tiptap/extension-image";
 import {
   Bold, BookOpen, Check, CheckSquare, ChevronDown, Code, Copy, FileText,
   Image as ImageIcon, Italic, Link, List, ListOrdered, Menu, Minus, Quote,
-  Redo2, Save, Sparkles, Table2, Underline, Undo2, X,
+  Pencil, Redo2, Save, Sparkles, Table2, Underline, Undo2, X,
 } from "lucide-react";
 import type { CanvasDocument } from "./api";
 import { api } from "./api";
@@ -72,6 +72,7 @@ export function CanvasWorkspace({
   onSave,
   onAskAI,
   onUploadImage,
+  agentBusy = false,
 }: {
   document: CanvasDocument;
   sessionTitle: string;
@@ -79,18 +80,22 @@ export function CanvasWorkspace({
   onSave: (content: string, baseVersion: number) => Promise<CanvasDocument>;
   onAskAI?: (selection: string, action: SelectionAction) => void;
   onUploadImage?: (file: File) => Promise<string>;
+  agentBusy?: boolean;
 }) {
   const initial = document.content || DEFAULT_CANVAS_TEMPLATE;
   const baseline = useRef({ version: document.version, content: initial });
   const initialized = useRef(false);
+  const localMutation = useRef(false);
+  const reviewAfterTask = useRef(false);
   const [draft, setDraft] = useState(initial);
+  const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [priorRevision, setPriorRevision] = useState<{ version: number; content: string } | null>(null);
+  const [pendingReview, setPendingReview] = useState<{ version: number; content: string } | null>(null);
   const [reviewError, setReviewError] = useState("");
-  useEffect(() => { setPriorRevision(null); setReviewOpen(false); }, [document.version]);
   const [menuOpen, setMenuOpen] = useState<"style" | "insert" | null>(null);
   const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
   const [dialog, setDialog] = useState<LinkDialog | null>(null);
@@ -111,6 +116,7 @@ export function CanvasWorkspace({
     ],
     content: initial,
     contentType: "markdown",
+    editable: false,
     immediatelyRender: false,
     editorProps: { attributes: { class: "canvas-prose", "aria-label": "画布正文" } },
     onUpdate: ({ editor: instance }) => setDraft(instance.getMarkdown()),
@@ -142,6 +148,15 @@ export function CanvasWorkspace({
     return () => { window.document.removeEventListener("pointerdown", closeOutside); window.document.removeEventListener("keydown", closeEscape); };
   }, [menuOpen, selection]);
 
+  useEffect(() => { editor?.setEditable(editing); }, [editor, editing]);
+
+  useEffect(() => {
+    if (!agentBusy && pendingReview && reviewAfterTask.current) {
+      reviewAfterTask.current = false;
+      setReviewOpen(true);
+    }
+  }, [agentBusy, pendingReview]);
+
   useEffect(() => {
     if (!editor) return;
     if (!initialized.current) {
@@ -151,12 +166,24 @@ export function CanvasWorkspace({
       initialized.current = true;
       return;
     }
-    if (document.version === baseline.current.version && document.content === baseline.current.content) return;
+    if (document.version === baseline.current.version && document.content === baseline.current.content) {
+      localMutation.current = false;
+      return;
+    }
     if (draft !== baseline.current.content && document.version !== baseline.current.version) {
       setError("智能体已更新画布。本地修改仍在，请复制草稿或载入最新版本后再编辑。");
       return;
     }
     if (draft === baseline.current.content) {
+      if (document.version !== baseline.current.version) {
+        if (!localMutation.current && document.content !== baseline.current.content) {
+          setPendingReview((current) => current || { ...baseline.current });
+          setPriorRevision(null);
+          reviewAfterTask.current = agentBusy;
+          if (!agentBusy) setReviewOpen(true);
+        }
+        localMutation.current = false;
+      }
       editor.commands.setContent(document.content || DEFAULT_CANVAS_TEMPLATE, {
         contentType: "markdown", emitUpdate: false,
       });
@@ -184,12 +211,14 @@ export function CanvasWorkspace({
     const text = editor?.state.doc.textContent || "";
     return (text.match(/[\u4e00-\u9fff]|[A-Za-z0-9_-]+/g) || []).length;
   }, [editor, draft]);
-  const changes = useMemo(() => priorRevision ? diffLines(priorRevision.content, document.content) : [], [priorRevision, document.content]);
+  const reviewedRevision = pendingReview || priorRevision;
+  const changes = useMemo(() => reviewedRevision ? diffLines(reviewedRevision.content, document.content) : [], [reviewedRevision, document.content]);
 
   const openReview = async () => {
     if (reviewOpen) { setReviewOpen(false); return; }
     setReviewOpen(true);
     setReviewError("");
+    if (pendingReview) return;
     if (document.version < 2) return;
     try {
       const previous = await api.getCanvasRevision(document.id, document.version - 1);
@@ -204,12 +233,45 @@ export function CanvasWorkspace({
     const submitted = editor.getMarkdown();
     setSaving(true);
     setError("");
+    localMutation.current = true;
     try {
       const updated = await onSave(submitted, baseline.current.version);
       baseline.current = { version: updated.version, content: submitted };
       setDraft(submitted);
+      setEditing(false);
     } catch (reason) {
+      localMutation.current = false;
       setError(reason instanceof Error ? reason.message : "保存失败，请稍后重试");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cancelEdit = () => {
+    if (dirty && !window.confirm("放弃尚未保存的画布修改？")) return;
+    editor?.commands.setContent(baseline.current.content, { contentType: "markdown", emitUpdate: false });
+    setDraft(baseline.current.content);
+    setError("");
+    setEditing(false);
+  };
+
+  const revertCollaboration = async () => {
+    if (!pendingReview || saving || agentBusy || dirty) return;
+    setSaving(true);
+    setReviewError("");
+    localMutation.current = true;
+    try {
+      const updated = await onSave(pendingReview.content, document.version);
+      editor?.commands.setContent(updated.content, { contentType: "markdown", emitUpdate: false });
+      const normalized = editor?.getMarkdown() || updated.content;
+      baseline.current = { version: updated.version, content: normalized };
+      setDraft(normalized);
+      setPendingReview(null);
+      setPriorRevision(null);
+      setReviewOpen(false);
+    } catch (reason) {
+      localMutation.current = false;
+      setReviewError(reason instanceof Error ? reason.message : "撤销失败，请刷新后重试");
     } finally {
       setSaving(false);
     }
@@ -285,7 +347,7 @@ export function CanvasWorkspace({
   };
 
   return (
-    <div className="canvas-wysiwyg">
+    <div className={`canvas-wysiwyg ${editing ? "is-editing" : "is-reading"}`}>
       <header className="canvas-wysiwyg-toolbar">
         <div className="canvas-wysiwyg-context">
           <button type="button" className="canvas-wysiwyg-history-toggle" aria-label="打开会话列表" title="会话列表" onClick={onOpenHistory}><Menu size={18} /></button>
@@ -329,9 +391,12 @@ export function CanvasWorkspace({
           <button type="button" title="分隔线" aria-label="分隔线" onClick={() => editor?.chain().focus().setHorizontalRule().run()}><Minus size={16} /></button>
         </div>
         <div className="canvas-wysiwyg-actions">
-          <button type="button" title="审查上一版变更" aria-label="审查上一版变更" aria-pressed={reviewOpen} onClick={() => void openReview()}><FileText size={16} /><span>变更</span></button>
+          <button type="button" title={pendingReview ? "审查协同改动" : "审查上一版变更"} aria-label={pendingReview ? "审查协同改动" : "审查上一版变更"} aria-pressed={reviewOpen} onClick={() => void openReview()}><FileText size={16} /><span>{pendingReview ? "待确认" : "变更"}</span></button>
           <button type="button" title="复制 Markdown" onClick={() => void copyMarkdown()}>{copied ? <Check size={15} /> : <Copy size={15} />}<span>{copied ? "已复制" : "复制"}</span></button>
-          <button type="button" className="canvas-wysiwyg-save" aria-label={saving ? "保存中" : dirty ? "保存画布" : "画布已保存"} disabled={!dirty || saving || conflicted} onClick={() => void save()}><Save size={15} /><span>{saving ? "保存中" : dirty ? "保存" : "已保存"}</span></button>
+          {editing ? <>
+            <button type="button" title="取消编辑" aria-label="取消编辑" onClick={cancelEdit}><X size={16} /><span>取消</span></button>
+            <button type="button" className="canvas-wysiwyg-save" aria-label={saving ? "保存中" : "确认画布修改"} disabled={saving || conflicted} onClick={() => { if (dirty) void save(); else setEditing(false); }}><Save size={15} /><span>{saving ? "保存中" : "确认"}</span></button>
+          </> : <button type="button" title="编辑画布" aria-label="编辑画布" disabled={Boolean(pendingReview)} onClick={() => setEditing(true)}><Pencil size={16} /><span>编辑</span></button>}
           <button type="button" title="大纲与文档信息" aria-label="大纲与文档信息" aria-pressed={outlineOpen} onClick={() => setOutlineOpen(!outlineOpen)}><BookOpen size={16} /></button>
         </div>
       </header>
@@ -348,8 +413,8 @@ export function CanvasWorkspace({
       </div>}
 
       <div className={`canvas-wysiwyg-body ${outlineOpen || reviewOpen ? "with-outline" : ""}`}>
-        <div className={`canvas-wysiwyg-scroll ${draggingImage ? "dragging-image" : ""}`} onScroll={() => { setMenuOpen(null); setSelection(""); }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setDraggingImage(true); } }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDraggingImage(false); }} onDrop={(event) => {
-          if (!event.dataTransfer.files.length) return;
+        <div className={`canvas-wysiwyg-scroll ${draggingImage ? "dragging-image" : ""}`} onScroll={() => { setMenuOpen(null); setSelection(""); }} onDragOver={(event) => { if (editing && event.dataTransfer.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setDraggingImage(true); } }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDraggingImage(false); }} onDrop={(event) => {
+          if (!editing || !event.dataTransfer.files.length) return;
           event.preventDefault();
           setDraggingImage(false);
           const pos = editor?.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
@@ -363,11 +428,12 @@ export function CanvasWorkspace({
           {uploadingImage && <div className="canvas-wysiwyg-upload-hint" role="status">图片上传中…</div>}
         </div>
         {reviewOpen ? <aside className="canvas-wysiwyg-outline canvas-wysiwyg-review" aria-label="版本变更审查">
-          <div className="canvas-wysiwyg-review-header"><strong>版本变更</strong><button type="button" aria-label="关闭变更审查" onClick={() => setReviewOpen(false)}><X size={16} /></button></div>
-          <p>v{Math.max(1, document.version - 1)} → v{document.version} · 红色为删除，绿色为新增</p>
+          <div className="canvas-wysiwyg-review-header"><strong>{pendingReview ? "确认协同改动" : "版本变更"}</strong><button type="button" aria-label="关闭变更审查" onClick={() => setReviewOpen(false)}><X size={16} /></button></div>
+          <p>v{reviewedRevision?.version || Math.max(1, document.version - 1)} → v{document.version} · 红色为删除，绿色为新增</p>
+          {pendingReview && <p>协同改动已自动保存。确认可保留当前版本；撤销会生成新版本，不删除历史。</p>}
           {dirty && <p>当前还有未保存修改；下方只比较已保存版本。</p>}
-          {reviewError ? <p role="alert">{reviewError}</p> : priorRevision ? <div className="canvas-wysiwyg-diff">{changes.map((line, index) => <div key={index} className={`kind-${line.kind}`}><span>{line.kind === "added" ? "+" : line.kind === "removed" ? "−" : " "}</span><code>{line.text || " "}</code></div>)}</div> : <p>{document.version < 2 ? "尚无上一版可供对比。" : "正在读取上一版…"}</p>}
-          {priorRevision && <button type="button" className="canvas-wysiwyg-restore" disabled={dirty} onClick={() => { if (!window.confirm(`将 v${priorRevision.version} 载入编辑器？需要再次保存才会生效。`)) return; editor?.commands.setContent(priorRevision.content, { contentType: "markdown" }); setReviewOpen(false); }}>载入上一版到编辑器</button>}
+          {reviewError ? <p role="alert">{reviewError}</p> : reviewedRevision ? <div className="canvas-wysiwyg-diff">{changes.map((line, index) => <div key={index} className={`kind-${line.kind}`}><span>{line.kind === "added" ? "+" : line.kind === "removed" ? "−" : " "}</span><code>{line.text || " "}</code></div>)}</div> : <p>{document.version < 2 ? "尚无上一版可供对比。" : "正在读取上一版…"}</p>}
+          {pendingReview ? <div className="canvas-wysiwyg-review-actions"><button type="button" disabled={agentBusy || saving} onClick={() => { setPendingReview(null); setReviewOpen(false); }}>确认保留</button><button type="button" disabled={agentBusy || saving || dirty} onClick={() => void revertCollaboration()}>撤销改动</button></div> : priorRevision && <button type="button" className="canvas-wysiwyg-restore" disabled={dirty} onClick={() => { if (!window.confirm(`将 v${priorRevision.version} 载入编辑器？需要再次保存才会生效。`)) return; setEditing(true); editor?.commands.setContent(priorRevision.content, { contentType: "markdown" }); setReviewOpen(false); }}>载入上一版到编辑器</button>}
         </aside> : outlineOpen && <aside className="canvas-wysiwyg-outline">
           <div className="canvas-wysiwyg-outline-title">大纲</div>
           <strong className="canvas-wysiwyg-doc-title">{title}</strong>
@@ -386,9 +452,9 @@ export function CanvasWorkspace({
       </div>
 
       {selection && onAskAI && <div className="canvas-wysiwyg-selection-actions" role="toolbar" aria-label="选中文本操作" style={selectionPosition} onMouseDown={(event) => event.preventDefault()}>
-        <button type="button" title="加粗" aria-label="加粗选中文本" onClick={() => editor?.chain().focus().toggleBold().run()}><Bold size={15} /></button>
+        {editing && <><button type="button" title="加粗" aria-label="加粗选中文本" onClick={() => editor?.chain().focus().toggleBold().run()}><Bold size={15} /></button>
         <button type="button" title="斜体" aria-label="斜体选中文本" onClick={() => editor?.chain().focus().toggleItalic().run()}><Italic size={15} /></button>
-        <span className="canvas-wysiwyg-divider" />
+        <span className="canvas-wysiwyg-divider" /></>}
         {([ ["polish", "润色"], ["expand", "扩写"], ["correct", "纠错"], ["restructure", "重构"] ] as const).map(([action, label]) => <button key={action} type="button" onClick={() => { onAskAI(selection, action); setSelection(""); }}>{label}</button>)}
       </div>}
 

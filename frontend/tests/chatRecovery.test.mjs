@@ -15,6 +15,14 @@ test("replaying a task updates its existing message instead of duplicating it", 
   });
   assert.equal(next.length, 1);
   assert.equal(next[0].text, "完整文本");
+  assert.equal(next[0].streaming, false);
+  assert.equal(hasCompletedTaskMessage(next, "task-1"), true);
+});
+
+test("final answer clears the streaming flag even when it omits the field", () => {
+  const messages = [{ role: "assistant", text: "部分", streaming: true }];
+  const next = upsertRecoveredAssistant(messages, { role: "assistant", text: "完整回答" });
+  assert.equal(next[0].streaming, false);
 });
 
 test("legacy completed message is matched by invocation id", () => {
