@@ -18,7 +18,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(typeof detail === 'string' ? detail : `请求失败 (${response.status})`)
   }
   if (response.status === 204) return undefined as T
-  return response.json() as Promise<T>
+  try {
+    return await response.json() as T
+  } catch {
+    throw new Error('服务响应格式不正确，请稍后重试')
+  }
 }
 
 export type StreamEvent = {
@@ -26,6 +30,44 @@ export type StreamEvent = {
   text?: string
   message?: string
   data?: any
+}
+
+export type CanvasDocument = {
+  id: string
+  title: string
+  content: string
+  version: number
+  revisions: { version: number; editor_name: string; summary: string; created_at: string }[]
+}
+
+function parseSseData(frame: string): StreamEvent | null {
+  const data = frame.split('\n')
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trimStart())
+    .join('\n')
+  return data ? JSON.parse(data) as StreamEvent : null
+}
+
+function parseSseIndex(frame: string): number | null {
+  const line = frame.split('\n').find((item) => item.startsWith('id:'))
+  if (!line) return null
+  const index = Number(line.slice(3).trim())
+  return Number.isSafeInteger(index) && index >= 0 ? index : null
+}
+
+async function waitBeforeReconnect(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw new DOMException('已取消', 'AbortError')
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new DOMException('已取消', 'AbortError'))
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 async function streamChat(
@@ -38,47 +80,87 @@ async function streamChat(
   onTaskId?: (taskId: string) => void,
 ): Promise<ChatResult> {
   const headers = { ...jsonHeaders }
-  const response = await fetch(path, {
-    method,
-    credentials: 'same-origin',
-    headers,
-    signal,
-    body: method === 'POST' ? JSON.stringify(payload) : undefined,
-  })
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
-    throw new Error(typeof body.detail === 'string' ? body.detail : `请求失败 (${response.status})`)
-  }
-  const headerTaskId = response.headers.get('X-Task-Id') || response.headers.get('x-task-id')
-  if (headerTaskId && onTaskId) {
-    onTaskId(headerTaskId)
-  }
-  if (!response.body) throw new Error('浏览器不支持流式响应')
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let result: ChatResult | null = null
+  let currentPath = path
+  let currentMethod = method
+  let taskId = path.match(/\/tasks\/([^/]+)\/stream(?:\?|$)/)?.[1]
+  if (taskId) taskId = decodeURIComponent(taskId)
+  const taskBase = path.startsWith('/api/demo/') ? '/api/demo/tasks' : '/api/tasks'
+  let nextIndex = 0
+  let reconnects = 0
+  let hasUnindexedDelta = false
+
   while (true) {
-    const chunk = await reader.read()
-    buffer += decoder.decode(chunk.value || new Uint8Array(), { stream: !chunk.done })
-    const frames = buffer.split('\n\n')
-    buffer = frames.pop() || ''
-    for (const frame of frames) {
-      const data = frame.split('\n').find((line) => line.startsWith('data: '))?.slice(6)
-      if (!data) continue
-      const event = JSON.parse(data) as StreamEvent
-      if (onEvent) onEvent(event)
-      if (event.type === 'status' && event.data?.task_id && onTaskId) {
-        onTaskId(event.data.task_id)
+    let terminalError = false
+    try {
+      const response = await fetch(currentPath, {
+        method: currentMethod,
+        credentials: 'same-origin',
+        headers,
+        signal,
+        body: currentMethod === 'POST' ? JSON.stringify(payload) : undefined,
+      })
+      if (!response.ok) {
+        terminalError = [401, 403, 404, 422].includes(response.status)
+        const body = await response.json().catch(() => ({}))
+        throw new Error(typeof body.detail === 'string' ? body.detail : `请求失败 (${response.status})`)
       }
-      if (event.type === 'delta' && event.text) onDelta(event.text)
-      if (event.type === 'error') throw new Error(event.message || '任务执行失败')
-      if (event.type === 'result' && event.data) result = event.data as ChatResult
+      const headerTaskId = response.headers.get('X-Task-Id') || response.headers.get('x-task-id')
+      if (headerTaskId) {
+        taskId = headerTaskId
+        onTaskId?.(headerTaskId)
+      }
+      if (!response.body) throw new Error('浏览器不支持流式响应')
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (true) {
+        const chunk = await reader.read()
+        buffer = (buffer + decoder.decode(chunk.value || new Uint8Array(), { stream: !chunk.done }))
+          .replace(/\r\n/g, '\n')
+        const frames = buffer.split('\n\n')
+        buffer = frames.pop() || ''
+        if (chunk.done && buffer.trim()) {
+          frames.push(buffer)
+          buffer = ''
+        }
+        for (const frame of frames) {
+          const event = parseSseData(frame)
+          if (!event) continue
+          const index = parseSseIndex(frame)
+          onEvent?.(event)
+          if (event.type === 'status' && typeof event.data?.task_id === 'string') {
+            const reportedTaskId: string = event.data.task_id
+            taskId = reportedTaskId
+            onTaskId?.(reportedTaskId)
+          }
+          if (event.type === 'delta' && event.text) {
+            onDelta(event.text)
+            if (index === null) hasUnindexedDelta = true
+          }
+          if (index !== null) nextIndex = Math.max(nextIndex, index + 1)
+          if (event.type === 'error') {
+            terminalError = true
+            throw new Error(event.message || '任务执行失败')
+          }
+          if (event.type === 'result' && event.data) {
+            await reader.cancel().catch(() => undefined)
+            return event.data as ChatResult
+          }
+        }
+        if (chunk.done) break
+      }
+      throw new Error('流式连接提前结束')
+    } catch (error) {
+      if (signal?.aborted) throw new DOMException('已取消', 'AbortError')
+      if (terminalError || !taskId || hasUnindexedDelta || reconnects >= 3) {
+        throw error
+      }
+      reconnects += 1
+      await waitBeforeReconnect(150 * 2 ** (reconnects - 1), signal)
+      currentPath = `${taskBase}/${encodeURIComponent(taskId)}/stream?from_index=${nextIndex}`
+      currentMethod = 'GET'
     }
-    if (chunk.done) break
   }
-  if (!result) throw new Error('流式响应未返回结果')
-  return result
 }
 
 export const api = {
@@ -164,9 +246,18 @@ export const api = {
       { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ text, mentioned: mentioned || undefined }) },
     ),
   getCanvas: (canvasId: string) =>
-    request<{ id: string; title: string; content: string; version: number; revisions: { version: number; editor_name: string; summary: string; created_at: string }[] }>(
+    request<CanvasDocument>(
       `/api/canvas/${canvasId}`,
     ),
+  getSessionCanvas: (sessionId: string) =>
+    request<CanvasDocument>(
+      `/api/canvas/session/${encodeURIComponent(sessionId)}`,
+    ),
+  updateSessionCanvas: (sessionId: string, content: string, baseVersion: number) =>
+    request<CanvasDocument>(`/api/canvas/session/${encodeURIComponent(sessionId)}`, {
+      method: 'PUT', headers: jsonHeaders,
+      body: JSON.stringify({ content, base_version: baseVersion }),
+    }),
   chat: (message: string, sessionId?: string, agentId?: string, attachments?: Attachment[]) =>
     request<ChatResult>('/api/demo/chat', {
       method: 'POST',
@@ -207,7 +298,7 @@ export const api = {
       onTaskId,
     ),
   getActiveTask: (sessionId: string) =>
-    request<{ active: boolean; task?: { task_id: string; status: string; event_count: number; has_result: boolean; error?: string; created_at?: number } }>(
+    request<{ active: boolean; interrupted?: { invocation_id: string; message: string; partial_result?: string }; task?: { task_id: string; agent_id?: string; status: string; event_count: number; has_result: boolean; error?: string; created_at?: number } }>(
       `/api/demo/tasks/active?session_id=${encodeURIComponent(sessionId)}`,
     ),
   reconnectTaskStream: (

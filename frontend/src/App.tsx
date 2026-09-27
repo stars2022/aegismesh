@@ -1,10 +1,15 @@
 import {
+  Children,
+  cloneElement,
+  createElement,
   FormEvent,
+  isValidElement,
   useEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import {
   Activity,
@@ -75,7 +80,8 @@ import {
   Loader2,
   Paperclip,
 } from "lucide-react";
-import { api } from "./api";
+import { api, type CanvasDocument } from "./api";
+import { hasCompletedTaskMessage, upsertRecoveredAssistant } from "./chatRecovery";
 import { equalizeWeights, normalizeWeights, rebalanceWeights } from "./routingWeights";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -165,6 +171,13 @@ const stateNames: Record<string, string> = {
   open: "暂停编排",
   "half-open": "正在测试模型稳定程度",
 };
+const ATTEMPT_STATE_LABELS: Record<string, string> = {
+  selected: "已选中",
+  completed: "已完成",
+  failed: "失败",
+  cancelled: "已取消",
+  timeout: "超时",
+};
 const transportNames: Record<string, string> = {
   provider: "模型服务",
   "aip-rpc": "AIP 直连",
@@ -186,6 +199,54 @@ function formatDetailValue(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+const traceDetailLabels: Record<string, string> = {
+  agent_id: "智能体",
+  agent_name: "智能体",
+  candidate_count: "候选数",
+  attempt: "第几次尝试",
+  latency_ms: "耗时",
+  task_id: "任务",
+  tool_name: "工具",
+  mode: "模式",
+  reason: "原因",
+  error: "错误",
+};
+
+function formatTraceTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString("zh-CN", {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+}
+
+function summarizeTraceDetail(detail: Record<string, unknown>): string {
+  const hiddenKeys = new Set([
+    "prompt",
+    "query",
+    "result",
+    "result_text",
+    "response",
+    "output",
+    "arguments",
+    "context",
+  ]);
+  const parts = Object.entries(detail)
+    .filter(([key, value]) => !hiddenKeys.has(key) && value != null && typeof value !== "object")
+    .slice(0, 3)
+    .map(([key, value]) => {
+      const formatted = key === "latency_ms" && typeof value === "number"
+        ? formatMs(value)
+        : formatDetailValue(value);
+      return `${traceDetailLabels[key] || key}：${formatted}`;
+    });
+  return parts.join(" · ") || "阶段已完成";
 }
 
 const eventNames: Record<string, string> = {
@@ -1536,9 +1597,9 @@ function DiscoveryModal({
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
             <Radio size={20} style={{ color: "var(--primary, #3b82f6)" }} />
             <div>
-              <h3>发现与接入外部智能体 (ACPs ADP)</h3>
+              <h3>发现外部智能体</h3>
               <p className="preview-modal-sub">
-                连接梧桐官方发现服务检索全网已认证上线的第三方智能体并一键接入本平台
+                通过官方发现服务（ADP）检索全网智能体，一键接入本平台调度池
               </p>
             </div>
           </div>
@@ -1677,23 +1738,29 @@ function DiscoveryModal({
                       {target.description || "暂无详细描述"}
                     </p>
 
-                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
                       {httpsEp && (
-                        <span style={{ fontSize: "10px", background: "rgba(59, 130, 246, 0.1)", color: "#3b82f6", padding: "2px 6px", borderRadius: "4px" }}>
-                          HTTPS mTLS
+                        <span style={{ fontSize: "10px", color: "var(--c777771)", background: "var(--hover-bg, rgba(15, 23, 42, 0.06))", padding: "2px 8px", borderRadius: "4px" }}>
+                          mTLS
                         </span>
                       )}
-                      <span style={{ fontSize: "10px", background: "rgba(15, 23, 42, 0.06)", padding: "2px 6px", borderRadius: "4px" }}>
-                        流式：{target.streaming || target.capabilities?.streaming ? "对方已声明" : "未声明"}
-                      </span>
-                      <span style={{ fontSize: "10px", background: "rgba(15, 23, 42, 0.06)", padding: "2px 6px", borderRadius: "4px" }}>
-                        通知：{target.notification || target.capabilities?.notification ? "对方已声明，未配公网回调时仍轮询" : "未声明"}
-                      </span>
-                      <span style={{ fontSize: "10px", background: "rgba(168, 85, 247, 0.1)", color: "#a855f7", padding: "2px 6px", borderRadius: "4px" }}>
-                        群组：{mqEp || declaredGroup(target) ? "对方已声明 AMQP，本平台未接入" : "未声明"}
-                      </span>
+                      {(target.streaming || target.capabilities?.streaming) && (
+                        <span style={{ fontSize: "10px", color: "var(--c777771)", background: "var(--hover-bg, rgba(15, 23, 42, 0.06))", padding: "2px 8px", borderRadius: "4px" }}>
+                          流式
+                        </span>
+                      )}
+                      {(target.notification || target.capabilities?.notification) && (
+                        <span style={{ fontSize: "10px", color: "var(--c777771)", background: "var(--hover-bg, rgba(15, 23, 42, 0.06))", padding: "2px 8px", borderRadius: "4px" }}>
+                          通知
+                        </span>
+                      )}
+                      {(mqEp || declaredGroup(target)) && (
+                        <span style={{ fontSize: "10px", color: "var(--c777771)", background: "var(--hover-bg, rgba(15, 23, 42, 0.06))", padding: "2px 8px", borderRadius: "4px" }}>
+                          群组通道
+                        </span>
+                      )}
                       {target.skills?.map((s: any) => (
-                        <span key={s.id || s.name} style={{ fontSize: "10px", border: "1px solid var(--border)", padding: "2px 6px", borderRadius: "4px" }}>
+                        <span key={s.id || s.name} style={{ fontSize: "10px", color: "var(--c777771)", border: "1px solid var(--border)", padding: "2px 8px", borderRadius: "4px" }}>
                           {s.name || s.id}
                         </span>
                       ))}
@@ -3799,8 +3866,8 @@ function Traces({ traces }: { traces: Trace[] }) {
               <StatusDot status={trace.status} />
               <div>
                 <strong>{trace.query}</strong>
-                <span>
-                  {trace.id} · {formatMs(trace.total_latency_ms)}
+                <span title={trace.id}>
+                  {stateNames[trace.status] || trace.status} · {formatTraceTime(trace.created_at)} · {formatMs(trace.total_latency_ms)}
                 </span>
               </div>
               <ChevronRight size={15} />
@@ -3814,7 +3881,9 @@ function Traces({ traces }: { traces: Trace[] }) {
           <>
             <div className="panel-heading">
               <div>
-                <span className="eyebrow">{selected.id}</span>
+                <span className="eyebrow" title={selected.id}>
+                  {formatTraceTime(selected.created_at)}
+                </span>
                 <h2>{selected.query}</h2>
               </div>
               <span className="role-pill">
@@ -3839,27 +3908,54 @@ function Traces({ traces }: { traces: Trace[] }) {
                 <strong>{selected.llm_calls}</strong>
               </div>
             </div>
-            {selected.attempts.length > 0 && (
-              <div className="finding-list">
-                <h3>路由评分</h3>
-                {selected.attempts.map((attempt) => (
-                  <div key={`${attempt.agent_id}-${attempt.rank}`}>
-                    <span>{attempt.state}</span>
-                    <div>
-                      <strong>
-                        {attempt.agent_id} · 第 {attempt.rank} 名 · {attempt.score}
-                      </strong>
-                      <p>
-                        {Object.entries(attempt.breakdown)
-                          .map(([key, value]) => `${metricLabels[key] || key} ${value}`)
-                          .join(" · ") || "—"}
-                        {attempt.error ? ` · ${attempt.error}` : ""}
-                      </p>
-                    </div>
+            {selected.result_text && (
+              <section className="trace-result-summary">
+                <div className="trace-section-heading">
+                  <div>
+                    <span className="eyebrow">最终输出</span>
+                    <h3>执行结果</h3>
                   </div>
-                ))}
-              </div>
+                  <span>{formatMs(selected.total_latency_ms)}</span>
+                </div>
+                <div className="trace-answer-box">
+                  <MarkdownText text={selected.result_text} />
+                </div>
+              </section>
             )}
+            {selected.attempts.length > 0 && (
+              <details className="trace-disclosure">
+                <summary>
+                  <span>路由评分</span>
+                  <small>{selected.attempts.length} 个候选</small>
+                  <ChevronDown size={15} />
+                </summary>
+                <div className="finding-list">
+                  {selected.attempts.map((attempt) => (
+                    <div key={`${attempt.agent_id}-${attempt.rank}`}>
+                      <span>{ATTEMPT_STATE_LABELS[attempt.state] || attempt.state}</span>
+                      <div>
+                        <strong>
+                          {attempt.agent_id} · 第 {attempt.rank} 名 · {attempt.score}
+                        </strong>
+                        <p>
+                          {Object.entries(attempt.breakdown)
+                            .map(([key, value]) => `${metricLabels[key] || key} ${value}`)
+                            .join(" · ") || "—"}
+                          {attempt.error ? ` · ${attempt.error}` : ""}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+            <div className="trace-section-heading trace-timeline-heading">
+              <div>
+                <span className="eyebrow">过程</span>
+                <h3>执行时间线</h3>
+              </div>
+              <span>{selected.events.length} 个阶段</span>
+            </div>
             <div className="timeline">
               {selected.events.map((event, index) => (
                 <div className="timeline-item" key={`${event.type}-${index}`}>
@@ -3876,11 +3972,13 @@ function Traces({ traces }: { traces: Trace[] }) {
                   </span>
                   <div>
                     <strong>{eventNames[event.type] || event.type}</strong>
-                    <p>
-                      {Object.entries(event.detail)
-                        .map(([key, value]) => `${key}: ${formatDetailValue(value)}`)
-                        .join(" · ") || "—"}
-                    </p>
+                    <p>{summarizeTraceDetail(event.detail)}</p>
+                    {Object.keys(event.detail).length > 0 && (
+                      <details className="trace-event-raw">
+                        <summary>技术详情</summary>
+                        <pre>{JSON.stringify(event.detail, null, 2)}</pre>
+                      </details>
+                    )}
                   </div>
                   <time>
                     {new Date(event.created_at).toLocaleTimeString("zh-CN")}
@@ -4063,6 +4161,8 @@ type ChatMessage = {
   senderName?: string;
   isHost?: boolean;
   createdAt?: number;
+  taskId?: string;
+  recoveryInvocationId?: string;
 };
 type QueuedTask = { id: string; text: string; agentId: string; attachments?: Attachment[] };
 type Conversation = {
@@ -4128,6 +4228,7 @@ function loadConversationIndex(): ConversationMeta[] {
               messageCount: Array.isArray(item.messages) ? item.messages.length : 0,
               isGroup: item.isGroup,
               groupMemberCount: item.groupConfig?.members?.length,
+              isCanvas: item.isCanvas,
             });
           }
         }
@@ -4238,18 +4339,81 @@ function latestResult(messages: ChatMessage[]): ChatResult | null {
   return null;
 }
 
-function MarkdownText({ text }: { text: string }) {
+function animateStreamingText(children: ReactNode, path = "text"): ReactNode {
+  return Children.map(children, (child, index) => {
+    const childPath = `${path}-${index}`;
+    if (typeof child === "string") {
+      const characters = Array.from(child);
+      const animatedFrom = Math.max(0, characters.length - 120);
+      return [
+        animatedFrom > 0 ? characters.slice(0, animatedFrom).join("") : null,
+        ...characters.slice(animatedFrom).map((character, tailIndex) => {
+          const characterIndex = animatedFrom + tailIndex;
+          return (
+            <span
+              className="stream-character"
+              key={`${childPath}-${characterIndex}`}
+              style={{
+                "--stream-character-delay": `${(characterIndex % 12) * 7}ms`,
+              } as CSSProperties}
+            >
+              {character}
+            </span>
+          );
+        }),
+      ];
+    }
+    if (!isValidElement<{ children?: ReactNode }>(child)) return child;
+    // Nested Markdown components animate their own text exactly once.
+    if (typeof child.type !== "string") return child;
+    if (child.type === "pre" || child.type === "code") return child;
+    if (child.props.children == null) return child;
+    return cloneElement(
+      child,
+      undefined,
+      animateStreamingText(child.props.children, childPath),
+    );
+  });
+}
+
+function streamingMarkdownElement(tag: string) {
+  return ({ node: _node, children, ...props }: any) =>
+    createElement(tag, props, animateStreamingText(children, tag));
+}
+
+const streamingMarkdownComponents = {
+  p: streamingMarkdownElement("p"),
+  h1: streamingMarkdownElement("h1"),
+  h2: streamingMarkdownElement("h2"),
+  h3: streamingMarkdownElement("h3"),
+  h4: streamingMarkdownElement("h4"),
+  h5: streamingMarkdownElement("h5"),
+  h6: streamingMarkdownElement("h6"),
+  li: streamingMarkdownElement("li"),
+  blockquote: streamingMarkdownElement("blockquote"),
+  td: streamingMarkdownElement("td"),
+  th: streamingMarkdownElement("th"),
+  table: ({ node: _node, ...props }: any) => (
+    <div className="markdown-table-wrapper">
+      <table {...props} />
+    </div>
+  ),
+};
+
+const settledMarkdownComponents = {
+  table: ({ node: _node, ...props }: any) => (
+    <div className="markdown-table-wrapper">
+      <table {...props} />
+    </div>
+  ),
+};
+
+function MarkdownText({ text, streaming = false }: { text: string; streaming?: boolean }) {
   return (
-    <div className="message-markdown">
+    <div className={`message-markdown${streaming ? " streaming" : ""}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        components={{
-          table: ({ node, ...props }) => (
-            <div className="markdown-table-wrapper">
-              <table {...props} />
-            </div>
-          ),
-        }}
+        components={streaming ? streamingMarkdownComponents : settledMarkdownComponents}
       >
         {text}
       </ReactMarkdown>
@@ -5589,45 +5753,34 @@ function GroupCollaborationPanel({
       <div className="collab-section">
         <div className="collab-section-title">
           <GitBranch size={14} color="#4f46e5" />
-          <span>群组接力协同流转动态</span>
+          <span>发言顺序</span>
         </div>
         <div className="group-collab-timeline">
           {assistantTurns.map((turn, idx) => {
-            const hasBlackboard = turn.text.includes("【黑板】") || turn.text.includes("黑板");
-            const mentionMatch = turn.text.match(/@([^\s\n，。！？、]+)/g);
+            const wroteBoard = turn.text.includes("黑板");
+            const mentions = [...new Set(
+              (turn.text.match(/@([^\s\n，。！？、@]+)/g) || []).map((item) => item.slice(1)),
+            )].slice(0, 3);
+            const snippet = turn.text
+              .replace(/>\s*📋[^\n]*/g, "")
+              .replace(/[#>*_`]/g, "")
+              .replace(/\s+/g, " ")
+              .trim();
             return (
               <div key={turn.createdAt || idx} className="collab-timeline-item">
-                <div className="timeline-node">
-                  <span className="timeline-step-badge">{idx + 1}</span>
-                  {idx < assistantTurns.length - 1 && <span className="timeline-line" />}
-                </div>
+                <div className="timeline-node" />
                 <div className="timeline-content">
                   <div className="timeline-meta">
+                    <span className="timeline-step">{idx + 1}</span>
                     <span className="timeline-author">{turn.senderName}</span>
-                    {turn.isHost ? (
-                      <span className="member-host-badge">主持调度</span>
-                    ) : (
-                      <span className="member-expert-badge">受邀响应</span>
-                    )}
-                    {turn.result?.latency_ms && (
-                      <span className="timeline-latency">{formatMs(turn.result.latency_ms)}</span>
-                    )}
+                    {turn.isHost && <span className="member-host-badge">主持</span>}
                   </div>
-                  <div className="timeline-desc">
-                    {hasBlackboard && (
-                      <span className="timeline-chip deliverable">
-                        <Layers size={11} /> 交付成果已入黑板
-                      </span>
-                    )}
-                    {mentionMatch && mentionMatch.map((m) => (
-                      <span key={m} className="timeline-chip mention">
-                        接力流转 {m}
-                      </span>
-                    ))}
-                  </div>
-                  <p className="timeline-snippet">
-                    {turn.text.replace(/>\s*📋[^\n]*/g, "").slice(0, 100).trim() || "完成本轮工作交互"}...
-                  </p>
+                  {(mentions.length > 0 || wroteBoard) && (
+                    <p className="timeline-desc">
+                      {mentions.length > 0 ? `交给 ${mentions.join("、")}` : "已写入黑板"}
+                    </p>
+                  )}
+                  {snippet && <p className="timeline-snippet">{snippet.slice(0, 72)}</p>}
                 </div>
               </div>
             );
@@ -6184,6 +6337,110 @@ function GroupSettingsDrawer({
   );
 }
 
+function CanvasEditor({
+  document,
+  onSave,
+}: {
+  document: CanvasDocument;
+  onSave: (content: string, baseVersion: number) => Promise<CanvasDocument>;
+}) {
+  const baseline = useRef({ version: document.version, content: document.content });
+  const [draft, setDraft] = useState(document.content);
+  const [view, setView] = useState<"edit" | "preview">("edit");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const dirty = draft !== baseline.current.content;
+  const conflicted = document.version !== baseline.current.version;
+
+  useEffect(() => {
+    if (draft === baseline.current.content) {
+      baseline.current = { version: document.version, content: document.content };
+      setDraft(document.content);
+      setError("");
+    } else if (document.version !== baseline.current.version) {
+      setError("画布已被其他编辑更新。当前草稿已保留，请先对比最新版本。");
+    }
+  }, [document.version, document.content]);
+
+  const save = async () => {
+    if (!dirty || saving || conflicted) return;
+    const submitted = draft;
+    setSaving(true);
+    setError("");
+    try {
+      const updated = await onSave(submitted, baseline.current.version);
+      baseline.current = { version: updated.version, content: submitted };
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "保存失败，请稍后重试");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="canvas-editor-shell">
+      <div className="canvas-meta">
+        <div>
+          <span className="canvas-eyebrow">MARKDOWN 文稿 · v{document.version}</span>
+          <strong>{document.title}</strong>
+        </div>
+        <div className="canvas-meta-actions">
+          <div className="canvas-view-switch" role="group" aria-label="画布视图">
+            <button type="button" className={view === "edit" ? "active" : ""} onClick={() => setView("edit")}>编辑</button>
+            <button type="button" className={view === "preview" ? "active" : ""} onClick={() => setView("preview")}>预览</button>
+          </div>
+          <button type="button" onClick={() => void navigator.clipboard.writeText(draft)} title="复制 Markdown">
+            <Copy size={15} /> <span>复制</span>
+          </button>
+          <button type="button" className="canvas-save-button" disabled={!dirty || saving || conflicted} onClick={() => void save()}>
+            {saving ? "保存中" : dirty ? "保存修改" : "已保存"}
+          </button>
+        </div>
+      </div>
+      {error && (
+        <div className="canvas-editor-warning" role="alert">
+          <span>{error}</span>
+          {conflicted && <button type="button" onClick={() => {
+            baseline.current = { version: document.version, content: document.content };
+            setDraft(document.content);
+            setError("");
+          }}>载入最新版本</button>}
+        </div>
+      )}
+      {view === "edit" ? (
+        <textarea
+          className="canvas-markdown-editor"
+          aria-label="Markdown 正文编辑器"
+          spellCheck={false}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+              event.preventDefault();
+              void save();
+            }
+          }}
+        />
+      ) : (
+        <div className="canvas-document message-markdown">
+          <MarkdownText text={draft} />
+        </div>
+      )}
+      {document.revisions.length > 0 && (
+        <details className="canvas-revisions">
+          <summary>修改记录 · {document.revisions.length}</summary>
+          <ol>{document.revisions.slice(0, 8).map((revision) => (
+            <li key={revision.version}>
+              <span>v{revision.version} · {revision.editor_name}</span>
+              <span>{revision.summary}</span>
+            </li>
+          ))}</ol>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const [conversations, setConversations] =
     useState<ConversationMeta[]>(loadConversationIndex);
@@ -6221,7 +6478,15 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     latestResult(initialActive?.messages || []),
   );
   const [detail, setDetail] = useState<"route" | "collaboration" | "members" | "blackboard" | "canvas">(
-    initialActive?.isGroup || activeMeta?.isGroup ? "members" : "route",
+    initialActive?.isGroup || activeMeta?.isGroup ? "members" : initialActive?.isCanvas || activeMeta?.isCanvas ? "canvas" : "route",
+  );
+  const [isCanvasConv, setIsCanvasConv] = useState(
+    !Boolean(initialActive?.isGroup || activeMeta?.isGroup) &&
+      Boolean(initialActive?.isCanvas || activeMeta?.isCanvas),
+  );
+  const [canvasMobileView, setCanvasMobileView] = useState<"canvas" | "chat">("canvas");
+  const [canvasData, setCanvasData] = useState<CanvasDocument | null>(
+    latestResult(initialActive?.messages || [])?.result_data?.canvas || null,
   );
   const [content, setContent] = useState<"chat" | "api">("chat");
   const [queue, setQueueState] = useState<QueuedTask[]>(initialActive?.queue || []);
@@ -6548,6 +6813,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
       queue,
       isGroup: existing?.isGroup,
       groupConfig: existing?.groupConfig,
+      isCanvas: !existing?.isGroup && isCanvasConv,
     };
     saveConversationData(conversation);
     setConversations((items) => {
@@ -6559,12 +6825,13 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
         messageCount: messages.length,
         isGroup: existing?.isGroup,
         groupMemberCount: existing?.groupConfig?.members?.length,
+        isCanvas: !existing?.isGroup && isCanvasConv,
       };
       const next = [meta, ...items.filter((item) => item.id !== activeId)].slice(0, 50);
       saveConversationIndex(next);
       return next;
     });
-  }, [activeId, messages, session, agentId, queue]);
+  }, [activeId, messages, session, agentId, queue, isCanvasConv]);
 
   useEffect(() => {
     api
@@ -6586,6 +6853,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
           )
             return activeMeta.agentId;
           const leader =
+            (activeMeta?.isCanvas && selectable.find((a) => a.id === "research_leader")) ||
             selectable.find((a) => a.role === "leader") || selectable[0];
           return leader ? leader.id : "";
         });
@@ -6597,10 +6865,14 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     const frame = window.requestAnimationFrame(() => {
       const thread = document.querySelector<HTMLElement>(".chat-thread");
       if (!thread) return;
-      const farFromBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight > 900;
+      const distanceFromBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight;
+      const streaming = Boolean(messages.at(-1)?.streaming);
+      // Keep following a live answer only while the reader is already near its tail.
+      // Scrolling upward is an explicit user action and should never be overridden.
+      if ((streaming && distanceFromBottom > 180) || distanceFromBottom > 900) return;
       thread.scrollTo({
         top: thread.scrollHeight,
-        behavior: messages.at(-1)?.streaming || farFromBottom ? "auto" : "smooth",
+        behavior: streaming ? "auto" : "smooth",
       });
     });
     return () => window.cancelAnimationFrame(frame);
@@ -6609,8 +6881,12 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const openConversation = (target: ConversationMeta) => {
     setActiveId(target.id);
     const data = loadConversationData(target.id);
+    const taskStillRunning =
+      sendingRef.current && taskConvRef.current === target.id;
     const msgs = (data?.messages || []).map((m) =>
-      m.streaming ? { ...m, streaming: false, text: m.text || "（任务已中断）" } : m,
+      m.streaming && !taskStillRunning
+        ? { ...m, streaming: false, text: m.text || "（任务已中断）" }
+        : m,
     );
     setMessages(msgs);
     // 打开历史会话：直接瞬时定位到最新消息（smooth 会从顶部滚很久，像"蹦到前面"）
@@ -6623,38 +6899,70 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     setShowAllMessages(false);
     setSession(data?.session || target.session);
     sessionRef.current = data?.session || target.session;
+    const savedCanvas = latestResult(msgs)?.result_data?.canvas || null;
+    const canvasConversation = !Boolean(target.isGroup || data?.isGroup) &&
+      Boolean(target.isCanvas || data?.isCanvas || savedCanvas);
     setAgentId(
       data?.agentId ||
         target.agentId ||
+        (canvasConversation ? agents.find((a) => a.id === "research_leader")?.id : undefined) ||
         agents.find((a) => a.role === "leader")?.id ||
         agents[0]?.id ||
         "",
     );
     setInspector(latestResult(msgs));
+    setIsCanvasConv(canvasConversation);
+    setCanvasData(savedCanvas);
+    setCanvasMobileView("canvas");
+    if (savedCanvas?.id && (data?.session || target.session)) {
+      void api.getSessionCanvas((data?.session || target.session)!).then((fresh) => {
+        if (activeIdRef.current === target.id) setCanvasData(fresh);
+      }).catch(() => undefined);
+    }
     setQueue(data?.queue || []);
     setContent("chat");
     setMobileHistoryOpen(false);
-    if (!target.isGroup && (detail === "blackboard" || detail === "members")) {
-      setDetail("route");
-    }
+    setDetail(target.isGroup ? "members" : canvasConversation ? "canvas" : "route");
+    if (canvasConversation) setInspectorCollapsed(false);
   };
   const createConversation = (targetAgentId?: string, isCanvas = false) => {
     const newId = crypto.randomUUID();
+    const canvasSession = isCanvas ? `ses-${crypto.randomUUID()}` : undefined;
+    const defaultAgentId = targetAgentId ||
+      (isCanvas ? agents.find((a) => a.id === "research_leader")?.id : undefined) ||
+      agents.find((a) => a.role === "leader")?.id || agents[0]?.id || "";
     setActiveId(newId);
+    activeIdRef.current = newId;
     setMessages([]);
     setShowAllMessages(false);
-    setSession(undefined);
-    sessionRef.current = undefined;
+    setSession(canvasSession);
+    sessionRef.current = canvasSession;
     setIsCanvasConv(isCanvas);
-    if (detail === "blackboard" || detail === "members") {
-      setDetail("route");
+    setCanvasData(null);
+    setCanvasMobileView("canvas");
+    setDetail(isCanvas ? "canvas" : "route");
+    if (isCanvas) {
+      const canvasConversation: Conversation = {
+        id: newId, title: "未命名画布", session: canvasSession,
+        agentId: defaultAgentId, messages: [], isCanvas: true,
+      };
+      saveConversationData(canvasConversation);
+      setConversations((items) => {
+        const next = [
+          { id: newId, title: "未命名画布", agentId: defaultAgentId, messageCount: 0, isCanvas: true, updatedAt: Date.now() },
+          ...items,
+        ].slice(0, 50);
+        saveConversationIndex(next);
+        return next;
+      });
+      setInspectorCollapsed(false);
+      if (canvasSession) {
+        void api.getSessionCanvas(canvasSession).then((canvas) => {
+          if (activeIdRef.current === newId) setCanvasData(canvas);
+        }).catch(() => undefined);
+      }
     }
-    if (targetAgentId) {
-      setAgentId(targetAgentId);
-    } else {
-      const leader = agents.find((a) => a.role === "leader") || agents[0];
-      if (leader) setAgentId(leader.id);
-    }
+    setAgentId(defaultAgentId);
     setInspector(null);
     setQueue([]);
     setContent("chat");
@@ -6703,6 +7011,8 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     setSession(undefined);
     sessionRef.current = undefined;
     setAgentId(config.hostAgentId || config.members[0] || "");
+    setIsCanvasConv(false);
+    setCanvasData(null);
     setDetail("members");
     setInspector(null);
     setQueue([]);
@@ -6773,42 +7083,83 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
       .then(async (res) => {
         if (cancelled) return;
         if (!res.active || !res.task) {
-          setMessages((items) =>
-            items.some((m) => m.streaming)
+          setMessages((items) => {
+            if (res.interrupted) {
+              if (items.some((m) => m.recoveryInvocationId === res.interrupted?.invocation_id)) return items;
+              const last = items.at(-1);
+              const partial = (last?.role === "assistant" && !last.result ? last.text.trim() : "") || res.interrupted.partial_result || "";
+              return upsertRecoveredAssistant(items, {
+                role: "assistant",
+                text: partial ? `${partial}\n\n[${res.interrupted.message}]` : res.interrupted.message,
+                recoveryInvocationId: res.interrupted.invocation_id,
+                streaming: false,
+                createdAt: Date.now(),
+              });
+            }
+            return items.some((m) => m.streaming)
               ? items.map((m) =>
                   m.streaming ? { ...m, streaming: false, text: m.text || "（任务已中断）" } : m,
                 )
-              : items,
-          );
+              : items;
+          });
           return;
         }
         const task = res.task;
-        if (task.status === "running") {
+        if (["running", "completed", "failed", "cancelled"].includes(task.status)) {
+          const isRunning = task.status === "running";
+          const recoveryConvId = activeId;
+          const savedMessages = loadConversationData(recoveryConvId)?.messages || messages;
+          if (!isRunning && hasCompletedTaskMessage(savedMessages, task.task_id)) return;
+          taskConvRef.current = recoveryConvId;
           currentTaskIdRef.current = task.task_id;
           abortControllerRef.current = new AbortController();
           stopRequestedRef.current = false;
-          sendingRef.current = true;
-          setSending(true);
-          setSendingSince(task.created_at ? task.created_at * 1000 : Date.now());
-          let receivedDelta = false;
+          sendingRef.current = isRunning;
+          setSending(isRunning);
+          setSendingSince(isRunning ? (task.created_at ? task.created_at * 1000 : Date.now()) : null);
+          let recoveredText = "";
+          const writeRecoveredMessage = (msg: ChatMessage) => {
+            const tagged = { ...msg, taskId: task.task_id };
+            if (activeIdRef.current === recoveryConvId) {
+              setMessages((items) => upsertRecoveredAssistant(items, tagged));
+              return;
+            }
+            const conv = loadConversationData(recoveryConvId);
+            if (!conv) return;
+            conv.messages = upsertRecoveredAssistant(conv.messages, tagged);
+            saveConversationData(conv);
+            setConversations((items) =>
+              items.map((item) =>
+                item.id === recoveryConvId
+                  ? { ...item, messageCount: conv.messages.length, updatedAt: Date.now() }
+                  : item,
+              ),
+            );
+          };
+          // Reconnect replays the retained backend event stream from the start.
+          // Clear the persisted partial text first so replay cannot duplicate it.
+          if (isRunning) {
+            setMessages((items) => {
+              const last = items.at(-1);
+              if (last?.role === "assistant" && last.streaming) {
+                return [...items.slice(0, -1), { ...last, text: "" }];
+              }
+              return items;
+            });
+          }
           try {
             const result = await api.reconnectTaskStream(
               task.task_id,
               (delta) => {
-                receivedDelta = true;
-                setMessages((items) => {
-                  const last = items.at(-1);
-                  if (last?.role === "assistant" && last.streaming) {
-                    return [
-                      ...items.slice(0, -1),
-                      { ...last, text: last.text + delta },
-                    ];
-                  }
-                  return [
-                    ...items,
-                    { role: "assistant", text: delta, streaming: true },
-                  ];
-                });
+                recoveredText += delta;
+                if (isRunning) {
+                  writeRecoveredMessage({
+                    role: "assistant",
+                    text: recoveredText,
+                    streaming: true,
+                    senderAgentId: task.agent_id,
+                  });
+                }
               },
               (event) => {
                 handleSubagentEvent(
@@ -6823,16 +7174,12 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
               },
               abortControllerRef.current.signal,
             );
-            setInspector(result);
-            setMessages((items) => {
-              const last = items.at(-1);
-              if (receivedDelta && last?.role === "assistant" && last.streaming) {
-                return [
-                  ...items.slice(0, -1),
-                  { role: "assistant", text: result.answer, result },
-                ];
-              }
-              return [...items, { role: "assistant", text: result.answer, result }];
+            if (activeIdRef.current === recoveryConvId) setInspector(result);
+            writeRecoveredMessage({
+              role: "assistant",
+              text: result.answer,
+              result,
+              senderAgentId: task.agent_id,
             });
             await onComplete();
           } catch (err) {
@@ -6842,19 +7189,19 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
               (err instanceof Error && err.name === "AbortError") ||
               (err instanceof Error && err.message.includes("任务已被用户取消"))
             ) {
-              setMessages((items) => {
-                const last = items.at(-1);
-                if (last?.role === "assistant" && last.streaming) {
-                  return [
-                    ...items.slice(0, -1),
-                    { role: "assistant", text: `${last.text}\n\n[任务已被用户主动终止]` },
-                  ];
-                }
-                return [...items, { role: "assistant", text: "[任务已被用户主动终止]" }];
+              writeRecoveredMessage({
+                role: "assistant",
+                text: `${recoveredText}${recoveredText ? "\n\n" : ""}[任务已被用户主动终止]`,
+                senderAgentId: task.agent_id,
               });
               return;
             }
-            console.error("恢复任务流失败:", err);
+            const errorText = err instanceof Error ? err.message : "任务恢复失败";
+            writeRecoveredMessage({
+              role: "assistant",
+              text: `${recoveredText}${recoveredText ? "\n\n" : ""}${errorText}`,
+              senderAgentId: task.agent_id,
+            });
           } finally {
             sendingRef.current = false;
             setSending(false);
@@ -6863,6 +7210,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
             setLiveBlackboardMessages([]);
             abortControllerRef.current = null;
             currentTaskIdRef.current = null;
+            if (taskConvRef.current === recoveryConvId) taskConvRef.current = null;
           }
         }
       })
@@ -6870,7 +7218,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     return () => {
       cancelled = true;
     };
-  }, [session]);
+  }, [session, activeId]);
 
   const runGroupMessage = async (
     userText: string,
@@ -6884,6 +7232,11 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     setLiveBlackboardMessages([]);
     const taskConvId = activeId;
     taskConvRef.current = taskConvId;
+    const taskSessionId = sessionRef.current || `ses-${crypto.randomUUID()}`;
+    if (!sessionRef.current) {
+      sessionRef.current = taskSessionId;
+      setSession(taskSessionId);
+    }
     // 群聊发言是离散消息：用户切走后回写到原群聊存储
     const groupAppend = (msg: ChatMessage) => {
       if (activeIdRef.current === taskConvId) {
@@ -7057,39 +7410,56 @@ ${cleanHistory}
 
 请作为「${speakerAgent?.name || targetId}」在群聊中发表你的公开回复：`;
 
-      let receivedDelta = false;
+      let streamedText = "";
       const abortCtrl = new AbortController();
       abortControllerRef.current = abortCtrl;
       currentTaskIdRef.current = null;
       stopRequestedRef.current = false;
 
+      const writeSpeakerMessage = (msg: ChatMessage) => {
+        const replaceTail = (items: ChatMessage[]) => {
+          const last = items.at(-1);
+          if (
+            last?.role === "assistant" &&
+            last.streaming &&
+            last.senderAgentId === targetId
+          ) {
+            return [...items.slice(0, -1), msg];
+          }
+          return [...items, msg];
+        };
+        if (activeIdRef.current === taskConvId) {
+          setMessages(replaceTail);
+          return;
+        }
+        const conv = loadConversationData(taskConvId);
+        if (!conv) return;
+        conv.messages = replaceTail(conv.messages);
+        saveConversationData(conv);
+        setConversations((items) =>
+          items.map((item) =>
+            item.id === taskConvId
+              ? { ...item, messageCount: conv.messages.length, updatedAt: Date.now() }
+              : item,
+          ),
+        );
+      };
+
       try {
         const result = await api.chatStream(
           groupPrompt,
-          sessionRef.current,
+          taskSessionId,
           targetId,
           (delta) => {
-            receivedDelta = true;
-            setMessages((items) => {
-              const last = items.at(-1);
-              if (last?.role === "assistant" && last.streaming && last.senderAgentId === targetId) {
-                return [
-                  ...items.slice(0, -1),
-                  { ...last, text: last.text + delta },
-                ];
-              }
-              return [
-                ...items,
-                {
-                  role: "assistant",
-                  text: delta,
-                  streaming: true,
-                  senderAgentId: targetId,
-                  senderName: speakerAgent?.name || targetId,
-                  isHost,
-                  createdAt: Date.now(),
-                },
-              ];
+            streamedText += delta;
+            writeSpeakerMessage({
+              role: "assistant",
+              text: streamedText,
+              streaming: true,
+              senderAgentId: targetId,
+              senderName: speakerAgent?.name || targetId,
+              isHost,
+              createdAt: Date.now(),
             });
           },
           () => {},
@@ -7197,13 +7567,7 @@ ${cleanHistory}
           createdAt: Date.now(),
         };
 
-        setMessages((items) => {
-          const last = items.at(-1);
-          if (receivedDelta && last?.role === "assistant" && last.streaming) {
-            return [...items.slice(0, -1), assistantMsg];
-          }
-          return [...items, assistantMsg];
-        });
+        writeSpeakerMessage(assistantMsg);
 
         await onComplete();
 
@@ -7222,28 +7586,25 @@ ${cleanHistory}
           (reason instanceof DOMException && reason.name === "AbortError") ||
           (reason instanceof Error && reason.name === "AbortError")
         ) {
-          setMessages((items) => {
-            const last = items.at(-1);
-            if (last?.role === "assistant" && last.streaming) {
-              return [
-                ...items.slice(0, -1),
-                { ...last, text: `${last.text}\n\n[发言已由用户终止]` },
-              ];
-            }
-            return [...items, { role: "assistant", text: "[发言已由用户终止]" }];
+          writeSpeakerMessage({
+            role: "assistant",
+            text: `${streamedText}${streamedText ? "\n\n" : ""}[发言已由用户终止]`,
+            senderAgentId: targetId,
+            senderName: speakerAgent?.name || targetId,
+            isHost,
+            createdAt: Date.now(),
           });
           return;
         }
         const errorMsg = reason instanceof Error ? reason.message : "智能体发言失败";
-        setMessages((items) => [
-          ...items,
-          {
-            role: "assistant",
-            text: `⚠️ [${speakerAgent?.name || targetId}] 发言遇到异常: ${errorMsg}`,
-            senderName: speakerAgent?.name || targetId,
-            isHost,
-          },
-        ]);
+        writeSpeakerMessage({
+          role: "assistant",
+          text: `${streamedText}${streamedText ? "\n\n" : ""}⚠️ [${speakerAgent?.name || targetId}] 发言遇到异常: ${errorMsg}`,
+          senderAgentId: targetId,
+          senderName: speakerAgent?.name || targetId,
+          isHost,
+          createdAt: Date.now(),
+        });
       }
     };
 
@@ -7274,6 +7635,13 @@ ${cleanHistory}
     setLiveBlackboardMessages([]);
     const taskConvId = activeId; // 任务绑定发起它的会话
     taskConvRef.current = taskConvId;
+    // Give the task a durable client-known session before opening the stream.
+    // A refresh during the very first response can then still locate and replay it.
+    const taskSessionId = sessionRef.current || `ses-${crypto.randomUUID()}`;
+    if (!sessionRef.current) {
+      sessionRef.current = taskSessionId;
+      setSession(taskSessionId);
+    }
     streamTextRef.current = "";
     setMessages((items) => [
       ...items,
@@ -7287,25 +7655,13 @@ ${cleanHistory}
 
     // 任务完成/终止时：若用户已切到其他会话，把结果回写到原会话存储而不是当前视图
     const finishTaskMessage = (msg: ChatMessage) => {
+      const tagged = { ...msg, taskId: currentTaskIdRef.current || undefined };
       if (activeIdRef.current === taskConvId) {
-        setMessages((items) => {
-          const last = items.at(-1);
-          if (last?.role === "assistant" && last.streaming) {
-            return [...items.slice(0, -1), msg];
-          }
-          return [...items, msg];
-        });
+        setMessages((items) => upsertRecoveredAssistant(items, tagged));
       } else {
         const conv = loadConversationData(taskConvId);
         if (conv) {
-          const last = conv.messages.at(-1);
-          if (last && last.streaming && msg.role === "assistant") {
-            last.text = msg.text;
-            last.streaming = false;
-            last.result = msg.result;
-          } else {
-            conv.messages.push({ ...msg, streaming: false });
-          }
+          conv.messages = upsertRecoveredAssistant(conv.messages, { ...tagged, streaming: false });
           saveConversationData(conv);
           setConversations((items) =>
             items.map((item) =>
@@ -7327,12 +7683,14 @@ ${cleanHistory}
       const last = conv.messages.at(-1);
       if (last && last.streaming && last.senderAgentId === agentId) {
         last.text = streamTextRef.current;
+        last.taskId = currentTaskIdRef.current || undefined;
       } else {
         conv.messages.push({
           role: "assistant",
           text: streamTextRef.current,
           streaming: true,
           senderAgentId: agentId,
+          taskId: currentTaskIdRef.current || undefined,
           createdAt: Date.now(),
         });
       }
@@ -7349,7 +7707,7 @@ ${cleanHistory}
     try {
       const result = await api.chatStream(
         message,
-        sessionRef.current,
+        taskSessionId,
         taskAgentId,
         (delta) => {
           receivedDelta = true;
@@ -7361,12 +7719,12 @@ ${cleanHistory}
             if (last?.role === "assistant" && last.streaming) {
               return [
                 ...items.slice(0, -1),
-                { ...last, text: streamTextRef.current },
+                { ...last, text: streamTextRef.current, taskId: currentTaskIdRef.current || undefined },
               ];
             }
             return [
               ...items,
-              { role: "assistant", text: streamTextRef.current, streaming: true },
+              { role: "assistant", text: streamTextRef.current, streaming: true, taskId: currentTaskIdRef.current || undefined },
             ];
           });
         },
@@ -7375,15 +7733,19 @@ ${cleanHistory}
             event,
             setLiveSubagents,
             () => {
-              setDetail("collaboration");
+              if (!isCanvasConv) setDetail("collaboration");
               setInspectorCollapsed(false);
             },
             setLiveBlackboardMessages,
           );
           if (event.type === "canvas_updated" && event.data?.canvas_id) {
             api
-              .getCanvas(event.data.canvas_id)
-              .then(setCanvasData)
+              .getSessionCanvas(taskSessionId)
+              .then((canvas) => {
+                if (activeIdRef.current === taskConvId) {
+                  setCanvasData((current) => !current || current.id !== canvas.id || canvas.version >= current.version ? canvas : current);
+                }
+              })
               .catch(() => undefined);
           }
         },
@@ -7511,16 +7873,24 @@ void runMessage(next.text, next.agentId, next.attachments);
     void runMessage(finalMsg, agentId, currentAttachments);
   };
 
-  const [isCanvasConv, setIsCanvasConv] = useState(false);
-  const [canvasData, setCanvasData] = useState<{
-    id: string; title: string; content: string; version: number;
-    revisions: { version: number; editor_name: string; summary: string; created_at: string }[];
-  } | null>(null);
   const groupConfig = activeMeta?.isGroup ? loadConversationData(activeId)?.groupConfig : null;
   useEffect(() => {
     const canvas = inspector?.result_data?.canvas;
-    if (canvas && canvas.id) setCanvasData(canvas);
+    if (canvas && canvas.id) {
+      setCanvasData((current) => !current || current.id !== canvas.id || canvas.version >= current.version ? canvas : current);
+    }
   }, [inspector]);
+  useEffect(() => {
+    if (!isCanvasConv || !session) return;
+    let active = true;
+    void api.getSessionCanvas(session).then((canvas) => {
+      if (active) setCanvasData((current) => !current || current.id !== canvas.id || canvas.version >= current.version ? canvas : current);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [activeId, isCanvasConv, session]);
+  useEffect(() => {
+    if (isCanvasConv && mobileInspectorOpen) setCanvasMobileView("canvas");
+  }, [isCanvasConv, mobileInspectorOpen]);
   const groupMemberAgents = useMemo(() => {
     if (!groupConfig) return [];
     return groupConfig.members.map((mId) => agents.find((a) => a.id === mId)).filter(Boolean) as Agent[];
@@ -7689,7 +8059,7 @@ void runMessage(next.text, next.agentId, next.attachments);
   );
   return (
     <div
-      className={`chat-layout ${historyCollapsed ? "history-collapsed" : ""} ${inspectorCollapsed ? "inspector-collapsed" : ""} ${mobileHistoryOpen ? "mobile-history-open" : ""} ${mobileInspectorOpen ? "mobile-inspector-open" : ""}`}
+      className={`chat-layout ${historyCollapsed ? "history-collapsed" : ""} ${inspectorCollapsed ? "inspector-collapsed" : ""} ${mobileHistoryOpen ? "mobile-history-open" : ""} ${mobileInspectorOpen ? "mobile-inspector-open" : ""} ${isCanvasConv && content === "chat" ? "canvas-mode" : ""} ${canvasMobileView === "chat" ? "canvas-chat-view" : ""}`}
     >
       {(mobileHistoryOpen || mobileInspectorOpen) && (
         <button
@@ -7850,6 +8220,8 @@ void runMessage(next.text, next.agentId, next.attachments);
                 )}
                 {conversation.isGroup ? (
                   <Users size={14} className="group-item-icon" />
+                ) : conversation.isCanvas ? (
+                  <FileText size={14} />
                 ) : (
                   <MessageSquareText size={14} />
                 )}
@@ -7948,6 +8320,15 @@ void runMessage(next.text, next.agentId, next.attachments);
           <ApiPage onBack={() => setContent("chat")} />
         </section>
       ) : (
+        <>
+        {isCanvasConv && canvasMobileView === "chat" && (
+          <button
+            type="button"
+            className="canvas-chat-backdrop"
+            aria-label="关闭协作对话"
+            onClick={() => setCanvasMobileView("canvas")}
+          />
+        )}
         <section className="chat-stage">
           <header className="chat-mobile-header">
             <button
@@ -7965,26 +8346,49 @@ void runMessage(next.text, next.agentId, next.attachments);
               <strong>{activeMeta?.title || "AegisMesh"}</strong>
             </div>
             <div className="chat-mobile-actions">
-              <button
+              {isCanvasConv && (
+                <button
+                  className="mobile-header-btn"
+                  onClick={() => setCanvasMobileView("canvas")}
+                  aria-label="查看画布"
+                  title="查看画布"
+                >
+                  <FileText size={17} />
+                </button>
+              )}
+              {!isCanvasConv && <button
                 className={`mobile-header-btn ${inspector ? "active" : ""}`}
-                onClick={() => setMobileInspectorOpen((val) => !val)}
+                onClick={() => {
+                  setMobileInspectorOpen((val) => !val);
+                }}
                 aria-label="查看路由详情"
                 title="路由详情"
               >
                 <SlidersHorizontal size={17} />
                 {inspector && <span className="mobile-btn-dot" />}
-              </button>
+              </button>}
             </div>
           </header>
+          {isCanvasConv && (
+            <div className="canvas-chat-heading">
+              <div><strong>协作对话</strong><span>提出修改，正文在画布中更新</span></div>
+              <button type="button" aria-label="收起协作对话" onClick={() => setCanvasMobileView("canvas")}><X size={16} /></button>
+            </div>
+          )}
           <div className="chat-thread">
             {messages.length === 0 ? (
               <div className="chat-hero">
                 <div className="hero-mark">
                   <Sparkles size={24} />
                 </div>
-                <h2>今天要完成什么？</h2>
+                <h2>{isCanvasConv ? "开始撰写画布" : "今天要完成什么？"}</h2>
+                {isCanvasConv && <p>描述目标、资料和期望结构，正文会写入左侧画布。</p>}
                 <div className="prompt-grid">
-                  {suggestions.map((suggestion, index) => (
+                  {(isCanvasConv ? [
+                    "根据我的研究主题起草报告大纲，并写入画布",
+                    "整理上传材料的关键证据，补充到画布对应章节",
+                    "检查画布中的论证与引文，列出待核实之处",
+                  ] : suggestions).map((suggestion, index) => (
                     <button
                       key={suggestion}
                       onClick={() => setInput(suggestion)}
@@ -8130,7 +8534,7 @@ void runMessage(next.text, next.agentId, next.attachments);
                           )}
                         </div>
                       )}
-                      <MarkdownText text={message.text} />
+                      <MarkdownText text={message.text} streaming={message.streaming} />
                       {message.streaming && (
                         <>
                           {Object.values(liveSubagents)
@@ -8374,7 +8778,7 @@ void runMessage(next.text, next.agentId, next.attachments);
                       : "继续输入，消息将加入队列"
                     : attachments.length > 0
                       ? "输入对已上传材料的研讨或分析指令（可直接回车发送）..."
-                      : "请输入问题"
+                      : isCanvasConv ? "描述要写入或修改的内容" : "请输入问题"
               }
               rows={1}
             />
@@ -8396,7 +8800,7 @@ void runMessage(next.text, next.agentId, next.attachments);
                     value={agentId}
                     onChange={handleAgentSelect}
                     placeholder={agents.length === 0 ? "暂无可用智能体" : "请选择智能体"}
-                    options={agents.map((agent) => ({
+                    options={(isCanvasConv ? agents.filter((agent) => agent.role === "leader") : agents).map((agent) => ({
                       value: agent.id,
                       label: `${agent.name} · ${agent.role === "leader" ? "协调型" : "执行型"}`,
                     }))}
@@ -8493,8 +8897,30 @@ void runMessage(next.text, next.agentId, next.attachments);
             </div>
           </form>
         </section>
+        </>
       )}
       <aside className="route-inspector">
+        {isCanvasConv && (
+          <div className="canvas-mobile-toolbar">
+            <button
+              type="button"
+              className="mobile-header-btn"
+              onClick={() => setMobileHistoryOpen(true)}
+              aria-label="打开会话历史"
+            >
+              <Menu size={18} />
+            </button>
+            <strong>共享画布</strong>
+            <button
+              type="button"
+              className="mobile-back-chip"
+              onClick={() => setCanvasMobileView("chat")}
+            >
+              <MessageSquareText size={14} />
+              <span>对话</span>
+            </button>
+          </div>
+        )}
         <div className="inspector-mobile-bar">
           <div className="inspector-mobile-title">
             <SlidersHorizontal size={14} />
@@ -8519,7 +8945,7 @@ void runMessage(next.text, next.agentId, next.attachments);
                 画布 {canvasData && <span className="tab-badge">v{canvasData.version}</span>}
               </button>
             )}
-            {activeMeta?.isGroup ? (
+            {isCanvasConv ? null : activeMeta?.isGroup ? (
               <>
                 <button
                   className={detail === "members" ? "active" : ""}
@@ -8735,29 +9161,31 @@ void runMessage(next.text, next.agentId, next.attachments);
             />
           )
         )}
-        {isCanvasConv && detail === "canvas" && (
+        {isCanvasConv && (
           <div className="canvas-panel">
             {canvasData ? (
-              <>
-                <div className="canvas-meta">
-                  <strong>{canvasData.title}</strong>
-                  <span className="score-tag">v{canvasData.version}</span>
-                </div>
-                <div className="canvas-revisions">
-                  {canvasData.revisions.slice(0, 8).map((r, i) => (
-                    <span key={i} className="canvas-revision-pill">
-                      v{r.version} · {r.editor_name} · {r.summary}
-                    </span>
-                  ))}
-                </div>
-                <div className="message-markdown">
-                  <MarkdownText text={canvasData.content} />
-                </div>
-              </>
+              <CanvasEditor
+                key={canvasData.id}
+                document={canvasData}
+                onSave={async (content, baseVersion) => {
+                  if (!session) throw new Error("当前画布尚未绑定会话");
+                  try {
+                    const saved = await api.updateSessionCanvas(session, content, baseVersion);
+                    setCanvasData(saved);
+                    return saved;
+                  } catch (reason) {
+                    void api.getSessionCanvas(session).then(setCanvasData).catch(() => undefined);
+                    throw reason;
+                  }
+                }}
+              />
             ) : (
-              <EmptyState>
-                画布尚未创建——发送第一条消息后，主智能体将创建共享画布并组织协同撰写
-              </EmptyState>
+              <div className="canvas-first-state">
+                <FileText size={25} />
+                <h2>从一个目标开始</h2>
+                <p>正在准备 Markdown 文稿。也可以先在协作对话中描述写作目标。</p>
+                <button type="button" onClick={() => setCanvasMobileView("chat")}>打开对话 <ArrowRight size={14} /></button>
+              </div>
             )}
           </div>
         )}
@@ -8765,6 +9193,16 @@ void runMessage(next.text, next.agentId, next.attachments);
           <BlackboardPanel items={blackboardDeliverables} />
         )}
       </aside>
+      {isCanvasConv && canvasMobileView !== "chat" && (
+        <button
+          type="button"
+          className="canvas-chat-launcher"
+          onClick={() => setCanvasMobileView("chat")}
+        >
+          <MessageSquareText size={17} /> 协作对话
+          {messages.length > 0 && <span>{messages.length}</span>}
+        </button>
+      )}
       {settingsOpen && (
         <SettingsDrawer
           settings={settings}
