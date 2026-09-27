@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 
 import pytest
@@ -176,6 +177,7 @@ class CoordinatorTransport:
 
     def __init__(self) -> None:
         self.dispatched: list[str] = []
+        self.styles: list[str] = []
 
     async def execute(
         self,
@@ -188,8 +190,14 @@ class CoordinatorTransport:
         harness: bool = False,
         tool_registry: object = None,
         max_rounds: int = 4,
+        collab_style: str = "auto",
     ) -> PartnerResult:
         assert harness is True
+        self.styles.append(collab_style)
+        advanced = tool_registry.schemas(["execute_workflow", "run_swarm_discussion"])
+        assert [item["function"]["name"] for item in advanced] == [
+            "execute_workflow", "run_swarm_discussion",
+        ]
         roster = tool_registry.execute("list_agents", {})
         if inspect.isawaitable(roster):
             roster = await roster
@@ -274,13 +282,14 @@ async def test_agent_id_leader_coordinates_and_synthetizes(db: Session) -> None:
 
     invocation, _, selected = await ReliableOrchestrator(
         db, TransportRegistry({"test": FixtureTransport(), "openai-compatible": coordinator})
-    ).run(ChatRequest(message="规划一次调研", agent_id="lead", interface="harness"))
+    ).run(ChatRequest(message="规划一次调研", agent_id="lead", interface="harness", collab_style="workflow"))
 
     assert invocation.status == "completed"
     assert selected is not None and selected.id == "lead"
     assert invocation.result_data["mode"] == "coordination"
     assert invocation.result_text == "协调汇总：real transport fixture result"
     assert coordinator.dispatched == ["partner-one"]
+    assert coordinator.styles == ["workflow"]
     assert invocation.attempt_count == 1
     dispatches = [event for event in invocation.events if event.event_type == "DISPATCH_COMPLETED"]
     assert len(dispatches) == 1
@@ -290,6 +299,72 @@ async def test_agent_id_leader_coordinates_and_synthetizes(db: Session) -> None:
     assert len(invocation.result_data.get("collaborations", [])) == 1
     assert invocation.result_data["collaborations"][0]["agent_id"] == "partner-one"
     assert db.query(RouteAttempt).filter(RouteAttempt.agent_id == "partner-one").count() == 1
+
+
+class BackgroundCoordinatorTransport:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    async def execute(
+        self,
+        agent: Agent,
+        query: str,
+        timeout_seconds: float,
+        tool_registry=None,
+        max_rounds: int = 4,
+        **kwargs,
+    ) -> PartnerResult:
+        self.queries.append(query)
+        if query.startswith("系统自激活通知"):
+            assert max_rounds == 0
+            assert "阶段性草稿" in query
+            assert "同伴回传" in query
+            return PartnerResult(text="最终结论：已核对同伴回传，给出统一结果。", data={})
+        outcome = tool_registry.execute(
+            "dispatch_task", {"task": "检索证据", "agent": "partner-one", "wait": False}
+        )
+        if inspect.isawaitable(outcome):
+            outcome = await outcome
+        assert outcome["ok"] is True
+        return PartnerResult(text="初步意见：等待检索证据后仍需修订。" * 12, data={})
+
+
+class SlowFixtureTransport(FixtureTransport):
+    async def execute(
+        self,
+        agent: Agent,
+        query: str,
+        timeout_seconds: float,
+        session_id: str | None = None,
+        history: list[dict[str, str]] | None = None,
+        harness: bool = False,
+    ) -> PartnerResult:
+        await asyncio.sleep(0.03)
+        return await super().execute(agent, query, timeout_seconds, session_id, history, harness)
+
+
+async def test_background_synthesis_replaces_preliminary_draft(db: Session) -> None:
+    db.add(RoutingPolicy(
+        id=1, weights=DEFAULT_WEIGHTS, failure_threshold=2,
+        circuit_cooldown_seconds=60, max_attempts=2, request_timeout_seconds=2,
+    ))
+    add_agent(db, "partner-one", 0)
+    add_leader(db, "lead", "openai-compatible")
+    db.commit()
+    coordinator = BackgroundCoordinatorTransport()
+
+    invocation, _, _ = await ReliableOrchestrator(
+        db, TransportRegistry({
+            "test": SlowFixtureTransport(),
+            "openai-compatible": coordinator,
+        }),
+    ).run(ChatRequest(message="完成证据报告", agent_id="lead", interface="harness"))
+
+    assert invocation.status == "completed", invocation.result_text
+    assert invocation.result_text == "最终结论：已核对同伴回传，给出统一结果。"
+    assert len(coordinator.queries) == 2
+    assert len(invocation.result_data["collaborations"]) == 1
+    assert invocation.result_data["collaborations"][0]["status"] == "completed"
 
 
 async def test_agent_id_leader_without_hosted_transport_runs_direct(db: Session) -> None:
@@ -567,4 +642,3 @@ async def test_list_agents_multi_token_and_dispatch_fuzzy_local(db: Session) -> 
     res = await dispatch_fn({"task": "设计实验方案", "agent": "研究设计与数据分析智能体"})
     assert res["ok"] is True
     assert res["agent_id"] == "empirical_design"
-

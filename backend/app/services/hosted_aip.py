@@ -49,6 +49,7 @@ from acps_sdk.aip.aip_stream_model import (
 from ..config import get_settings
 from ..models import Agent, AipNotification, HostedTask, ProviderConfig
 from .transport import PartnerTransport, TransportRegistry
+from .runtime_recovery import runtime_marker
 
 
 def utc_iso() -> str:
@@ -107,6 +108,7 @@ class HostedAipService:
                 state=TaskState.Accepted.value,
                 query=self._text(command.dataItems),
                 command_history=[command.model_dump(exclude_none=True, mode="json")],
+                result_data={"_runtime": runtime_marker()},
             )
             self.db.add(task)
             self.db.commit()
@@ -289,6 +291,7 @@ class HostedAipService:
                 state=TaskState.Accepted.value,
                 query=self._text(command.dataItems),
                 command_history=[command.model_dump(exclude_none=True, mode="json")],
+                result_data={"_runtime": runtime_marker()},
             )
             self.db.add(task)
             self.db.commit()
@@ -331,6 +334,7 @@ class HostedAipService:
                     state=TaskState.Accepted.value,
                     query=self._text(command.dataItems),
                     command_history=[command.model_dump(exclude_none=True, mode="json")],
+                    result_data={"_runtime": runtime_marker()},
                 )
                 self.db.add(task)
                 await self._run(task)

@@ -25,6 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import desc, func, inspect, select, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from acps_sdk.aip.aip_notification_model import NotificationStartRequest
@@ -59,6 +60,7 @@ from .schemas import (
     AccessUpdate,
     Attachment,
     CandidateScore,
+    CanvasUpdate,
     ChatRequest,
     ChatResponse,
     DiscoveryQuery,
@@ -83,6 +85,7 @@ from .seed import seed_database
 from .services.tools import ToolRegistry
 from .services.transport import TransportRegistry
 from .services.orchestrator import NoEligibleAgentError, ReliableOrchestrator
+from .services.runtime_recovery import INTERRUPTED_MESSAGE, recover_interrupted_runtime
 from .services.aip_group_partner import start_partner_listener
 from .services.probe import AgentProbe, probe_loop
 from .services.acs import LOCAL_AIC_PREFIX, build_acs, public_aic
@@ -202,50 +205,25 @@ async def lifespan(_: FastAPI):
                     connection.execute(
                         text("ALTER TABLE invocations ADD COLUMN owner_id VARCHAR(128) DEFAULT ''")
                     )
+    with engine.begin() as connection:
+        if "canvas_docs" in inspect(connection).get_table_names():
+            canvas_columns = {
+                item["name"] for item in inspect(connection).get_columns("canvas_docs")
+            }
+            if "owner_id" not in canvas_columns:
+                connection.execute(text(
+                    "ALTER TABLE canvas_docs ADD COLUMN owner_id VARCHAR(128) DEFAULT ''"
+                ))
     with SessionLocal() as db:
         seed_database(db)
-        # 清理由于服务中断或重启遗留的僵尸任务并重置智能体负载计数
-        now = datetime.now(timezone.utc)
-        stale_invocations = list(
-            db.scalars(select(Invocation).where(Invocation.status == "working")).all()
-        )
-        for inv in stale_invocations:
-            inv.status = "failed"
-            inv.finished_at = now
-            inv.result_text = inv.result_text or "服务重启中断，任务已终止。"
-            db.add(
-                TraceEvent(
-                    invocation=inv,
-                    event_type="TASK_INTERRUPTED",
-                    detail={"reason": "服务重启中断，系统自动清理僵尸任务"},
-                )
-            )
-        stale_hosted = list(
-            db.scalars(
-                select(HostedTask).where(HostedTask.state.in_(["accepted", "working"]))
-            ).all()
-        )
-        for ht in stale_hosted:
-            ht.state = "failed"
-            ht.state_changed_at = now
-            ht.result_text = ht.result_text or "服务重启中断，托管任务已终止。"
-            ht.result_data = {
-                **(ht.result_data or {}),
-                "interrupted": True,
-                "reason": "Server restarted while task was running",
-            }
-        for agent in db.scalars(select(Agent)).all():
-            if agent.active_tasks != 0 or agent.queued_tasks != 0:
-                agent.active_tasks = 0
-                agent.queued_tasks = 0
-        with SessionLocal() as db:
-            agents = db.scalars(select(Agent).where(Agent.active == True)).all()
-            for ag in agents:
-                if public_aic(ag):
-                    amp_service.register_aic(ag.aic)
-            leader_agent = db.scalar(select(Agent).where(Agent.role == "leader"))
-            if leader_agent and leader_agent.aic:
-                amp_service.update_aic(leader_agent.aic)
+        recover_interrupted_runtime(db)
+        agents = db.scalars(select(Agent).where(Agent.active == True)).all()
+        for ag in agents:
+            if public_aic(ag):
+                amp_service.register_aic(ag.aic)
+        leader_agent = db.scalar(select(Agent).where(Agent.role == "leader"))
+        if leader_agent and leader_agent.aic:
+            amp_service.update_aic(leader_agent.aic)
     amp_task = asyncio.create_task(amp_service.start())
     task = asyncio.create_task(probe_loop(SessionLocal, settings.probe_interval_seconds))
     group_partner_task = await start_partner_listener()
@@ -1122,6 +1100,15 @@ def extract_user_id(request: Request) -> str:
     return f"anon_{hashlib.sha256(ip.encode()).hexdigest()[:24]}"
 
 
+def extract_canvas_user_id(request: Request) -> str:
+    """Canvas browser ownership must not be selected by an unverified API header."""
+    cookie = request.cookies.get(DEMO_COOKIE_NAME, "")
+    if cookie:
+        return f"demo_{hashlib.sha256(cookie.encode()).hexdigest()[:24]}"
+    ip = request.client.host if request.client else "127.0.0.1"
+    return f"anon_{hashlib.sha256(ip.encode()).hexdigest()[:24]}"
+
+
 @app.post(
     "/api/invocations/{invocation_id}/feedback",
     response_model=FeedbackRead,
@@ -1267,11 +1254,35 @@ async def _launch_chat_task(payload: ChatRequest, user_id: str, is_admin: bool =
     return record
 
 
-async def _stream_task_events(task_id: str, user_id: str, from_index: int = 0):
-    async for event in task_manager.subscribe(task_id, user_id, from_index=from_index):
-        yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
-        if event.get("type") in {"result", "error"}:
-            break
+async def _stream_task_events(
+    task_id: str, user_id: str, from_index: int = 0, heartbeat_seconds: float = 15.0
+):
+    stream = task_manager.subscribe(
+        task_id, user_id, from_index=from_index, include_index=True
+    )
+    pending = asyncio.create_task(anext(stream))
+    try:
+        while True:
+            try:
+                index, event = await asyncio.wait_for(
+                    asyncio.shield(pending), timeout=heartbeat_seconds
+                )
+            except asyncio.TimeoutError:
+                # SSE comments keep idle connections open without consuming a
+                # replay cursor or appearing as assistant text in the client.
+                yield ": keep-alive\n\n"
+                continue
+            except StopAsyncIteration:
+                return
+            yield f"id: {index}\nevent: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+            if event.get("type") in {"result", "error"}:
+                return
+            pending = asyncio.create_task(anext(stream))
+    finally:
+        if not pending.done():
+            pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+        await stream.aclose()
 
 
 @app.post("/api/chat/stream", dependencies=[Depends(require_api_key)], tags=["runtime"])
@@ -1300,13 +1311,13 @@ async def get_active_task(session_id: str, request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/tasks/{task_id}/stream", dependencies=[Depends(require_api_key)], tags=["runtime"])
-async def reconnect_task_stream(task_id: str, request: Request) -> StreamingResponse:
+async def reconnect_task_stream(task_id: str, request: Request, from_index: int = 0) -> StreamingResponse:
     user_id = extract_user_id(request)
     task = await task_manager.get_task(task_id, user_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found or access denied")
     return StreamingResponse(
-        _stream_task_events(task_id, user_id, from_index=0),
+        _stream_task_events(task_id, user_id, from_index=max(0, from_index)),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1379,12 +1390,12 @@ def _group_history_text(group_id: str, db: Session, limit: int = 14) -> str:
 
 
 @app.get("/api/canvas/{canvas_id}", dependencies=[Depends(require_demo)], tags=["canvas"])
-def get_canvas(canvas_id: str, db: DbSession) -> dict:
+def get_canvas(canvas_id: str, request: Request, db: DbSession) -> dict:
     from .models import CanvasDoc
     from .services.canvas import history as canvas_history_rows
 
     doc = db.get(CanvasDoc, canvas_id)
-    if not doc:
+    if not doc or doc.owner_id != extract_canvas_user_id(request):
         raise HTTPException(status_code=404, detail="画布不存在")
     return {
         "id": doc.id,
@@ -1392,6 +1403,51 @@ def get_canvas(canvas_id: str, db: DbSession) -> dict:
         "content": doc.content,
         "version": doc.version,
         "revisions": canvas_history_rows(db, canvas_id, limit=30),
+    }
+
+
+@app.get("/api/canvas/session/{session_id}", dependencies=[Depends(require_demo)], tags=["canvas"])
+def get_session_canvas(session_id: str, request: Request, db: DbSession) -> dict:
+    from .services.canvas import CanvasError, get_or_create_session_canvas, history as canvas_history_rows
+
+    try:
+        doc = get_or_create_session_canvas(db, session_id, extract_canvas_user_id(request))
+    except CanvasError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "id": doc.id,
+        "title": doc.title,
+        "content": doc.content,
+        "version": doc.version,
+        "revisions": canvas_history_rows(db, doc.id, limit=30),
+    }
+
+
+@app.put("/api/canvas/session/{session_id}", dependencies=[Depends(require_demo)], tags=["canvas"])
+def update_session_canvas(
+    session_id: str, payload: CanvasUpdate, request: Request, db: DbSession
+) -> dict:
+    from .services.canvas import (
+        CanvasError, get_or_create_session_canvas, history as canvas_history_rows,
+        replace_document,
+    )
+
+    owner_id = extract_canvas_user_id(request)
+    try:
+        doc = get_or_create_session_canvas(db, session_id, owner_id)
+        doc = replace_document(
+            db, doc, content=payload.content,
+            base_version=payload.base_version, owner_id=owner_id,
+        )
+    except CanvasError as exc:
+        code = 409 if "版本" in str(exc) else 404
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    return {
+        "id": doc.id,
+        "title": doc.title,
+        "content": doc.content,
+        "version": doc.version,
+        "revisions": canvas_history_rows(db, doc.id, limit=30),
     }
 
 
@@ -1567,22 +1623,36 @@ async def demo_chat_stream(payload: ChatRequest, request: Request) -> StreamingR
 
 
 @app.get("/api/demo/tasks/active", dependencies=[Depends(require_demo)], tags=["demo"])
-async def demo_get_active_task(session_id: str, request: Request) -> dict[str, Any]:
+async def demo_get_active_task(session_id: str, request: Request, db: DbSession) -> dict[str, Any]:
     user_id = extract_user_id(request)
     task = await task_manager.get_active_task(user_id, session_id)
     if not task:
+        latest = db.scalar(
+            select(Invocation)
+            .where(Invocation.owner_id == user_id, Invocation.session_id == session_id)
+            .order_by(Invocation.created_at.desc())
+        )
+        if latest and latest.status == "failed" and (latest.result_data or {}).get("interrupted"):
+            return {
+                "active": False,
+                "interrupted": {
+                    "invocation_id": latest.id,
+                    "message": INTERRUPTED_MESSAGE,
+                    "partial_result": (latest.result_data or {}).get("interrupted_partial") or "",
+                },
+            }
         return {"active": False}
     return {"active": True, "task": task.to_summary()}
 
 
 @app.get("/api/demo/tasks/{task_id}/stream", dependencies=[Depends(require_demo)], tags=["demo"])
-async def demo_reconnect_task_stream(task_id: str, request: Request) -> StreamingResponse:
+async def demo_reconnect_task_stream(task_id: str, request: Request, from_index: int = 0) -> StreamingResponse:
     user_id = extract_user_id(request)
     task = await task_manager.get_task(task_id, user_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found or access denied")
     return StreamingResponse(
-        _stream_task_events(task_id, user_id, from_index=0),
+        _stream_task_events(task_id, user_id, from_index=max(0, from_index)),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1601,10 +1671,9 @@ async def demo_cancel_task(task_id: str, request: Request) -> dict[str, Any]:
 
 def get_uploads_dir() -> Path:
     settings = get_settings()
-    if settings.database_url.startswith("sqlite:///./"):
-        base_dir = Path(settings.database_url.removeprefix("sqlite:///./")).parent
-    elif settings.database_url.startswith("sqlite:////"):
-        base_dir = Path(settings.database_url.removeprefix("sqlite:////")).parent
+    if settings.database_url.startswith("sqlite:"):
+        database_path = make_url(settings.database_url).database
+        base_dir = Path(database_path).parent if database_path and database_path != ":memory:" else Path("data")
     else:
         base_dir = Path("backend/data") if Path("backend/data").exists() else Path("data")
     uploads_dir = base_dir / "uploads"

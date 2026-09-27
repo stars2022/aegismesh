@@ -269,6 +269,7 @@ class CanvasDoc(Base):
     __tablename__ = "canvas_docs"
 
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(128), default="", index=True)
     title: Mapped[str] = mapped_column(String(160), default="协同画布")
     content: Mapped[str] = mapped_column(Text, default="")
     version: Mapped[int] = mapped_column(Integer, default=1)

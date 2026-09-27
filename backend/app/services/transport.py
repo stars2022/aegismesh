@@ -187,13 +187,18 @@ class OpenAICompatibleTransport:
         model = agent.model_name or (provider.default_model if provider else settings.llm_model)
         api_base = provider.base_url if provider else settings.llm_api_base
         started = time.monotonic()
+        extra_tool_names = tuple(kwargs.get("extra_tool_names") or ())
+        prompt_text = build_system_prompt(
+            agent, harness, collab_style=kwargs.get("collab_style", "auto"),
+            extra_tool_names=extra_tool_names,
+        )
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": build_system_prompt(agent, harness)},
+            {"role": "system", "content": prompt_text},
             *(history or []),
             {"role": "user", "content": query},
         ]
         tool_registry = tool_registry or ToolRegistry()
-        tool_schemas = tool_registry.schemas(effective_tool_names(agent))
+        tool_schemas = tool_registry.schemas([*effective_tool_names(agent), *extra_tool_names])
         executions: list[dict[str, Any]] = []
         prompt_tokens = 0
         completion_tokens = 0
@@ -328,7 +333,7 @@ class OpenAICompatibleTransport:
                     raw_answer = str(message.get("content") or "").strip()
                     answer = clean_model_output(raw_answer)
 
-                    if executions and (has_unexecuted_tool_markers(raw_answer) or len(answer) < 80):
+                    if executions and (has_unexecuted_tool_markers(raw_answer) or not answer):
                         if controller and hasattr(controller, "record_synthesizing"):
                             controller.record_synthesizing()
                         tool_summaries = []
@@ -346,7 +351,7 @@ class OpenAICompatibleTransport:
                             )
                         summary_context = "\n\n".join(tool_summaries)
                         synth_messages = [
-                            {"role": "system", "content": build_system_prompt(agent, harness)},
+                            {"role": "system", "content": prompt_text},
                             *(history or []),
                             {"role": "user", "content": query},
                             {
@@ -977,7 +982,8 @@ class OpenAIResponsesTransport:
         model = agent.model_name or (provider.default_model if provider else settings.openai_model)
         api_base = provider.base_url if provider else settings.openai_api_base
         registry = tool_registry or ToolRegistry()
-        chat_schemas = registry.schemas(effective_tool_names(agent))
+        extra_tool_names = tuple(kwargs.get("extra_tool_names") or ())
+        chat_schemas = registry.schemas([*effective_tool_names(agent), *extra_tool_names])
         tools = [
             {
                 "type": "function",
@@ -987,7 +993,10 @@ class OpenAIResponsesTransport:
             }
             for item in chat_schemas
         ]
-        instructions = build_system_prompt(agent, harness)
+        instructions = build_system_prompt(
+            agent, harness, collab_style=kwargs.get("collab_style", "auto"),
+            extra_tool_names=extra_tool_names,
+        )
         input_items: list[dict[str, Any]] = [*(history or []), {"role": "user", "content": query}]
         executions: list[dict[str, Any]] = []
         prompt_tokens = completion_tokens = llm_calls = 0
@@ -1146,10 +1155,13 @@ class AnthropicTransport:
                 "description": item["function"]["description"],
                 "input_schema": item["function"]["parameters"],
             }
-            for item in registry.schemas(effective_tool_names(agent))
+            for item in registry.schemas([*effective_tool_names(agent), *(kwargs.get("extra_tool_names") or ())])
         ]
         messages: list[dict[str, Any]] = [*(history or []), {"role": "user", "content": query}]
-        system = build_system_prompt(agent, harness)
+        system = build_system_prompt(
+            agent, harness, collab_style=kwargs.get("collab_style", "auto"),
+            extra_tool_names=tuple(kwargs.get("extra_tool_names") or ()),
+        )
         executions: list[dict[str, Any]] = []
         prompt_tokens = completion_tokens = llm_calls = 0
         started = time.monotonic()

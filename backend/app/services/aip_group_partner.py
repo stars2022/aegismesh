@@ -10,6 +10,7 @@ from sqlalchemy import select
 from ..config import get_settings
 from ..database import SessionLocal
 from ..models import Agent
+from .runtime_recovery import runtime_marker
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ async def _execute_local_task(agent_id: str, task_text: str) -> str:
             state="accepted",
             query=task_text,
             command_history=[],
+            result_data={"_runtime": runtime_marker()},
         )
         db.add(task)
         db.commit()

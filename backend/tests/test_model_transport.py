@@ -62,6 +62,55 @@ async def test_openai_compatible_transport_tracks_usage(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
+async def test_canvas_tool_is_exposed_without_being_in_agent_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(__import__("json").loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "画布已更新。"}}]})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        transport_module.httpx,
+        "AsyncClient",
+        lambda **_: real_client(transport=httpx.MockTransport(handler)),
+    )
+    monkeypatch.setattr(
+        transport_module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            llm_api_base="https://model.example/v1",
+            llm_api_key="test-key",
+            llm_model="fallback-model",
+        ),
+    )
+    registry = ToolRegistry()
+    registry.register(
+        "canvas_read",
+        {
+            "type": "function",
+            "function": {
+                "name": "canvas_read",
+                "description": "读取画布",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        lambda _args: {"content": "# 文稿"},
+    )
+    agent = Agent(id="writer", aic="aic-writer", name="Writer", role="leader", tools=[])
+
+    result = await OpenAICompatibleTransport().execute(
+        agent, "更新画布", 5, tool_registry=registry, extra_tool_names=("canvas_read",),
+    )
+
+    assert [item["function"]["name"] for item in captured["tools"]] == ["canvas_read"]
+    assert "先调用 canvas_read" in captured["messages"][0]["content"]
+    assert captured["messages"][-1] == {"role": "user", "content": "更新画布"}
+    assert result.text == "画布已更新。"
+    assert result.llm_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_openai_compatible_transport_streams_deltas(monkeypatch: pytest.MonkeyPatch) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -174,6 +223,11 @@ async def test_leader_receives_coordination_tools_without_harness_prompt(
         "list_agents",
         "dispatch_task",
     ]
+
+    await OpenAICompatibleTransport().execute(
+        agent, "开始研讨", 5, harness=False, tool_registry=registry, collab_style="swarm",
+    )
+    assert "必须调用 run_swarm_discussion" in captured["messages"][0]["content"]
 
 
 @pytest.mark.asyncio
@@ -481,5 +535,3 @@ async def test_openai_responses_transport_streams_reasoning_to_controller(
     assert "最终分析结果已产出。" in result.text
     assert controller.total_tokens > 0
     assert controller.phase == ProgressPhase.GENERATING
-
-

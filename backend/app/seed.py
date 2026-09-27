@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from .models import Agent, PlatformAccess, ProviderConfig, RoutingPolicy
 from .research_catalog import apply_research_catalog
@@ -59,7 +60,7 @@ PLATFORM_AGENT_CATALOG: dict[str, dict] = {
     },
 }
 
-def seed_database(db: Session) -> None:
+def _apply_seed(db: Session) -> None:
     policy = db.get(RoutingPolicy, 1)
     if not policy:
         db.add(
@@ -135,4 +136,20 @@ def seed_database(db: Session) -> None:
     for agent in pinned:
         agent.usage_mode = "external"
 
-    db.commit()
+def seed_database(db: Session) -> None:
+    """Apply the catalog safely when multiple service processes start together.
+
+    The public API and mTLS API share one database and may be restarted at the
+    same time. Both can observe an empty seed row before either transaction has
+    committed. Let the database pick the winner, then retry the losing
+    transaction against the newly committed rows instead of crashing startup.
+    """
+    for attempt in range(2):
+        try:
+            _apply_seed(db)
+            db.commit()
+            return
+        except IntegrityError:
+            db.rollback()
+            if attempt == 1:
+                raise

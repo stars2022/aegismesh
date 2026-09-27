@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -11,6 +12,12 @@ from app.models import Base
 from app.research_catalog import RESEARCH_AGENT_CATALOG
 from app.schemas import Attachment, ChatRequest
 from app.services.orchestrator import ReliableOrchestrator
+
+
+def test_upload_directory_follows_absolute_sqlite_database(monkeypatch, tmp_path):
+    database_path = tmp_path / "test.db"
+    monkeypatch.setattr("app.main.get_settings", lambda: SimpleNamespace(database_url=f"sqlite:///{database_path}"))
+    assert get_uploads_dir() == tmp_path / "uploads"
 
 
 def test_research_catalog_contains_only_the_four_registered_agents():

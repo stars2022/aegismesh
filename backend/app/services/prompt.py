@@ -10,6 +10,8 @@ LEADER_RUNTIME_TOOLS = (
     "dispatch_task",
     "check_subagent_status",
     "fetch_session_history",
+    "execute_workflow",
+    "run_swarm_discussion",
 )
 
 DATA_BOUNDARY = (
@@ -33,31 +35,42 @@ STYLE_DIRECTIVES = {
     ),
     "swarm": (
         "本次任务按【智能体集群群聊黑板】执行。"
-        "必须调用 run_swarm_discussion：给出研讨议题、参与专家列表（先 list_agents 确认可用）与轮次；"
+        "必须调用 run_swarm_discussion：给出研讨议题、参与专家列表（先 list_agents 确认可用）与轮次（一般 1–3 轮即可）；"
         "各专家在黑板上按轮次发表观点、交叉质证，之后你汇总黑板共识作为最终答复。"
         "禁止使用串行棒次或并行批量派发替代群聊研讨。直接执行，严禁在回复中宣告模式或输出指令文本。"
     ),
     "parallel": (
         "本次任务按【并行分工】执行。"
-        "将相互独立的子任务用 dispatch_task(wait=False) 并发派发，全部回传后统一汇总。直接执行，严禁在回复中宣告模式或输出指令文本。"
+        "将相互独立的子任务用 dispatch_task(wait=False) 并发派发；派发完成后不要反复轮询，"
+        "全部子任务结束后系统会自动唤醒你做最终汇总，期间确需查看进度才调用 check_subagent_status。"
+        "直接执行，严禁在回复中宣告模式或输出指令文本。"
     ),
 }
 
 LEADER_COORDINATION = (
-    "你是负责任务规划与结果汇总的主控协调智能体。\n"
-    "1. 直接解答与会话衔接：\n"
-    "   - 若当前问题可直接基于现有对话上下文回答，直接分析并给出结论，无需盲目派发。\n"
-    "   - 若需查阅较早轮次的原始问答、同伴详细回传或此前检索数据，可调用 fetch_session_history 回溯。\n"
-    "2. 三大核心协作模式执行规范（直接推进任务，严禁在回复中输出模式宣告、模式名称或解释内部调度流程，干就完了）：\n"
-    "   - 【模式一：并行分工模式（Parallel Mode）】：针对相互独立、互不依赖的子任务。主控批量并发派发各专家分支，各专家同时独立推进并汇报成果。\n"
-    "   - 【模式二：串行工作流模式（Workflow Mode）】：针对前后强因果依赖的流水线工序。主控必须严格单步顺序流转：先派发第1棒任务，待其回传成果后，提炼前序输出作为输入参数再派发第2棒，依序流转，形成清晰的串行接力棒次链。\n"
-    "   - 【模式三：智能体集群群聊黑板模式（Swarm Blackboard Mode）】：针对深度研讨、多方质证与交叉共创。智能体集群接入公共群聊黑板，佩戴临时专业昵称（如 @主控协调员、@文献检索专家、@实证设计专家、@论文评审专家），在黑板中像群聊一样按轮次广播观点、交锋质证、引用并沉淀共识。\n"
-    "3. 派发与通信规范：\n"
-    "   - 派发前先调用 list_agents 查看当前可用同伴及其能力状态，避免派发给未就绪或调用链中已存在的智能体。\n"
-    "   - 派发任务时说明须自包含：明确目标、约束与期望的交付格式；若为工作流模式，必须携带前一棒交付物。\n"
-    "4. 结果汇总与裁决：\n"
-    "   - 充分吸收各模式回传数据，并列不同视角，消除矛盾；某分支未完成时如实说明，没有出处的明确标注「未核实」。\n"
-    "   - 最终面向用户输出条理清晰、逻辑连贯的综合报告。"
+    "你负责规划、协调与汇总，但应以完成用户目标为准。\n"
+    "1. 能基于已有上下文直接回答时直接回答；需要旧轮次原文时再用 fetch_session_history。\n"
+    "2. 任务确需专业能力时，先用 list_agents 查询实时可用者，再按能力与任务选择执行者。"
+    "独立子任务可并行，有依赖的任务串行，需要交叉质证时才组织群聊黑板。"
+    "单次任务的派发预算有限（最多 4 次派发）：先合并同类子任务再派发，把轮次留给整合汇总。"
+    "每次派发写清目标、约束、已知资料和交付格式；不得重复派发相同任务或形成调用环。\n"
+    "3. 回传足以回答问题时停止派发。将已证实内容、推断和未核实信息分开；"
+    "如有失败或未完成的支线，说明其影响。最终回复聚焦结论和依据，"
+    "不向用户宣告内部模式或复述完整调度过程。"
+)
+
+CANVAS_LEADER_GUIDANCE = (
+    "本会话启用共享画布，画布是正文与交付物的唯一主版本。"
+    "先调用 canvas_read 查看已有内容和版本；用户要求起草、增补或修改时，"
+    "用 canvas_write_section 按章节更新，必要时才用 canvas_append。"
+    "写入前保留已有有效内容，避免重复章节；版本冲突时重新读取后再修改。"
+    "调用同伴时提供相关画布上下文，并核验其回传再写入。"
+    "用户只询问问题时可以直接回答，不必改动画布。"
+    "最终聊天回复简述本轮改动和待核实之处，不要把整篇画布正文再次贴到聊天里。"
+)
+
+CANVAS_TOOL_NAMES = (
+    "canvas_read", "canvas_write_section", "canvas_append", "canvas_history",
 )
 
 # Backward-compatibility alias
@@ -83,14 +96,25 @@ def effective_tool_names(agent: Agent) -> list[str]:
     return names
 
 
-def build_system_prompt(agent: Agent, harness: bool = False, collab_style: str = "auto") -> str:
+def build_system_prompt(
+    agent: Agent,
+    harness: bool = False,
+    collab_style: str = "auto",
+    extra_tool_names: tuple[str, ...] = (),
+) -> str:
     authored = (agent.system_prompt or "").strip()
+    canvas_guidance = (
+        CANVAS_LEADER_GUIDANCE
+        if agent.role == "leader" and "canvas_read" in extra_tool_names
+        else None
+    )
     if not harness:
-        return authored
+        style_directive = STYLE_DIRECTIVES.get(collab_style) if agent.role == "leader" else None
+        return "\n\n".join(part for part in (authored, canvas_guidance, style_directive) if part)
     skills = "、".join(
         item.get("name", "").strip() for item in (agent.skills or []) if item.get("name")
     )
-    tools = "、".join(effective_tool_names(agent))
+    tools = "、".join(dict.fromkeys([*effective_tool_names(agent), *extra_tool_names]))
     sections = [
         PromptSection(-100, "身份", f"你是 {agent.name}。"),
         PromptSection(0, "系统提示词", authored or (agent.description or "").strip() or "完成当前任务。"),
@@ -108,6 +132,8 @@ def build_system_prompt(agent: Agent, harness: bool = False, collab_style: str =
         sections.append(PromptSection(160, "交付规范", PARTNER_DELIVERY))
     if agent.role == "leader":
         sections.append(PromptSection(150, "智能体协调", LEADER_COORDINATION))
+        if canvas_guidance:
+            sections.append(PromptSection(152, "共享画布", canvas_guidance))
         style_directive = STYLE_DIRECTIVES.get(collab_style)
         if style_directive:
             sections.append(PromptSection(155, "协作方式指定", style_directive))

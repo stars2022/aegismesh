@@ -192,6 +192,11 @@ class UploadResponse(BaseModel):
     text_length: int = 0
 
 
+class CanvasUpdate(BaseModel):
+    content: str = Field(max_length=1_000_000)
+    base_version: int = Field(ge=1)
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=50_000)
     attachments: list[Attachment] = Field(default_factory=list)
@@ -203,6 +208,7 @@ class ChatRequest(BaseModel):
     required_security: str | None = None
     required_transport: str | None = None
     mode: Literal["route", "collaborate"] = "route"
+    collab_style: Literal["auto", "workflow", "swarm", "parallel"] = "auto"
     max_partners: int = Field(default=2, ge=2, le=5)
     interface: Literal["api", "harness"] = "api"
     canvas: bool = False

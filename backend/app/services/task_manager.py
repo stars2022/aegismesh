@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from dataclasses import dataclass, field
 import logging
 import time
@@ -15,6 +16,8 @@ logger = logging.getLogger(__name__)
 MAX_EVENTS_PER_TASK = 1000
 MAX_SUBSCRIBER_QUEUE_SIZE = 200
 DEFAULT_TASK_DEADLINE_SECONDS = 600.0
+WATCHDOG_MAX_POLL_SECONDS = 0.5
+SubscriberEvent = tuple[int, dict[str, Any]]
 
 
 @dataclass
@@ -28,10 +31,11 @@ class BackgroundTaskRecord:
     controller: AdaptiveDeadlineController | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
-    events: list[dict[str, Any]] = field(default_factory=list)
+    events: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=MAX_EVENTS_PER_TASK))
+    event_total: int = 0
     result: dict[str, Any] | None = None
     error: str | None = None
-    subscribers: set[asyncio.Queue[dict[str, Any]]] = field(default_factory=set)
+    subscribers: set[asyncio.Queue[SubscriberEvent]] = field(default_factory=set)
     asyncio_task: asyncio.Task[Any] | None = None
     watchdog_task: asyncio.Task[Any] | None = None
 
@@ -45,6 +49,7 @@ class BackgroundTaskRecord:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "event_count": len(self.events),
+            "event_total": self.event_total,
             "has_result": self.result is not None,
             "error": self.error,
         }
@@ -72,7 +77,12 @@ class TaskManager:
         self._lock = asyncio.Lock()
 
     @staticmethod
-    def _dispatch_to_subscribers(subs: list[asyncio.Queue[dict[str, Any]]], event: dict[str, Any]) -> None:
+    def _append_event(task: BackgroundTaskRecord, event: dict[str, Any]) -> None:
+        task.events.append(event)
+        task.event_total += 1
+
+    @staticmethod
+    def _dispatch_to_subscribers(subs: list[asyncio.Queue[SubscriberEvent]], event: SubscriberEvent) -> None:
         for q in subs:
             try:
                 q.put_nowait(event)
@@ -85,10 +95,10 @@ class TaskManager:
             except Exception:
                 pass
 
-    async def _watchdog_loop(self, task_id: str) -> None:
+    async def _watchdog_loop(self, task_id: str, poll_seconds: float) -> None:
         try:
             while True:
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(poll_seconds)
                 async with self._lock:
                     task = self._tasks.get(task_id)
                     if not task or task.status != "running":
@@ -142,7 +152,10 @@ class TaskManager:
                 controller=controller,
             )
             self._tasks[tid] = record
-            record.watchdog_task = asyncio.create_task(self._watchdog_loop(tid))
+            # Long-running tasks do not need a 20 Hz timer. Short explicit
+            # deadlines retain a proportionally quicker check interval.
+            poll_seconds = min(WATCHDOG_MAX_POLL_SECONDS, max(0.02, effective_deadline / 2))
+            record.watchdog_task = asyncio.create_task(self._watchdog_loop(tid, poll_seconds))
             return record
 
     def attach_asyncio_task(self, task_id: str, task: asyncio.Task[Any]) -> None:
@@ -194,15 +207,14 @@ class TaskManager:
     async def publish_event(self, task_id: str, event: dict[str, Any]) -> None:
         async with self._lock:
             task = self._tasks.get(task_id)
-            if not task:
+            if not task or task.status != "running":
                 return
             task.updated_at = time.time()
-            task.events.append(event)
-            if len(task.events) > MAX_EVENTS_PER_TASK:
-                task.events = task.events[-MAX_EVENTS_PER_TASK:]
+            self._append_event(task, event)
+            indexed_event = (task.event_total - 1, event)
             subs = list(task.subscribers)
 
-        self._dispatch_to_subscribers(subs, event)
+        self._dispatch_to_subscribers(subs, indexed_event)
 
     async def complete_task(self, task_id: str, result_data: dict[str, Any]) -> None:
         result_event = {"type": "result", "data": result_data}
@@ -213,14 +225,13 @@ class TaskManager:
             task.status = "completed"
             task.result = result_data
             task.updated_at = time.time()
-            task.events.append(result_event)
-            if len(task.events) > MAX_EVENTS_PER_TASK:
-                task.events = task.events[-MAX_EVENTS_PER_TASK:]
+            self._append_event(task, result_event)
+            indexed_event = (task.event_total - 1, result_event)
             if task.watchdog_task and not task.watchdog_task.done():
                 task.watchdog_task.cancel()
             subs = list(task.subscribers)
 
-        self._dispatch_to_subscribers(subs, result_event)
+        self._dispatch_to_subscribers(subs, indexed_event)
 
     async def fail_task(self, task_id: str, error_message: str) -> None:
         err_event = {"type": "error", "message": error_message}
@@ -231,14 +242,13 @@ class TaskManager:
             task.status = "failed"
             task.error = error_message
             task.updated_at = time.time()
-            task.events.append(err_event)
-            if len(task.events) > MAX_EVENTS_PER_TASK:
-                task.events = task.events[-MAX_EVENTS_PER_TASK:]
+            self._append_event(task, err_event)
+            indexed_event = (task.event_total - 1, err_event)
             if task.watchdog_task and not task.watchdog_task.done():
                 task.watchdog_task.cancel()
             subs = list(task.subscribers)
 
-        self._dispatch_to_subscribers(subs, err_event)
+        self._dispatch_to_subscribers(subs, indexed_event)
 
     async def cancel_task(self, task_id: str, user_id: str) -> bool:
         async with self._lock:
@@ -254,12 +264,11 @@ class TaskManager:
             if task.asyncio_task and not task.asyncio_task.done():
                 task.asyncio_task.cancel()
             cancel_event = {"type": "error", "message": "任务已被用户取消"}
-            task.events.append(cancel_event)
-            if len(task.events) > MAX_EVENTS_PER_TASK:
-                task.events = task.events[-MAX_EVENTS_PER_TASK:]
+            self._append_event(task, cancel_event)
+            indexed_event = (task.event_total - 1, cancel_event)
             subs = list(task.subscribers)
 
-        self._dispatch_to_subscribers(subs, cancel_event)
+        self._dispatch_to_subscribers(subs, indexed_event)
         return True
 
     async def subscribe(
@@ -267,28 +276,64 @@ class TaskManager:
         task_id: str,
         user_id: str,
         from_index: int = 0,
-    ) -> AsyncGenerator[dict[str, Any], None]:
-        task = await self.get_task(task_id, user_id)
-        if not task:
-            raise KeyError(f"Task not found or access denied: {task_id}")
-
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=MAX_SUBSCRIBER_QUEUE_SIZE)
+        include_index: bool = False,
+    ) -> AsyncGenerator[dict[str, Any] | SubscriberEvent, None]:
+        queue: asyncio.Queue[SubscriberEvent] = asyncio.Queue(maxsize=MAX_SUBSCRIBER_QUEUE_SIZE)
 
         async with self._lock:
-            historical = list(task.events[from_index:])
+            task = self._tasks.get(task_id)
+            if not task or task.user_id != user_id:
+                raise KeyError(f"Task not found or access denied: {task_id}")
+            # from_index is an absolute event cursor, not an index into the
+            # retained ring. A stale cursor replays all still-retained events.
+            oldest_index = task.event_total - len(task.events)
+            retained_start = max(0, from_index - oldest_index)
+            historical = [
+                (oldest_index + offset, event)
+                for offset, event in enumerate(task.events)
+            ][retained_start:]
             is_terminal = task.status in {"completed", "failed", "cancelled"}
-            task.subscribers.add(queue)
+            if not is_terminal:
+                task.subscribers.add(queue)
 
         try:
-            for ev in historical:
-                yield ev
+            next_index = max(0, from_index)
+            for index, ev in historical:
+                next_index = index + 1
+                yield (index, ev) if include_index else ev
+                if ev.get("type") in {"result", "error"}:
+                    return
 
-            if is_terminal and not historical:
+            if is_terminal:
                 return
 
             while True:
-                ev = await queue.get()
-                yield ev
+                index, ev = await queue.get()
+                if index < next_index:
+                    continue
+                if index > next_index:
+                    # A slow subscriber can overflow its bounded queue. Fill
+                    # the missing range from the retained task event ring
+                    # before yielding the newer queued event.
+                    async with self._lock:
+                        oldest_index = task.event_total - len(task.events)
+                        missing = [
+                            (oldest_index + offset, retained)
+                            for offset, retained in enumerate(task.events)
+                            if next_index <= oldest_index + offset < index
+                        ]
+                    if oldest_index > next_index:
+                        logger.warning(
+                            "Task %s stream lost events %s..%s beyond retention",
+                            task_id, next_index, oldest_index - 1,
+                        )
+                    for missing_index, missing_event in missing:
+                        next_index = missing_index + 1
+                        yield (missing_index, missing_event) if include_index else missing_event
+                        if missing_event.get("type") in {"result", "error"}:
+                            return
+                next_index = index + 1
+                yield (index, ev) if include_index else ev
                 if ev.get("type") in {"result", "error"}:
                     break
         finally:
@@ -308,6 +353,11 @@ class TaskManager:
                 t.status = "failed"
                 t.error = "任务超时被系统清理"
                 t.updated_at = now
+                err_event = {"type": "error", "message": t.error}
+                self._append_event(t, err_event)
+                self._dispatch_to_subscribers(
+                    list(t.subscribers), (t.event_total - 1, err_event)
+                )
 
         # 2. Clean up retained finished tasks
         expired_ids = [

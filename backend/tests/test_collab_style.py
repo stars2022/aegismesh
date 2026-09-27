@@ -1,6 +1,15 @@
 
 from app.models import Agent
+from app.schemas import ChatRequest
 from app.services.prompt import build_system_prompt
+from pydantic import ValidationError
+import pytest
+
+
+def test_collab_style_request_is_bounded() -> None:
+    assert ChatRequest(message="共同研究", collab_style="swarm").collab_style == "swarm"
+    with pytest.raises(ValidationError):
+        ChatRequest(message="共同研究", collab_style="arbitrary")
 
 
 def test_collab_style_directive_injected_for_leader() -> None:
@@ -14,6 +23,7 @@ def test_collab_style_directive_injected_for_leader() -> None:
 
     workflow = build_system_prompt(leader, harness=True, collab_style="workflow")
     assert "串行工作流" in workflow
+    assert "串行工作流" in build_system_prompt(leader, harness=False, collab_style="workflow")
 
     partner = Agent(id="p", aic="aic-p", name="p", role="partner", transport="openai-compatible")
     assert "协作方式指定" not in build_system_prompt(partner, harness=True, collab_style="swarm")

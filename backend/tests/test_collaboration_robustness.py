@@ -134,7 +134,7 @@ async def test_coordination_cancellation_and_subtasks_cleanup(db: Session) -> No
 
             # Leader stays running waiting for external cancellation
             await asyncio.sleep(5.0)
-            return PartnerResult(text="leader done")
+            return PartnerResult(text="leader done", data={})
 
     transports = TransportRegistry({
         "test-lead": CoordinatingLeaderTransport(),
@@ -375,6 +375,7 @@ async def test_task_manager_watchdog_and_idempotency() -> None:
     for i in range(MAX_EVENTS_PER_TASK + 50):
         await tm.publish_event(active.task_id, {"index": i})
     assert len(active.events) == MAX_EVENTS_PER_TASK
+    assert active.events[0]["index"] == 50
     assert active.events[-1]["index"] == MAX_EVENTS_PER_TASK + 49
 
 
@@ -571,6 +572,5 @@ async def test_orchestrator_call_chain_loop_rejection(db: Session) -> None:
     res_depth_exceeded = await dispatch_max_depth({"task": "超限派发", "agent": "partner-a"})
     assert res_depth_exceeded["ok"] is False
     assert "超出最大调用链深度限制" in res_depth_exceeded["error"]
-
 
 

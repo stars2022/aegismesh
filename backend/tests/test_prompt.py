@@ -43,6 +43,32 @@ def test_harness_injects_leader_runtime_tools() -> None:
 
     assert "list_agents" in prompt
     assert "dispatch_task" in prompt
+    assert "execute_workflow" in prompt
+    assert "run_swarm_discussion" in prompt
     assert "fetch_session_history" in prompt
     assert "直接回答" in prompt
     assert "当前未提供工具" not in prompt
+
+
+def test_canvas_guidance_is_system_level_only_for_leader() -> None:
+    leader = Agent(
+        id="leader", aic="aic-leader", name="Leader", role="leader",
+        system_prompt="负责研究报告", tools=[],
+    )
+    partner = Agent(
+        id="partner", aic="aic-partner", name="Partner", role="partner",
+        system_prompt="负责证据核验", tools=[],
+    )
+
+    ordinary = build_system_prompt(leader)
+    canvas_api = build_system_prompt(leader, extra_tool_names=("canvas_read",))
+    canvas_harness = build_system_prompt(
+        leader, harness=True, extra_tool_names=("canvas_read",)
+    )
+    partner_prompt = build_system_prompt(partner, extra_tool_names=("canvas_read",))
+
+    assert "画布是正文与交付物的唯一主版本" not in ordinary
+    assert "负责研究报告" in canvas_api
+    assert "先调用 canvas_read" in canvas_api
+    assert "## 共享画布" in canvas_harness
+    assert "先调用 canvas_read" not in partner_prompt

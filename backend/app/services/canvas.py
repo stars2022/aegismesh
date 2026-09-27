@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..models import CanvasDoc, CanvasRevision
+from ..models import CanvasDoc, CanvasRevision, Invocation
 
 
 class CanvasError(RuntimeError):
@@ -18,16 +21,154 @@ class CanvasError(RuntimeError):
 SECTION_HEADING = re.compile(r"^##\s+.+$", re.MULTILINE)
 
 
-def canvas_id_for(root_invocation_id: str) -> str:
-    return f"canvas-{root_invocation_id}"
+def canvas_id_for(session_id: str) -> str:
+    """A canvas belongs to the conversation, not an individual turn."""
+    return f"canvas-{hashlib.sha256(session_id.encode('utf-8')).hexdigest()[:32]}"
 
 
-def get_or_create_canvas(db: Session, canvas_id: str, title: str = "协同画布") -> CanvasDoc:
-    doc = db.get(CanvasDoc, canvas_id)
-    if doc is None:
-        doc = CanvasDoc(id=canvas_id, title=title, content=f"# {title}\n", version=1)
-        db.add(doc)
+def _claim_canvas(db: Session, doc: CanvasDoc, session_id: str, owner_id: str | None) -> CanvasDoc:
+    if not owner_id:
+        return doc
+    if doc.owner_id and doc.owner_id != owner_id:
+        raise CanvasError("画布不存在或无权访问")
+    if not doc.owner_id:
+        prior_owner = (
+            db.query(Invocation.owner_id)
+            .filter(Invocation.session_id == session_id, Invocation.owner_id != "")
+            .order_by(Invocation.created_at.desc())
+            .limit(1)
+            .scalar()
+        )
+        if prior_owner and prior_owner != owner_id:
+            raise CanvasError("画布不存在或无权访问")
+        db.execute(
+            update(CanvasDoc)
+            .where(CanvasDoc.id == doc.id, CanvasDoc.owner_id == "")
+            .values(owner_id=owner_id)
+        )
         db.commit()
+        db.refresh(doc)
+        if doc.owner_id != owner_id:
+            raise CanvasError("画布不存在或无权访问")
+    return doc
+
+
+def get_or_create_session_canvas(
+    db: Session, session_id: str, owner_id: str | None = None
+) -> CanvasDoc:
+    canvas_id = canvas_id_for(session_id)
+    existing = db.get(CanvasDoc, canvas_id)
+    if existing is not None:
+        return _claim_canvas(db, existing, session_id, owner_id)
+
+    # Older turns used one canvas per invocation. Keep their latest document
+    # when the user continues an existing conversation after this upgrade.
+    prior = (
+        db.query(Invocation)
+        .filter(Invocation.session_id == session_id)
+        .order_by(Invocation.created_at.desc())
+        .all()
+    )
+    for invocation in prior:
+        if owner_id and invocation.owner_id and invocation.owner_id != owner_id:
+            raise CanvasError("画布不存在或无权访问")
+        snapshot = (invocation.result_data or {}).get("canvas")
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("content"), str):
+            continue
+        doc = CanvasDoc(
+            id=canvas_id,
+            owner_id=owner_id or "",
+            title=str(snapshot.get("title") or "协同画布")[:160],
+            content=snapshot["content"],
+            version=max(1, int(snapshot.get("version") or 1)),
+        )
+        db.add(doc)
+        legacy_id = snapshot.get("id")
+        if isinstance(legacy_id, str):
+            for revision in (
+                db.query(CanvasRevision)
+                .filter(CanvasRevision.canvas_id == legacy_id)
+                .order_by(CanvasRevision.version.asc())
+                .all()
+            ):
+                db.add(CanvasRevision(
+                    canvas_id=canvas_id,
+                    version=revision.version,
+                    editor_id=revision.editor_id,
+                    editor_name=revision.editor_name,
+                    op=revision.op,
+                    summary=revision.summary,
+                    content_after=revision.content_after,
+                    created_at=revision.created_at,
+                ))
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            existing = db.get(CanvasDoc, canvas_id)
+            if existing is None:
+                raise
+            return _claim_canvas(db, existing, session_id, owner_id)
+        return doc
+    return get_or_create_canvas(db, canvas_id, owner_id=owner_id or "")
+
+
+def get_or_create_canvas(
+    db: Session, canvas_id: str, title: str = "协同画布", owner_id: str = ""
+) -> CanvasDoc:
+    doc = db.get(CanvasDoc, canvas_id)
+    if doc is not None and owner_id and doc.owner_id != owner_id:
+        raise CanvasError("画布不存在或无权访问")
+    if doc is None:
+        doc = CanvasDoc(
+            id=canvas_id, owner_id=owner_id, title=title,
+            content=f"# {title}\n", version=1,
+        )
+        db.add(doc)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            existing = db.get(CanvasDoc, canvas_id)
+            if existing is None:
+                raise
+            if owner_id and existing.owner_id != owner_id:
+                raise CanvasError("画布不存在或无权访问")
+            return existing
+    return doc
+
+
+def replace_document(
+    db: Session, doc: CanvasDoc, *, content: str, base_version: int, owner_id: str
+) -> CanvasDoc:
+    """Save a complete Markdown draft only if the version has not changed."""
+    if doc.owner_id != owner_id:
+        raise CanvasError("画布不存在或无权访问")
+    heading = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
+    title = heading.group(1).strip()[:160] if heading else doc.title
+    changed = db.execute(
+        update(CanvasDoc)
+        .where(
+            CanvasDoc.id == doc.id,
+            CanvasDoc.owner_id == owner_id,
+            CanvasDoc.version == base_version,
+        )
+        .values(content=content, title=title, version=base_version + 1)
+    ).rowcount
+    if changed != 1:
+        db.rollback()
+        raise CanvasError("画布版本已变化，请先查看最新内容，再决定如何合并草稿")
+    db.add(CanvasRevision(
+        canvas_id=doc.id,
+        version=base_version + 1,
+        editor_id=owner_id,
+        editor_name="用户",
+        op="replace_document",
+        summary="手动编辑 Markdown",
+        content_after=content,
+    ))
+    db.commit()
+    db.refresh(doc)
     return doc
 
 
