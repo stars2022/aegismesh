@@ -10060,3 +10060,108 @@ tr:last-child td { border-bottom: 0; }
   .canvas-floating-assistant > .floating-assistant-body, .floating-tab span,
   .canvas-floating-mobile-pill { animation: none; transition: none; }
 }
+
+/* Both assistant and inspector use the same adaptive, sliding pill tabs. */
+.floating-tabs,
+.inspector-header .detail-tabs {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--pill-count, 4), minmax(0, 1fr));
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  height: 34px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--ink) 7%, var(--paper));
+  container: pill-tabs / inline-size;
+  isolation: isolate;
+}
+.floating-tabs::before,
+.inspector-header .detail-tabs::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / var(--pill-count, 4));
+  border-radius: 8px;
+  background: var(--paper);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 12%);
+  transform: translateX(calc(var(--pill-index, 0) * 100%));
+  transition: transform 260ms cubic-bezier(.2, .8, .2, 1);
+  pointer-events: none;
+}
+.floating-tab,
+.inspector-header .detail-tabs button {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  width: 100%;
+  height: 28px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  white-space: nowrap;
+  transition: color 180ms ease;
+}
+.floating-tab.active,
+.inspector-header .detail-tabs button.active {
+  color: var(--ink);
+  background: transparent;
+  box-shadow: none;
+  border: 0;
+}
+.inspector-header .detail-tabs button::after { display: none; }
+.floating-tab span,
+.inspector-header .detail-tabs .tab-label {
+  display: inline-block;
+  max-width: 3em;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-width 200ms ease, opacity 150ms ease;
+}
+.floating-tab svg,
+.inspector-header .detail-tabs button svg { flex: none; }
+.inspector-header .detail-tabs { flex: 1; }
+.inspector-header .detail-tabs .tab-badge { margin-left: 1px; }
+
+@container pill-tabs (max-width: 225px) {
+  .floating-tab span { max-width: 0 !important; opacity: 0 !important; }
+}
+@container pill-tabs (max-width: 160px) {
+  .inspector-header .detail-tabs .tab-label { max-width: 0; opacity: 0; }
+}
+
+@keyframes pill-tab-panel-in {
+  from { opacity: .55; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.floating-assistant-body > * { animation: pill-tab-panel-in 220ms cubic-bezier(.2, .8, .2, 1) both; }
+
+@media (max-width: 820px) {
+  .route-inspector {
+    right: 8px;
+    left: auto;
+    width: min(430px, calc(100vw - 24px)) !important;
+    max-width: none;
+    min-width: 0;
+  }
+  .canvas-floating-assistant.expanded .floating-assistant-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .floating-tabs::before,
+  .inspector-header .detail-tabs::before,
+  .floating-assistant-body > * { animation: none; transition: none; }
+}

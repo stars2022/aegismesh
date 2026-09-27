@@ -6442,7 +6442,7 @@ function CanvasFloatingAssistant({
           </span>
         </div>
 
-        <div className="floating-tabs" role="tablist">
+        <div className="floating-tabs" role="tablist" style={{ "--pill-index": ["chat", "route", "collab", "menu"].indexOf(tab) } as CSSProperties}>
           <button
             type="button"
             className={`floating-tab ${tab === "chat" ? "active" : ""}`}
@@ -7208,6 +7208,12 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     const frame = window.requestAnimationFrame(() => {
       const thread = document.querySelector<HTMLElement>(".chat-thread");
       if (!thread) return;
+      // A blank conversation is a landing page, not a transcript. Never move
+      // its welcome heading out of view just because the suggestions overflow.
+      if (messages.length === 0) {
+        thread.scrollTo({ top: 0, behavior: "instant" });
+        return;
+      }
       const distanceFromBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight;
       const streaming = Boolean(messages.at(-1)?.streaming);
       // Keep following a live answer only while the reader is already near its tail.
@@ -7236,7 +7242,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         const thread = document.querySelector<HTMLElement>(".chat-thread");
-        if (thread) thread.scrollTo({ top: thread.scrollHeight, behavior: "auto" });
+        if (thread) thread.scrollTo({ top: msgs.length ? thread.scrollHeight : 0, behavior: "instant" });
       });
     });
     setShowAllMessages(false);
@@ -9330,26 +9336,38 @@ void runMessage(next.text, next.agentId, next.attachments);
             </button>
           </div>
           <div className="inspector-header">
-            <div className="detail-tabs">
+            <div
+              className="detail-tabs"
+              role="tablist"
+              style={{
+                "--pill-count": activeMeta?.isGroup ? 3 : 2,
+                "--pill-index": activeMeta?.isGroup
+                  ? Math.max(0, ["members", "collaboration", "blackboard"].indexOf(detail))
+                  : Math.max(0, ["route", "collaboration"].indexOf(detail)),
+              } as CSSProperties}
+            >
               {activeMeta?.isGroup ? (
                 <>
                   <button
                     className={detail === "members" ? "active" : ""}
                     onClick={() => setDetail("members")}
+                    role="tab" aria-selected={detail === "members"} title="成员"
                   >
-                    成员
+                    <Users size={14} /><span className="tab-label">成员</span>
                   </button>
                   <button
                     className={detail === "collaboration" ? "active" : ""}
                     onClick={() => setDetail("collaboration")}
+                    role="tab" aria-selected={detail === "collaboration"} title="协作"
                   >
-                    协作
+                    <GitBranch size={14} /><span className="tab-label">协作</span>
                   </button>
                   <button
                     className={detail === "blackboard" ? "active" : ""}
                     onClick={() => setDetail("blackboard")}
+                    role="tab" aria-selected={detail === "blackboard"} title="黑板"
                   >
-                    黑板 {blackboardDeliverables.length > 0 && <span className="tab-badge">{blackboardDeliverables.length}</span>}
+                    <FileText size={14} /><span className="tab-label">黑板</span> {blackboardDeliverables.length > 0 && <span className="tab-badge">{blackboardDeliverables.length}</span>}
                   </button>
                 </>
               ) : (
@@ -9357,14 +9375,16 @@ void runMessage(next.text, next.agentId, next.attachments);
                   <button
                     className={detail === "route" ? "active" : ""}
                     onClick={() => setDetail("route")}
+                    role="tab" aria-selected={detail === "route"} title="路由"
                   >
-                    路由
+                    <Route size={14} /><span className="tab-label">路由</span>
                   </button>
                   <button
                     className={detail === "collaboration" ? "active" : ""}
                     onClick={() => setDetail("collaboration")}
+                    role="tab" aria-selected={detail === "collaboration"} title="协作"
                   >
-                    协作
+                    <Users size={14} /><span className="tab-label">协作</span>
                   </button>
                 </>
               )}
