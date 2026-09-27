@@ -434,7 +434,7 @@ function App({ onLogout }: { onLogout?: () => void }) {
 
       <main className="main-panel">
         <header className="topbar">
-          <button className="mobile-menu" onClick={() => setMobileNav(true)}>
+          <button className="mobile-menu" onClick={() => { setSidebarCollapsed(false); setMobileNav(true); }}>
             <Menu size={20} />
           </button>
           <div>
@@ -7261,6 +7261,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     );
     setInspector(latestResult(msgs));
     setIsCanvasConv(canvasConversation);
+    if (canvasConversation) void import("./CanvasWorkspace");
     setCanvasData(savedCanvas);
     setCanvasMobileView("canvas");
     if (savedCanvas?.id && (data?.session || target.session)) {
@@ -7287,6 +7288,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     setSession(canvasSession);
     sessionRef.current = canvasSession;
     setIsCanvasConv(isCanvas);
+    if (isCanvas) void import("./CanvasWorkspace");
     setCanvasData(null);
     setCanvasMobileView("canvas");
     setDetail(isCanvas ? "canvas" : "route");
