@@ -10172,3 +10172,71 @@ tr:last-child td { border-bottom: 0; }
   .inspector-header .detail-tabs::before,
   .floating-assistant-body > * { animation: none; transition: none; }
 }
+
+/* A single visual language for every sidebar open/close affordance. */
+.history-collapse-btn,
+.chat-side-toggle,
+.inspector-toggle-btn,
+.mobile-header-btn,
+.mobile-drawer-close {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--paper) 94%, var(--ink));
+  box-shadow: none;
+  transition: background-color 160ms ease, border-color 160ms ease,
+    color 160ms ease, transform 160ms ease;
+}
+.history-collapse-btn:hover,
+.chat-side-toggle:hover,
+.inspector-toggle-btn:hover,
+.mobile-header-btn:hover,
+.mobile-drawer-close:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--paper) 88%, var(--ink));
+  border-color: color-mix(in srgb, var(--line) 70%, var(--ink));
+}
+.history-collapse-btn:focus-visible,
+.chat-side-toggle:focus-visible,
+.inspector-toggle-btn:focus-visible,
+.mobile-header-btn:focus-visible,
+.mobile-drawer-close:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .history-collapse-btn,
+  .chat-side-toggle,
+  .inspector-toggle-btn,
+  .mobile-header-btn,
+  .mobile-drawer-close { transition: none; }
+}
+
+/* Let the side rails read as two continuous surfaces, not bordered cards. */
+.chat-layout {
+  --shell-divider: color-mix(in srgb, var(--line) 55%, var(--paper));
+}
+[data-theme="dark"] .chat-layout {
+  --chat-rail-bg: #1d1d20;
+  --shell-divider: transparent;
+}
+.chat-layout:not(.canvas-mode) .chat-stage { border-right: 0; }
+.chat-layout .history-sidebar { border-right-color: var(--shell-divider); }
+.chat-layout .route-inspector {
+  border-left-color: var(--shell-divider);
+  scrollbar-gutter: auto;
+}
+.chat-layout .route-inspector .inspector-header {
+  background: inherit;
+  border-bottom-color: var(--shell-divider);
+}
+[data-theme="dark"] .chat-layout .history-sidebar,
+[data-theme="dark"] .chat-layout .route-inspector,
+[data-theme="dark"] .chat-layout .route-inspector .inspector-header,
+[data-theme="dark"] .chat-layout .route-inspector .inspector-mobile-bar {
+  background: var(--chat-rail-bg);
+}
