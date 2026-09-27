@@ -113,16 +113,59 @@ def get_or_create_session_canvas(
     return get_or_create_canvas(db, canvas_id, owner_id=owner_id or "")
 
 
+DEFAULT_CANVAS_TEMPLATE = (
+    "# 产品设计笔记\n\n"
+    "记录产品设计过程中的思考、方法与实践经验。\n\n"
+    "## 🎯 1. 产品设计的核心目标\n"
+    "优秀的方案，始终围绕着 **用户价值** 展开。我们需要在 **用户需求**、**技术可行性** 与 **商业价值** 之间找到平衡，创造简单、优雅、高效的解决方案。\n\n"
+    "> 💡 **设计原则**\n"
+    "> 以用户为中心，保持简单，关注细节，持续迭代。\n\n"
+    "## 🎨 2. 设计方法与步骤\n"
+    "1. **发现问题**：通过用户调研、数据分析等方式，找到真正的用户需求。\n"
+    "2. **定义方案**：明确产品目标，梳理核心功能与体验路径。\n"
+    "3. **设计与验证**：快速原型设计，通过用户测试验证方案的有效性。\n"
+    "4. **持续迭代**：根据反馈不断优化，追求更好的用户体验。\n\n"
+    "## 📋 3. 本周待办清单\n"
+    "- [x] 完成用户访谈整理\n"
+    "- [x] 更新产品原型设计\n"
+    "- [ ] 与开发团队评审技术方案\n"
+    "- [ ] 整理竞品分析报告\n"
+    "- [ ] 撰写设计总结文档\n\n"
+    "## 📊 4. 竞品对比分析\n"
+    "| 产品 | 核心优势 | 不足之处 | 参考价值 |\n"
+    "| :--- | :--- | :--- | :--- |\n"
+    "| **Notion** | 灵活的模块化设计 | 学习成本较高 | ★★★★☆ |\n"
+    "| **语雀** | 本土化体验好 | 功能相对单一 | ★★★☆☆ |\n"
+    "| **飞书文档** | 协作能力强 | 个性化能力较弱 | ★★★★☆ |\n\n"
+    "## 💻 5. 示例代码\n"
+    "```javascript\n"
+    "// 计算斐波那契数列\n"
+    "function fibonacci(n) {\n"
+    "  if (n <= 1) return n;\n"
+    "  return fibonacci(n - 1) + fibonacci(n - 2);\n"
+    "}\n"
+    "console.log(fibonacci(10)); // 55\n"
+    "```\n\n"
+    "> “ 好的设计不是让复杂的东西看起来简单，而是让简单的东西变得更有力量。 ”\n"
+    "> —— Dieter Rams\n"
+)
+
+
 def get_or_create_canvas(
-    db: Session, canvas_id: str, title: str = "协同画布", owner_id: str = ""
+    db: Session, canvas_id: str, title: str = "产品设计笔记", owner_id: str = ""
 ) -> CanvasDoc:
     doc = db.get(CanvasDoc, canvas_id)
     if doc is not None and owner_id and doc.owner_id != owner_id:
         raise CanvasError("画布不存在或无权访问")
     if doc is None:
+        initial_content = (
+            DEFAULT_CANVAS_TEMPLATE
+            if title in ("协同画布", "产品设计笔记", "未命名画布")
+            else f"# {title}\n"
+        )
         doc = CanvasDoc(
             id=canvas_id, owner_id=owner_id, title=title,
-            content=f"# {title}\n", version=1,
+            content=initial_content, version=1,
         )
         db.add(doc)
         try:

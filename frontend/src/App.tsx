@@ -81,6 +81,7 @@ import {
   Paperclip,
 } from "lucide-react";
 import { api, type CanvasDocument } from "./api";
+import { CanvasWorkspace, DEFAULT_CANVAS_TEMPLATE } from "./CanvasWorkspace";
 import { hasCompletedTaskMessage, upsertRecoveredAssistant } from "./chatRecovery";
 import { equalizeWeights, normalizeWeights, rebalanceWeights } from "./routingWeights";
 import ReactMarkdown from "react-markdown";
@@ -6337,106 +6338,436 @@ function GroupSettingsDrawer({
   );
 }
 
-function CanvasEditor({
-  document,
-  onSave,
+function CanvasFloatingAssistant({
+  messages,
+  showAllMessages: _showAllMessages,
+  setShowAllMessages: _setShowAllMessages,
+  sending,
+  input,
+  setInput,
+  handleSend,
+  handleKeyDown,
+  handleCompositionStart,
+  handleCompositionEnd,
+  attachments,
+  uploading,
+  fileInputRef,
+  removeAttachment,
+  agents,
+  agentId,
+  handleAgentSelect,
+  inspector,
+  activeDispatches,
+  dynamicDiscoveredCandidates: _dynamicDiscoveredCandidates,
+  formatMs,
+  liveSubagents,
+  liveBlackboardMessages,
+  toolNames,
+  onClearHistory,
+  canvasData,
+  composerTextareaRef,
 }: {
-  document: CanvasDocument;
-  onSave: (content: string, baseVersion: number) => Promise<CanvasDocument>;
+  messages: ChatMessage[];
+  showAllMessages: boolean;
+  setShowAllMessages: (val: boolean) => void;
+  sending: boolean;
+  sendingSince: number | null;
+  input: string;
+  setInput: (val: string | ((prev: string) => string)) => void;
+  handleSend: (overrideInput?: string) => void;
+  handleKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  handleCompositionStart?: () => void;
+  handleCompositionEnd?: () => void;
+  attachments: Attachment[];
+  uploading: boolean;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
+  removeAttachment: (id: string) => void;
+  agents: Agent[];
+  agentId: string;
+  handleAgentSelect: (id: string) => void;
+  inspector: ChatResult | null;
+  setInspector: (r: ChatResult | null) => void;
+  activeDispatches: any[];
+  dynamicDiscoveredCandidates: any[];
+  metricLabels: Record<string, string>;
+  formatMs: (ms: number) => string;
+  liveSubagents: LiveSubagentState[];
+  liveBlackboardMessages: BlackboardMessage[];
+  toolNames: Record<string, string>;
+  onClearHistory: () => void;
+  canvasData: CanvasDocument | null;
+  composerTextareaRef: React.RefObject<HTMLTextAreaElement | null>;
 }) {
-  const baseline = useRef({ version: document.version, content: document.content });
-  const [draft, setDraft] = useState(document.content);
-  const [view, setView] = useState<"edit" | "preview">("edit");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const dirty = draft !== baseline.current.content;
-  const conflicted = document.version !== baseline.current.version;
+  const [collapsed, setCollapsed] = useState(false);
+  const [tab, setTab] = useState<"chat" | "route" | "collab" | "menu">("chat");
+  const threadRef = useRef<HTMLDivElement>(null);
 
+  // Auto-scroll chat to bottom
   useEffect(() => {
-    if (draft === baseline.current.content) {
-      baseline.current = { version: document.version, content: document.content };
-      setDraft(document.content);
-      setError("");
-    } else if (document.version !== baseline.current.version) {
-      setError("画布已被其他编辑更新。当前草稿已保留，请先对比最新版本。");
+    if (!collapsed && tab === "chat" && threadRef.current) {
+      threadRef.current.scrollTop = threadRef.current.scrollHeight;
     }
-  }, [document.version, document.content]);
+  }, [messages, sending, collapsed, tab]);
 
-  const save = async () => {
-    if (!dirty || saving || conflicted) return;
-    const submitted = draft;
-    setSaving(true);
-    setError("");
-    try {
-      const updated = await onSave(submitted, baseline.current.version);
-      baseline.current = { version: updated.version, content: submitted };
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "保存失败，请稍后重试");
-    } finally {
-      setSaving(false);
-    }
-  };
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        className="canvas-floating-pill"
+        onClick={() => setCollapsed(false)}
+        title="展开智能协同助手"
+      >
+        <Sparkles size={16} className="sparkle-icon" />
+        <span className="pill-title">智能协同助手</span>
+        {sending && <span className="pill-pulse-dot" />}
+        {messages.length > 0 && <span className="pill-badge">{messages.length}</span>}
+      </button>
+    );
+  }
+
+  const selectedAgent = agents.find((a) => a.id === agentId);
 
   return (
-    <div className="canvas-editor-shell">
-      <div className="canvas-meta">
-        <div>
-          <span className="canvas-eyebrow">MARKDOWN 文稿 · v{document.version}</span>
-          <strong>{document.title}</strong>
+    <div className="canvas-floating-assistant">
+      <header className="floating-assistant-header">
+        <div className="header-brand">
+          <Sparkles size={16} className="sparkle-icon" />
+          <strong>协同助手</strong>
+          <span className={`status-indicator ${sending ? "busy" : "ready"}`}>
+            <span className="status-dot" />
+            <span>{sending ? "处理中..." : "就绪"}</span>
+          </span>
         </div>
-        <div className="canvas-meta-actions">
-          <div className="canvas-view-switch" role="group" aria-label="画布视图">
-            <button type="button" className={view === "edit" ? "active" : ""} onClick={() => setView("edit")}>编辑</button>
-            <button type="button" className={view === "preview" ? "active" : ""} onClick={() => setView("preview")}>预览</button>
+
+        <div className="floating-tabs" role="tablist">
+          <button
+            type="button"
+            className={`floating-tab ${tab === "chat" ? "active" : ""}`}
+            onClick={() => setTab("chat")}
+            role="tab"
+          >
+            <MessageSquare size={13} />
+            <span>对话</span>
+          </button>
+          <button
+            type="button"
+            className={`floating-tab ${tab === "route" ? "active" : ""}`}
+            onClick={() => setTab("route")}
+            role="tab"
+          >
+            <Route size={13} />
+            <span>路由</span>
+          </button>
+          <button
+            type="button"
+            className={`floating-tab ${tab === "collab" ? "active" : ""}`}
+            onClick={() => setTab("collab")}
+            role="tab"
+          >
+            <Users size={13} />
+            <span>协作</span>
+          </button>
+          <button
+            type="button"
+            className={`floating-tab ${tab === "menu" ? "active" : ""}`}
+            onClick={() => setTab("menu")}
+            role="tab"
+          >
+            <SlidersHorizontal size={13} />
+            <span>菜单</span>
+          </button>
+        </div>
+
+        <button
+          type="button"
+          className="floating-minimize-btn"
+          onClick={() => setCollapsed(true)}
+          title="最小化为浮标"
+        >
+          <Minus size={15} />
+        </button>
+      </header>
+
+      <div className="floating-assistant-body">
+        {tab === "chat" && (
+          <div className="floating-chat-container">
+            <div className="floating-chat-thread" ref={threadRef}>
+              {messages.length === 0 ? (
+                <div className="floating-hero">
+                  <div className="floating-hero-icon">
+                    <Sparkles size={20} />
+                  </div>
+                  <h3>智能体协同写作</h3>
+                  <p>在下方输入写作目标或修改指令，智能体会主动直接编辑画布。</p>
+                  <div className="floating-suggestions">
+                    {[
+                      "根据我的研究主题起草报告大纲，并写入画布",
+                      "整理上传材料的关键证据，补充到画布对应章节",
+                      "检查画布中的论证与引文，列出待核实之处",
+                    ].map((sug) => (
+                      <button
+                        key={sug}
+                        type="button"
+                        className="floating-sug-item"
+                        onClick={() => {
+                          setInput(sug);
+                          composerTextareaRef.current?.focus();
+                        }}
+                      >
+                        <span>{sug}</span>
+                        <ArrowRight size={12} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="floating-messages-list">
+                  {messages.map((message, idx) => (
+                    <div key={idx} className={`floating-msg-bubble ${message.role}`}>
+                      <div className="msg-header">
+                        <span className="msg-sender">
+                          {message.role === "user"
+                            ? "你"
+                            : message.result?.selected_agent?.name ||
+                              selectedAgent?.name ||
+                              "协调智能体"}
+                        </span>
+                        {message.streaming && (
+                          <span className="msg-streaming-indicator">
+                            <span className="pulse" /> 正在落笔...
+                          </span>
+                        )}
+                      </div>
+                      {message.attachments && message.attachments.length > 0 && (
+                        <div className="floating-msg-attachments">
+                          {message.attachments.map((att) => (
+                            <span key={att.file_id} className="att-pill">
+                              <FileText size={11} /> {att.filename}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="msg-content">
+                        <MarkdownText text={message.text} streaming={message.streaming} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <form
+              className="floating-composer"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSend();
+              }}
+            >
+              {attachments.length > 0 && (
+                <div className="floating-composer-attachments">
+                  {attachments.map((att) => (
+                    <span key={att.file_id} className="att-chip">
+                      <FileText size={11} />
+                      <span>{att.filename}</span>
+                      <button type="button" onClick={() => removeAttachment(att.file_id)}>
+                        <X size={10} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="floating-input-row">
+                <textarea
+                  ref={composerTextareaRef}
+                  className="floating-textarea"
+                  value={input}
+                  placeholder="描述要写入或修改的内容（回车发送）..."
+                  rows={2}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  onCompositionStart={handleCompositionStart}
+                  onCompositionEnd={handleCompositionEnd}
+                />
+              </div>
+              <div className="floating-actions-row">
+                <div className="actions-left">
+                  <button
+                    type="button"
+                    className="floating-upload-btn"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading}
+                    title="上传学术文献、论文或图片"
+                  >
+                    <Paperclip size={13} />
+                    <span>{uploading ? "解析中" : "上传材料"}</span>
+                  </button>
+                  <Dropdown
+                    className="floating-agent-dropdown"
+                    value={agentId}
+                    onChange={handleAgentSelect}
+                    options={agents
+                      .filter((a) => a.role === "leader")
+                      .map((a) => ({
+                        value: a.id,
+                        label: `${a.name} · 协调型`,
+                      }))}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="floating-send-btn"
+                  disabled={!input.trim() && attachments.length === 0}
+                  title="发送指令"
+                >
+                  <Send size={14} />
+                </button>
+              </div>
+            </form>
           </div>
-          <button type="button" onClick={() => void navigator.clipboard.writeText(draft)} title="复制 Markdown">
-            <Copy size={15} /> <span>复制</span>
-          </button>
-          <button type="button" className="canvas-save-button" disabled={!dirty || saving || conflicted} onClick={() => void save()}>
-            {saving ? "保存中" : dirty ? "保存修改" : "已保存"}
-          </button>
-        </div>
+        )}
+
+        {tab === "route" && (
+          <div className="floating-panel-scroll">
+            <div className="route-target-box">
+              <span>当前主控智能体</span>
+              <strong>
+                {inspector?.selected_agent?.name ||
+                  selectedAgent?.name ||
+                  "科研智能体协作平台"}
+              </strong>
+              {sending && (
+                <div className="route-running-pulse">
+                  <span className="pulse" />
+                  <span>调度执行中...</span>
+                </div>
+              )}
+            </div>
+
+            {activeDispatches.length > 0 && (
+              <div className="route-section-group">
+                <div className="route-section-title">
+                  <GitBranch size={13} color="#6366f1" />
+                  <span>本轮实时调度智能体 ({activeDispatches.length})</span>
+                </div>
+                <div className="route-dispatches-list">
+                  {activeDispatches.map((disp, idx) => (
+                    <div key={idx} className={`route-dispatch-card ${disp.status}`}>
+                      <div className="dispatch-header">
+                        <span className="dispatch-name">@{disp.name}</span>
+                        <span className={`dispatch-badge ${disp.status}`}>
+                          {disp.status === "running"
+                            ? "执行中"
+                            : disp.status === "error" || disp.error
+                              ? "异常"
+                              : "已完成"}
+                        </span>
+                      </div>
+                      <p className="dispatch-task">{disp.task}</p>
+                      {disp.latency_ms && (
+                        <span className="dispatch-meta">{formatMs(disp.latency_ms)}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {inspector?.candidates && inspector.candidates.length > 0 && (
+              <div className="candidate-scores">
+                <div className="route-section-title">
+                  <SlidersHorizontal size={13} color="var(--c888882)" />
+                  <span>初选评估与综合打分</span>
+                </div>
+                {inspector.candidates.map((candidate) => (
+                  <div key={candidate.agent_id} className="candidate-item">
+                    <div>
+                      <span className="rank">{candidate.eligible ? candidate.rank : "—"}</span>
+                      <strong>{candidate.agent_name}</strong>
+                      <b>{candidate.eligible ? candidate.score : "未入选"}</b>
+                    </div>
+                    {candidate.eligible && <ScoreBar value={candidate.score} />}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {inspector?.usage && (
+              <div className="usage-box">
+                <div>
+                  <span>调用</span>
+                  <strong>{inspector.usage.llm_calls}</strong>
+                </div>
+                <div>
+                  <span>输入</span>
+                  <strong>{inspector.usage.prompt_tokens}</strong>
+                </div>
+                <div>
+                  <span>输出</span>
+                  <strong>{inspector.usage.completion_tokens}</strong>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === "collab" && (
+          <div className="floating-panel-scroll">
+            <CollaborationPanel
+              inspector={inspector}
+              messages={messages}
+              liveSubagents={liveSubagents}
+              liveBlackboardMessages={liveBlackboardMessages}
+              toolNames={toolNames}
+            />
+          </div>
+        )}
+
+        {tab === "menu" && (
+          <div className="floating-panel-scroll floating-menu-panel">
+            <div className="menu-group">
+              <label>切换主控智能体</label>
+              <Dropdown
+                value={agentId}
+                onChange={handleAgentSelect}
+                options={agents.map((a) => ({
+                  value: a.id,
+                  label: `${a.name} · ${a.role === "leader" ? "协调型" : "执行型"}`,
+                }))}
+              />
+            </div>
+
+            <div className="menu-group">
+              <label>画布快捷操作</label>
+              <div className="menu-btn-grid">
+                <button
+                  type="button"
+                  className="menu-action-btn"
+                  onClick={() => {
+                    const blob = new Blob([canvasData?.content || ""], { type: "text/markdown" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `${canvasData?.title || "画布文稿"}.md`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                >
+                  <Download size={14} />
+                  <span>导出 Markdown 文件</span>
+                </button>
+                <button
+                  type="button"
+                  className="menu-action-btn danger"
+                  onClick={onClearHistory}
+                >
+                  <Trash2 size={14} />
+                  <span>清空历史对话</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
-      {error && (
-        <div className="canvas-editor-warning" role="alert">
-          <span>{error}</span>
-          {conflicted && <button type="button" onClick={() => {
-            baseline.current = { version: document.version, content: document.content };
-            setDraft(document.content);
-            setError("");
-          }}>载入最新版本</button>}
-        </div>
-      )}
-      {view === "edit" ? (
-        <textarea
-          className="canvas-markdown-editor"
-          aria-label="Markdown 正文编辑器"
-          spellCheck={false}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
-              event.preventDefault();
-              void save();
-            }
-          }}
-        />
-      ) : (
-        <div className="canvas-document message-markdown">
-          <MarkdownText text={draft} />
-        </div>
-      )}
-      {document.revisions.length > 0 && (
-        <details className="canvas-revisions">
-          <summary>修改记录 · {document.revisions.length}</summary>
-          <ol>{document.revisions.slice(0, 8).map((revision) => (
-            <li key={revision.version}>
-              <span>v{revision.version} · {revision.editor_name}</span>
-              <span>{revision.summary}</span>
-            </li>
-          ))}</ol>
-        </details>
-      )}
     </div>
   );
 }
@@ -8319,16 +8650,85 @@ void runMessage(next.text, next.agentId, next.attachments);
           </header>
           <ApiPage onBack={() => setContent("chat")} />
         </section>
-      ) : (
+      ) : isCanvasConv ? (
         <>
-        {isCanvasConv && canvasMobileView === "chat" && (
-          <button
-            type="button"
-            className="canvas-chat-backdrop"
-            aria-label="关闭协作对话"
-            onClick={() => setCanvasMobileView("canvas")}
+          <CanvasWorkspace
+            document={
+              canvasData || {
+                id: `canvas-${session || activeId}`,
+                title: "产品设计笔记",
+                content: DEFAULT_CANVAS_TEMPLATE,
+                version: 1,
+                revisions: [],
+              }
+            }
+            onSave={async (content, baseVersion) => {
+              if (!session) throw new Error("当前画布尚未绑定会话");
+              try {
+                const saved = await api.updateSessionCanvas(session, content, baseVersion);
+                setCanvasData(saved);
+                return saved;
+              } catch (reason) {
+                void api.getSessionCanvas(session).then(setCanvasData).catch(() => undefined);
+                throw reason;
+              }
+            }}
           />
-        )}
+          <input
+            type="file"
+            ref={fileInputRef}
+            style={{ display: "none" }}
+            multiple
+            onChange={(e) => {
+              if (e.target.files && e.target.files.length > 0) {
+                void handleFileUpload(e.target.files);
+              }
+            }}
+          />
+          <CanvasFloatingAssistant
+            messages={messages}
+            showAllMessages={showAllMessages}
+            setShowAllMessages={setShowAllMessages}
+            sending={sending}
+            sendingSince={sendingSince}
+            input={input}
+            setInput={setInput}
+            handleSend={() => submit()}
+            handleKeyDown={handleInputKeyDown}
+            attachments={attachments}
+            uploading={uploading}
+            fileInputRef={fileInputRef}
+            removeAttachment={(id: string) =>
+              setAttachments((prev) => prev.filter((a) => a.file_id !== id))
+            }
+            agents={agents}
+            agentId={agentId}
+            handleAgentSelect={handleAgentSelect}
+            inspector={inspector}
+            setInspector={setInspector}
+            activeDispatches={activeDispatches}
+            dynamicDiscoveredCandidates={dynamicDiscoveredCandidates}
+            metricLabels={metricLabels}
+            formatMs={formatMs}
+            liveSubagents={Object.values(liveSubagents)}
+            liveBlackboardMessages={liveBlackboardMessages}
+            toolNames={toolNames}
+            onClearHistory={() => {
+              if (window.confirm("确定清空当前会话的消息记录吗？")) {
+                setMessages([]);
+                setQueue([]);
+                const conv = loadConversationData(activeId);
+                if (conv) {
+                  conv.messages = [];
+                  saveConversationData(conv);
+                }
+              }
+            }}
+            canvasData={canvasData}
+            composerTextareaRef={composerTextareaRef}
+          />
+        </>
+      ) : (
         <section className="chat-stage">
           <header className="chat-mobile-header">
             <button
@@ -8897,92 +9297,63 @@ void runMessage(next.text, next.agentId, next.attachments);
             </div>
           </form>
         </section>
-        </>
       )}
-      <aside className="route-inspector">
-        {isCanvasConv && (
-          <div className="canvas-mobile-toolbar">
+      {!isCanvasConv && (
+        <aside className="route-inspector">
+          <div className="inspector-mobile-bar">
+            <div className="inspector-mobile-title">
+              <SlidersHorizontal size={14} />
+              <span>路由与诊断</span>
+            </div>
             <button
-              type="button"
-              className="mobile-header-btn"
-              onClick={() => setMobileHistoryOpen(true)}
-              aria-label="打开会话历史"
+              className="mobile-drawer-close"
+              onClick={() => setMobileInspectorOpen(false)}
+              title="关闭详情"
+              aria-label="关闭详情"
             >
-              <Menu size={18} />
-            </button>
-            <strong>共享画布</strong>
-            <button
-              type="button"
-              className="mobile-back-chip"
-              onClick={() => setCanvasMobileView("chat")}
-            >
-              <MessageSquareText size={14} />
-              <span>对话</span>
+              <X size={16} />
             </button>
           </div>
-        )}
-        <div className="inspector-mobile-bar">
-          <div className="inspector-mobile-title">
-            <SlidersHorizontal size={14} />
-            <span>路由与诊断</span>
-          </div>
-          <button
-            className="mobile-drawer-close"
-            onClick={() => setMobileInspectorOpen(false)}
-            title="关闭详情"
-            aria-label="关闭详情"
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <div className="inspector-header">
-          <div className="detail-tabs detail-tabs-3">
-            {isCanvasConv && (
-              <button
-                className={detail === "canvas" ? "active" : ""}
-                onClick={() => setDetail("canvas")}
-              >
-                画布 {canvasData && <span className="tab-badge">v{canvasData.version}</span>}
-              </button>
-            )}
-            {isCanvasConv ? null : activeMeta?.isGroup ? (
-              <>
-                <button
-                  className={detail === "members" ? "active" : ""}
-                  onClick={() => setDetail("members")}
-                >
-                  成员
-                </button>
-                <button
-                  className={detail === "collaboration" ? "active" : ""}
-                  onClick={() => setDetail("collaboration")}
-                >
-                  协作
-                </button>
-                <button
-                  className={detail === "blackboard" ? "active" : ""}
-                  onClick={() => setDetail("blackboard")}
-                >
-                  黑板 {blackboardDeliverables.length > 0 && <span className="tab-badge">{blackboardDeliverables.length}</span>}
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  className={detail === "route" ? "active" : ""}
-                  onClick={() => setDetail("route")}
-                >
-                  路由
-                </button>
-                <button
-                  className={detail === "collaboration" ? "active" : ""}
-                  onClick={() => setDetail("collaboration")}
-                >
-                  协作
-                </button>
-              </>
-            )}
-          </div>
+          <div className="inspector-header">
+            <div className="detail-tabs">
+              {activeMeta?.isGroup ? (
+                <>
+                  <button
+                    className={detail === "members" ? "active" : ""}
+                    onClick={() => setDetail("members")}
+                  >
+                    成员
+                  </button>
+                  <button
+                    className={detail === "collaboration" ? "active" : ""}
+                    onClick={() => setDetail("collaboration")}
+                  >
+                    协作
+                  </button>
+                  <button
+                    className={detail === "blackboard" ? "active" : ""}
+                    onClick={() => setDetail("blackboard")}
+                  >
+                    黑板 {blackboardDeliverables.length > 0 && <span className="tab-badge">{blackboardDeliverables.length}</span>}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    className={detail === "route" ? "active" : ""}
+                    onClick={() => setDetail("route")}
+                  >
+                    路由
+                  </button>
+                  <button
+                    className={detail === "collaboration" ? "active" : ""}
+                    onClick={() => setDetail("collaboration")}
+                  >
+                    协作
+                  </button>
+                </>
+              )}
+            </div>
           <button
             type="button"
             className="inspector-toggle-btn"
@@ -9161,47 +9532,10 @@ void runMessage(next.text, next.agentId, next.attachments);
             />
           )
         )}
-        {isCanvasConv && (
-          <div className="canvas-panel">
-            {canvasData ? (
-              <CanvasEditor
-                key={canvasData.id}
-                document={canvasData}
-                onSave={async (content, baseVersion) => {
-                  if (!session) throw new Error("当前画布尚未绑定会话");
-                  try {
-                    const saved = await api.updateSessionCanvas(session, content, baseVersion);
-                    setCanvasData(saved);
-                    return saved;
-                  } catch (reason) {
-                    void api.getSessionCanvas(session).then(setCanvasData).catch(() => undefined);
-                    throw reason;
-                  }
-                }}
-              />
-            ) : (
-              <div className="canvas-first-state">
-                <FileText size={25} />
-                <h2>从一个目标开始</h2>
-                <p>正在准备 Markdown 文稿。也可以先在协作对话中描述写作目标。</p>
-                <button type="button" onClick={() => setCanvasMobileView("chat")}>打开对话 <ArrowRight size={14} /></button>
-              </div>
-            )}
-          </div>
-        )}
         {activeMeta?.isGroup && detail === "blackboard" && (
           <BlackboardPanel items={blackboardDeliverables} />
         )}
       </aside>
-      {isCanvasConv && canvasMobileView !== "chat" && (
-        <button
-          type="button"
-          className="canvas-chat-launcher"
-          onClick={() => setCanvasMobileView("chat")}
-        >
-          <MessageSquareText size={17} /> 协作对话
-          {messages.length > 0 && <span>{messages.length}</span>}
-        </button>
       )}
       {settingsOpen && (
         <SettingsDrawer
