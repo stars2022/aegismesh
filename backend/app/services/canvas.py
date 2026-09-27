@@ -215,31 +215,153 @@ def replace_document(
     return doc
 
 
-def read_section(content: str, section: str | None) -> str:
-    """按 `## 标题` 切分段落读取；section 为空返回全文。"""
-    if not section:
-        return content
+_EMPTY_SECTION_PLACEHOLDERS = {
+    "",
+    "（已清空）",
+    "(已清空)",
+    "（清空）",
+    "(清空)",
+    "（空）",
+    "(空)",
+    "（已删除）",
+    "(已删除)",
+    "（删除）",
+    "(删除)",
+    "（无）",
+    "(无)",
+    "（待补充）",
+    "(待补充)",
+    "(deleted)",
+    "(cleared)",
+    "deleted",
+    "cleared",
+    "none",
+    "null",
+}
+
+
+def _get_section_bounds(content: str) -> list[tuple[str, int, int]]:
+    """切分所有二级标题（## 标题）的边界 [(title, start, end)]。"""
     matches = list(SECTION_HEADING.finditer(content))
     bounds: list[tuple[str, int, int]] = []
     for i, m in enumerate(matches):
         end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
         bounds.append((m.group(0).lstrip("# ").strip(), m.start(), end))
-    for title, start, end in bounds:
-        if section.lower() in title.lower():
-            return content[start:end].strip()
-    raise CanvasError(f"画布中不存在段落「{section}」；现有段落：{[b[0] for b in bounds] or '无'}")
+    return bounds
+
+
+def _find_matching_indices(bounds: list[tuple[str, int, int]], query: str) -> list[int]:
+    """根据查询词匹配段落索引。优先完全一致匹配；无完全一致时使用双向包含匹配。"""
+    q = query.strip().lower()
+    # 1. 优先完全一致匹配
+    exact = [i for i, (title, _, _) in enumerate(bounds) if title.strip().lower() == q]
+    if exact:
+        return exact
+    # 2. 包含匹配
+    fuzzy = [i for i, (title, _, _) in enumerate(bounds) if q in title.lower() or title.lower() in q]
+    return fuzzy
+
+
+def read_section(content: str, section: str | None) -> str:
+    """按 `## 标题` 切分段落读取；section 为空返回全文。"""
+    if not section:
+        return content
+    bounds = _get_section_bounds(content)
+    matching = _find_matching_indices(bounds, section)
+    if matching:
+        _, start, end = bounds[matching[0]]
+        return content[start:end].strip()
+    existing_titles = [b[0] for b in bounds] or "无"
+    raise CanvasError(f"画布中不存在段落「{section}」；现有段落：{existing_titles}")
+
+
+def delete_section(content: str, section: str) -> str:
+    """彻底删除指定段落（包括 ## 标题和正文）。若存在同名/匹配的重复段落，全部彻底清除，绝不残留空标题壳或孤儿段落。"""
+    bounds = _get_section_bounds(content)
+    matching = _find_matching_indices(bounds, section)
+    if not matching:
+        existing_titles = [b[0] for b in bounds] or "无"
+        raise CanvasError(f"画布中不存在匹配「{section}」的段落；现有段落：{existing_titles}")
+
+    matched_set = set(matching)
+    # 取第一段 ## 之前的头部（如 # 文档大标题 与 导语）
+    header = content[:bounds[0][1]].rstrip() if bounds else ""
+    kept_blocks = [
+        content[b[1]:b[2]].strip()
+        for i, b in enumerate(bounds)
+        if i not in matched_set and content[b[1]:b[2]].strip()
+    ]
+
+    if header:
+        if kept_blocks:
+            return header + "\n\n" + "\n\n".join(kept_blocks) + "\n"
+        return header + "\n"
+    elif kept_blocks:
+        return "\n\n".join(kept_blocks) + "\n"
+    return ""
 
 
 def write_section(content: str, section: str, body: str) -> str:
-    """替换指定段落（按 `## 标题` 匹配）；不存在则追加到末尾。"""
-    new_block = f"## {section}\n{body.strip()}\n"
-    matches = list(SECTION_HEADING.finditer(content))
-    for i, m in enumerate(matches):
-        title = m.group(0).lstrip("# ").strip()
-        if section.lower() in title.lower():
-            end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
-            return content[: m.start()] + new_block + ("\n" if end < len(content) else "") + content[end:]
-    return content.rstrip() + "\n\n" + new_block
+    """
+    更新或创建指定段落（按 `## 标题` 匹配）。
+    优化点：
+    1. 若正文为空或为「（已清空）」等占位符，自动转为彻底删除该段落，防止留下空标题壳。
+    2. 若画布中存在多个同名重复段落，更新首个匹配项并彻底清除所有后续重复段落，消除歧义与冗余。
+    3. 若段落不存在，规范追加至文稿末尾。
+    """
+    clean_body = body.strip()
+    # 容错：当智能体通过空文本或占位符假装删除时，直接彻底删除
+    if not clean_body or clean_body.lower() in _EMPTY_SECTION_PLACEHOLDERS:
+        try:
+            return delete_section(content, section)
+        except CanvasError:
+            return content
+
+    new_block = f"## {section.strip()}\n{clean_body}"
+    bounds = _get_section_bounds(content)
+    matching = _find_matching_indices(bounds, section)
+
+    if matching:
+        first_idx = matching[0]
+        matched_set = set(matching)
+        header = content[:bounds[0][1]].rstrip() if bounds else ""
+        kept_blocks: list[str] = []
+        for i, b in enumerate(bounds):
+            if i == first_idx:
+                kept_blocks.append(new_block)
+            elif i in matched_set:
+                # 剔除同名重复的多余章节，彻底消除歧义与孤儿章节
+                continue
+            else:
+                block_txt = content[b[1]:b[2]].strip()
+                if block_txt:
+                    kept_blocks.append(block_txt)
+        if header:
+            return header + "\n\n" + "\n\n".join(kept_blocks) + "\n"
+        return "\n\n".join(kept_blocks) + "\n"
+
+    # 不存在匹配段落，追加至末尾
+    if not content.strip():
+        return new_block + "\n"
+    return content.rstrip() + "\n\n" + new_block + "\n"
+
+
+def replace_all(content: str, new_content: str, default_title: str = "协同画布") -> str:
+    """全篇替换或清空画布。若 new_content 为空，清空全部正文并保留一级大标题。"""
+    stripped = new_content.strip()
+    if not stripped:
+        # 清空模式：保留原有的一级大标题
+        heading = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
+        top_title = heading.group(1).strip() if heading else default_title
+        return f"# {top_title}\n"
+
+    heading = re.search(r"^#\s+(.+)$", stripped, re.MULTILINE)
+    if heading:
+        return stripped + "\n"
+    # 如果新文本没有一级标题，补充已有的大标题
+    old_heading = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
+    top_title = old_heading.group(1).strip() if old_heading else default_title
+    return f"# {top_title}\n\n{stripped}\n"
 
 
 def apply_op(
@@ -248,10 +370,10 @@ def apply_op(
     *,
     editor_id: str,
     editor_name: str,
-    op: str,  # "write_section" | "append"
-    section: str | None,
-    content: str,
-    base_version: int | None,
+    op: str,  # "write_section" | "delete_section" | "replace_all" | "append"
+    section: str | None = None,
+    content: str = "",
+    base_version: int | None = None,
 ) -> dict[str, Any]:
     """应用一次画布编辑；版本冲突时抛 CanvasError 并携带当前版本。"""
     if base_version is not None and base_version != doc.version:
@@ -263,12 +385,29 @@ def apply_op(
         if not section:
             raise CanvasError("write_section 需要提供 section（段落标题）")
         doc.content = write_section(doc.content, section, content)
+        if content.strip().lower() in _EMPTY_SECTION_PLACEHOLDERS:
+            summary = f"删除段落：「{section}」"
+        else:
+            summary = f"更新段落：「{section}」"
+    elif op == "delete_section":
+        if not section:
+            raise CanvasError("delete_section 需要提供 section（段落标题）")
+        doc.content = delete_section(doc.content, section)
+        summary = f"删除段落：「{section}」"
+    elif op in ("replace_all", "clear"):
+        doc.content = replace_all(doc.content, content, default_title=doc.title)
+        summary = "清空画布内容" if not content.strip() else "全篇重写画布"
     elif op == "append":
         doc.content = doc.content.rstrip() + "\n\n" + content.strip() + "\n"
+        summary = "追加内容"
     else:
         raise CanvasError(f"未知画布操作：{op}")
+
+    heading = re.search(r"^#\s+(.+)$", doc.content, re.MULTILINE)
+    if heading:
+        doc.title = heading.group(1).strip()[:160]
+
     doc.version += 1
-    summary = f"{op}" + (f"：「{section}」" if section and op == "write_section" else "")
     db.add(
         CanvasRevision(
             canvas_id=doc.id,
@@ -313,15 +452,17 @@ def history(db: Session, canvas_id: str, limit: int = 20) -> list[dict[str, Any]
 
 CANVAS_PROTOCOL_INSTRUCTIONS = (
     "【画布协作说明（国标载荷约定）】\n"
-    "下方提供共享画布的当前内容（v{version}）。如需修改报告，请在回复的末尾输出一个 JSON 代码块：\n"
-    '```json\n{{"name": "canvas_write_section", "parameters": {{"section": "段落标题", "content": "该段落的完整新内容", "base_version": {version}}}}}\n```\n'
-    "也可以使用 {\"name\": \"canvas_append\", \"parameters\": {{\"content\": \"追加内容\"}}。"
+    "下方提供共享画布的当前内容（v{version}）。如需修改或编辑文稿，请在回复的末尾输出标准 JSON 代码块：\n"
+    '- 更新或新增章节：```json\n{{"name": "canvas_write_section", "parameters": {{"section": "章节标题", "content": "该章节完整新内容", "base_version": {version}}}}}\n```\n'
+    '- 彻底删除某个章节：```json\n{{"name": "canvas_delete_section", "parameters": {{"section": "要删除的章节标题", "base_version": {version}}}}}\n```\n'
+    '- 重置/整篇重写画布：```json\n{{"name": "canvas_replace_all", "parameters": {{"content": "整篇完整新内容（Markdown，传空字符串则清空全部章节）", "base_version": {version}}}}}\n```\n'
+    '- 末尾追加内容：```json\n{{"name": "canvas_append", "parameters": {{"content": "追加内容"}}}}\n```\n'
     "正文里请先简要说明你做了什么修改；未修改则不要输出 JSON 块。\n\n"
     "【画布当前内容 v{version}】\n{content}"
 )
 
 _CANVAS_OP_PATTERN = re.compile(
-    r"```(?:json)?\s*(\{[\s\S]*?\"name\"\s*:\s*\"canvas_(?:write_section|append)\"[\s\S]*?\})\s*```",
+    r"```(?:json)?\s*(\{[\s\S]*?\"name\"\s*:\s*\"canvas_(?:write_section|delete_section|replace_all|append)\"[\s\S]*?\})\s*```",
     re.IGNORECASE,
 )
 
@@ -338,7 +479,14 @@ def parse_canvas_ops(text: str) -> list[dict[str, Any]]:
         parameters = payload.get("parameters")
         if not isinstance(parameters, dict):
             parameters = {k: v for k, v in payload.items() if k != "name"}
-        op = "write_section" if name == "canvas_write_section" else "append"
+        if name == "canvas_write_section":
+            op = "write_section"
+        elif name == "canvas_delete_section":
+            op = "delete_section"
+        elif name == "canvas_replace_all":
+            op = "replace_all"
+        else:
+            op = "append"
         ops.append(
             {
                 "op": op,

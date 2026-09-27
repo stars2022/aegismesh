@@ -1215,6 +1215,40 @@ class ReliableOrchestrator:
                 await self._notify_canvas(canvas_id, editor_id, editor_name, applied)
                 return {"ok": True, "version": applied["version"], "summary": applied["summary"]}
 
+        async def _delete(args: dict[str, Any]) -> dict[str, Any]:
+            with self.session_factory() as db:
+                doc = get_or_create_canvas(db, canvas_id)
+                try:
+                    applied = apply_op(
+                        db, doc,
+                        editor_id=editor_id, editor_name=editor_name,
+                        op="delete_section",
+                        section=str(args.get("section") or ""),
+                        content="",
+                        base_version=args.get("base_version"),
+                    )
+                except CanvasError as exc:
+                    return {"ok": False, "error": str(exc), "current_version": doc.version}
+                await self._notify_canvas(canvas_id, editor_id, editor_name, applied)
+                return {"ok": True, "version": applied["version"], "summary": applied["summary"]}
+
+        async def _replace_all(args: dict[str, Any]) -> dict[str, Any]:
+            with self.session_factory() as db:
+                doc = get_or_create_canvas(db, canvas_id)
+                try:
+                    applied = apply_op(
+                        db, doc,
+                        editor_id=editor_id, editor_name=editor_name,
+                        op="replace_all",
+                        section=None,
+                        content=str(args.get("content") or ""),
+                        base_version=args.get("base_version"),
+                    )
+                except CanvasError as exc:
+                    return {"ok": False, "error": str(exc), "current_version": doc.version}
+                await self._notify_canvas(canvas_id, editor_id, editor_name, applied)
+                return {"ok": True, "version": applied["version"], "summary": applied["summary"]}
+
         async def _history(args: dict[str, Any]) -> dict[str, Any]:
             with self.session_factory() as db:
                 return {"ok": True, "revisions": canvas_history_rows(db, canvas_id)}
@@ -1235,15 +1269,47 @@ class ReliableOrchestrator:
             "type": "function",
             "function": {
                 "name": "canvas_write_section",
-                "description": "写入共享画布的一个段落（## 标题 组织）；段落存在则整体替换，不存在则追加。content 为该段落完整新内容。",
+                "description": "写入或更新共享画布的一个章节（按 ## 标题 匹配）；章节存在则替换并彻底清除多余同名重复章节，不存在则追加。严禁传入空文本假装删除（删除请使用 canvas_delete_section）。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "section": {"type": "string", "description": "段落标题"},
-                        "content": {"type": "string", "description": "段落完整新内容（Markdown）"},
+                        "section": {"type": "string", "description": "章节标题"},
+                        "content": {"type": "string", "description": "章节完整新内容（Markdown）"},
                         "base_version": {"type": "integer", "description": "你读取画布时的版本号，用于冲突检测"},
                     },
                     "required": ["section", "content"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+        delete_schema: dict[str, Any] = {
+            "type": "function",
+            "function": {
+                "name": "canvas_delete_section",
+                "description": "从共享画布中彻底删除指定章节（连同其 ## 标题与正文）。若存在同名重复章节会一并彻底清除，绝不残留空标题壳或孤儿段落。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "section": {"type": "string", "description": "要彻底删除的章节标题（## 标题）"},
+                        "base_version": {"type": "integer", "description": "你读取画布时的版本号，用于冲突检测"},
+                    },
+                    "required": ["section"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+        replace_all_schema: dict[str, Any] = {
+            "type": "function",
+            "function": {
+                "name": "canvas_replace_all",
+                "description": "全篇重写或清空共享画布。content 为新文稿的完整 Markdown 内容；若 content 传空字符串则清空全部正文仅保留一级大标题。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string", "description": "整篇文稿的完整新 Markdown 内容（传空字符串则清空全部正文）"},
+                        "base_version": {"type": "integer", "description": "你读取画布时的版本号，用于冲突检测"},
+                    },
+                    "required": ["content"],
                     "additionalProperties": False,
                 },
             },
@@ -1272,6 +1338,8 @@ class ReliableOrchestrator:
         return [
             ("canvas_read", read_schema, _read),
             ("canvas_write_section", write_schema, _write),
+            ("canvas_delete_section", delete_schema, _delete),
+            ("canvas_replace_all", replace_all_schema, _replace_all),
             ("canvas_append", append_schema, _append),
             ("canvas_history", history_schema, _history),
         ]
