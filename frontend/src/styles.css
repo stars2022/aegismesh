@@ -10240,3 +10240,35 @@ tr:last-child td { border-bottom: 0; }
 [data-theme="dark"] .chat-layout .route-inspector .inspector-mobile-bar {
   background: var(--chat-rail-bg);
 }
+
+/* Streaming status uses a quiet text glint instead of a boxed loading pill. */
+.turn-status {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.turn-status-text {
+  color: var(--muted);
+  background: linear-gradient(100deg,
+    var(--muted) 0%, var(--muted) 34%,
+    var(--ink) 50%,
+    var(--muted) 66%, var(--muted) 100%);
+  background-size: 260% 100%;
+  background-position: 100% 50%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: turn-status-glint 2.5s ease-in-out infinite;
+}
+@keyframes turn-status-glint {
+  to { background-position: 0% 50%; }
+}
+@media (prefers-reduced-motion: reduce), (forced-colors: active) {
+  .turn-status-text {
+    color: var(--ink);
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    animation: none;
+  }
+}

@@ -8896,7 +8896,6 @@ void runMessage(next.text, next.agentId, next.attachments);
                         </span>
                         {message.streaming && (
                           <div className="turn-status" role="status" aria-live="polite">
-                            <FlowMark className="flow-mark-compact" />
                             <span className="turn-status-text">
                               {agents.find((agent) => agent.id === agentId)?.role ===
                               "leader"
@@ -9042,7 +9041,6 @@ void runMessage(next.text, next.agentId, next.attachments);
                         "AegisMesh"}
                     </span>
                     <div className="turn-status" role="status" aria-live="polite">
-                      <FlowMark className="flow-mark-compact" />
                       <span className="turn-status-text">
                         {agents.find((agent) => agent.id === agentId)?.role ===
                         "leader"
