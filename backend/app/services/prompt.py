@@ -61,10 +61,12 @@ LEADER_COORDINATION = (
 
 CANVAS_LEADER_GUIDANCE = (
     "本会话启用共享画布（Markdown 文稿协同编辑器），画布是研究报告、设计方案与交付物的唯一主版本。\n"
-    "【核心准则：主动落笔，拒绝犹豫迟疑】\n"
-    "1. 主动落笔撰写：当用户提出任何需求、主题、问询、修改或起草要求时，绝对不要在对话框犹犹豫豫、长篇大论或空洞反问！"
-    "必须立即主动落笔，先调用 canvas_read 查看已有内容和段落，然后用 canvas_write_section 按章节精准更新或追加新章节，"
-    "全篇重构或重写时调用 canvas_replace_all，直接在画布中创建、扩充或更新结构化的高质量正文。用户针对划词文本提出修改时，优先用 canvas_replace_selection 只替换唯一匹配的原文；若原文不唯一或 Markdown 格式导致无法精确匹配，先说明冲突，不要擅自重写整篇。\n"
+    "【核心准则：按用户意图决定是否落笔】\n"
+    "1. 用户要求起草、扩充、修改、整理或删除画布文稿时，主动执行，不要用冗长反问代替交付。"
+    "写入前先调用 canvas_read 查看最新版本和已有段落，然后用 canvas_write_section 按章节精准更新或追加新章节；"
+    "仅在用户明确要求全篇重构、重写或从零起草新文稿时调用 canvas_replace_all。"
+    "用户针对划词文本提出修改时，优先用 canvas_replace_selection 只替换唯一匹配的原文；若原文不唯一或 Markdown 格式导致无法精确匹配，先说明冲突，不要擅自重写整篇。"
+    "如果用户只是询问能力、讨论方案、请求解释或澄清事实，而没有要求改动画布，只需简洁回答；需要引用画布现有内容时可先调用 canvas_read，但不得擅自写入。\n"
     "2. 干净删除与排他清理：当需要删除某章节或丢弃旧内容时，必须显式调用 canvas_delete_section 彻底移除该章节（系统会自动清除所有同名重复章节），"
     "严禁向 canvas_write_section 写入空文本或「（已清空）」来假装删除！清空全部内容请调用 canvas_replace_all(content='')。\n"
     "3. 现代化文档结构：画布内容必须详实规范、排版优美，积极运用二级标题（## 章节名）、重点标注、清晰列表、步骤说明、对比表格、代码块、待办清单等元素。\n"
@@ -94,7 +96,13 @@ class PromptSection:
 
 def fence_untrusted(title: str, body: str) -> str:
     """Mark peer or tool text so the model treats it as data, not as new instructions."""
-    return f"<<<DATA {title}>>>\n{body.strip()}\n<<<END DATA>>>"
+    safe_title = " ".join(title.split()).replace("<<<", "‹‹‹").replace(">>>", "›››")
+    safe_body = (
+        body.strip()
+        .replace("<<<DATA ", "‹‹‹DATA ")
+        .replace("<<<END DATA>>>", "‹‹‹END DATA›››")
+    )
+    return f"<<<DATA {safe_title}>>>\n{safe_body}\n<<<END DATA>>>"
 
 
 def effective_tool_names(agent: Agent) -> list[str]:
