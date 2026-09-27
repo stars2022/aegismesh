@@ -1249,6 +1249,21 @@ class ReliableOrchestrator:
                 await self._notify_canvas(canvas_id, editor_id, editor_name, applied)
                 return {"ok": True, "version": applied["version"], "summary": applied["summary"]}
 
+        async def _replace_selection(args: dict[str, Any]) -> dict[str, Any]:
+            with self.session_factory() as db:
+                doc = get_or_create_canvas(db, canvas_id)
+                try:
+                    applied = apply_op(
+                        db, doc, editor_id=editor_id, editor_name=editor_name,
+                        op="replace_selection", selection=str(args.get("selection") or ""),
+                        content=str(args.get("replacement") or ""),
+                        base_version=args.get("base_version"),
+                    )
+                except CanvasError as exc:
+                    return {"ok": False, "error": str(exc), "current_version": doc.version}
+                await self._notify_canvas(canvas_id, editor_id, editor_name, applied)
+                return {"ok": True, "version": applied["version"], "summary": applied["summary"]}
+
         async def _history(args: dict[str, Any]) -> dict[str, Any]:
             with self.session_factory() as db:
                 return {"ok": True, "revisions": canvas_history_rows(db, canvas_id)}
@@ -1314,6 +1329,23 @@ class ReliableOrchestrator:
                 },
             },
         }
+        replace_selection_schema: dict[str, Any] = {
+            "type": "function",
+            "function": {
+                "name": "canvas_replace_selection",
+                "description": "仅替换画布中唯一匹配的原文。必须先 canvas_read 获取最新版本；匹配不到、多处匹配或版本过期均拒绝修改，避免覆盖无关段落。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "selection": {"type": "string", "description": "当前 Markdown 文稿中原样存在且唯一的原文"},
+                        "replacement": {"type": "string", "description": "替换后的 Markdown 文本"},
+                        "base_version": {"type": "integer", "description": "canvas_read 返回的版本号"},
+                    },
+                    "required": ["selection", "replacement", "base_version"],
+                    "additionalProperties": False,
+                },
+            },
+        }
         append_schema: dict[str, Any] = {
             "type": "function",
             "function": {
@@ -1340,6 +1372,7 @@ class ReliableOrchestrator:
             ("canvas_write_section", write_schema, _write),
             ("canvas_delete_section", delete_schema, _delete),
             ("canvas_replace_all", replace_all_schema, _replace_all),
+            ("canvas_replace_selection", replace_selection_schema, _replace_selection),
             ("canvas_append", append_schema, _append),
             ("canvas_history", history_schema, _history),
         ]
@@ -2748,6 +2781,7 @@ class ReliableOrchestrator:
                                         editor_id=agent.id, editor_name=agent.name,
                                         op=str(op_item["op"]),
                                         section=op_item.get("section"),
+                                        selection=op_item.get("selection"),
                                         content=str(op_item.get("content") or ""),
                                         base_version=op_item.get("base_version"),
                                     )

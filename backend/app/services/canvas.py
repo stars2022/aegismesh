@@ -19,6 +19,28 @@ class CanvasError(RuntimeError):
 
 
 SECTION_HEADING = re.compile(r"^##\s+.+$", re.MULTILINE)
+_LEGACY_DEMO_TEMPLATE_SHA256 = "11b6c1b9751b9485123901ee9dca81154c9b25e1c9dc8add7b803c7022625bca"
+
+
+def _retire_untouched_demo_template(db: Session, doc: CanvasDoc) -> CanvasDoc:
+    """Only replace the exact original v1 sample; never touch user-edited documents."""
+    if doc.version != 1 or hashlib.sha256(doc.content.encode()).hexdigest() != _LEGACY_DEMO_TEMPLATE_SHA256:
+        return doc
+    if not db.query(CanvasRevision.id).filter(CanvasRevision.canvas_id == doc.id, CanvasRevision.version == 1).first():
+        db.add(CanvasRevision(
+            canvas_id=doc.id, version=1, editor_name="系统", op="create",
+            summary="旧版示例快照", content_after=doc.content,
+        ))
+    doc.content = DEFAULT_CANVAS_TEMPLATE
+    doc.title = "协同画布"
+    doc.version = 2
+    db.add(CanvasRevision(
+        canvas_id=doc.id, version=2, editor_name="系统", op="remove_demo_template",
+        summary="移除未修改的旧版演示内容", content_after=doc.content,
+    ))
+    db.commit()
+    db.refresh(doc)
+    return doc
 
 
 def canvas_id_for(session_id: str) -> str:
@@ -28,7 +50,7 @@ def canvas_id_for(session_id: str) -> str:
 
 def _claim_canvas(db: Session, doc: CanvasDoc, session_id: str, owner_id: str | None) -> CanvasDoc:
     if not owner_id:
-        return doc
+        return _retire_untouched_demo_template(db, doc)
     if doc.owner_id and doc.owner_id != owner_id:
         raise CanvasError("画布不存在或无权访问")
     if not doc.owner_id:
@@ -50,7 +72,7 @@ def _claim_canvas(db: Session, doc: CanvasDoc, session_id: str, owner_id: str | 
         db.refresh(doc)
         if doc.owner_id != owner_id:
             raise CanvasError("画布不存在或无权访问")
-    return doc
+    return _retire_untouched_demo_template(db, doc)
 
 
 def get_or_create_session_canvas(
@@ -113,50 +135,17 @@ def get_or_create_session_canvas(
     return get_or_create_canvas(db, canvas_id, owner_id=owner_id or "")
 
 
-DEFAULT_CANVAS_TEMPLATE = (
-    "# 产品设计笔记\n\n"
-    "记录产品设计过程中的思考、方法与实践经验。\n\n"
-    "## 🎯 1. 产品设计的核心目标\n"
-    "优秀的方案，始终围绕着 **用户价值** 展开。我们需要在 **用户需求**、**技术可行性** 与 **商业价值** 之间找到平衡，创造简单、优雅、高效的解决方案。\n\n"
-    "> 💡 **设计原则**\n"
-    "> 以用户为中心，保持简单，关注细节，持续迭代。\n\n"
-    "## 🎨 2. 设计方法与步骤\n"
-    "1. **发现问题**：通过用户调研、数据分析等方式，找到真正的用户需求。\n"
-    "2. **定义方案**：明确产品目标，梳理核心功能与体验路径。\n"
-    "3. **设计与验证**：快速原型设计，通过用户测试验证方案的有效性。\n"
-    "4. **持续迭代**：根据反馈不断优化，追求更好的用户体验。\n\n"
-    "## 📋 3. 本周待办清单\n"
-    "- [x] 完成用户访谈整理\n"
-    "- [x] 更新产品原型设计\n"
-    "- [ ] 与开发团队评审技术方案\n"
-    "- [ ] 整理竞品分析报告\n"
-    "- [ ] 撰写设计总结文档\n\n"
-    "## 📊 4. 竞品对比分析\n"
-    "| 产品 | 核心优势 | 不足之处 | 参考价值 |\n"
-    "| :--- | :--- | :--- | :--- |\n"
-    "| **Notion** | 灵活的模块化设计 | 学习成本较高 | ★★★★☆ |\n"
-    "| **语雀** | 本土化体验好 | 功能相对单一 | ★★★☆☆ |\n"
-    "| **飞书文档** | 协作能力强 | 个性化能力较弱 | ★★★★☆ |\n\n"
-    "## 💻 5. 示例代码\n"
-    "```javascript\n"
-    "// 计算斐波那契数列\n"
-    "function fibonacci(n) {\n"
-    "  if (n <= 1) return n;\n"
-    "  return fibonacci(n - 1) + fibonacci(n - 2);\n"
-    "}\n"
-    "console.log(fibonacci(10)); // 55\n"
-    "```\n\n"
-    "> “ 好的设计不是让复杂的东西看起来简单，而是让简单的东西变得更有力量。 ”\n"
-    "> —— Dieter Rams\n"
-)
+DEFAULT_CANVAS_TEMPLATE = "# 协同画布\n"
 
 
 def get_or_create_canvas(
-    db: Session, canvas_id: str, title: str = "产品设计笔记", owner_id: str = ""
+    db: Session, canvas_id: str, title: str = "协同画布", owner_id: str = ""
 ) -> CanvasDoc:
     doc = db.get(CanvasDoc, canvas_id)
     if doc is not None and owner_id and doc.owner_id != owner_id:
         raise CanvasError("画布不存在或无权访问")
+    if doc is not None:
+        return _retire_untouched_demo_template(db, doc)
     if doc is None:
         initial_content = (
             DEFAULT_CANVAS_TEMPLATE
@@ -168,6 +157,11 @@ def get_or_create_canvas(
             content=initial_content, version=1,
         )
         db.add(doc)
+        db.add(CanvasRevision(
+            canvas_id=canvas_id, version=1, editor_id=owner_id,
+            editor_name="系统", op="create", summary="创建空白画布",
+            content_after=initial_content,
+        ))
         try:
             db.commit()
         except IntegrityError:
@@ -372,6 +366,7 @@ def apply_op(
     editor_name: str,
     op: str,  # "write_section" | "delete_section" | "replace_all" | "append"
     section: str | None = None,
+    selection: str | None = None,
     content: str = "",
     base_version: int | None = None,
 ) -> dict[str, Any]:
@@ -381,6 +376,8 @@ def apply_op(
             f"版本冲突：你基于 v{base_version} 编辑，画布当前为 v{doc.version}。"
             f"请先 canvas_read 刷新内容后重试。"
         )
+    if op == "replace_selection" and base_version is None:
+        raise CanvasError("划词修改必须携带读取画布时的版本号")
     if op == "write_section":
         if not section:
             raise CanvasError("write_section 需要提供 section（段落标题）")
@@ -394,6 +391,14 @@ def apply_op(
             raise CanvasError("delete_section 需要提供 section（段落标题）")
         doc.content = delete_section(doc.content, section)
         summary = f"删除段落：「{section}」"
+    elif op == "replace_selection":
+        if not selection or not selection.strip():
+            raise CanvasError("划词修改需要非空的原文")
+        matches = doc.content.count(selection)
+        if matches != 1:
+            raise CanvasError(f"划词原文在当前画布中匹配到 {matches} 处；请重新读取并提供唯一原文")
+        doc.content = doc.content.replace(selection, content, 1)
+        summary = "局部修改选中文本"
     elif op in ("replace_all", "clear"):
         doc.content = replace_all(doc.content, content, default_title=doc.title)
         summary = "清空画布内容" if not content.strip() else "全篇重写画布"
@@ -456,13 +461,14 @@ CANVAS_PROTOCOL_INSTRUCTIONS = (
     '- 更新或新增章节：```json\n{{"name": "canvas_write_section", "parameters": {{"section": "章节标题", "content": "该章节完整新内容", "base_version": {version}}}}}\n```\n'
     '- 彻底删除某个章节：```json\n{{"name": "canvas_delete_section", "parameters": {{"section": "要删除的章节标题", "base_version": {version}}}}}\n```\n'
     '- 重置/整篇重写画布：```json\n{{"name": "canvas_replace_all", "parameters": {{"content": "整篇完整新内容（Markdown，传空字符串则清空全部章节）", "base_version": {version}}}}}\n```\n'
+    '- 仅修改唯一匹配的划词原文：```json\n{{"name": "canvas_replace_selection", "parameters": {{"selection": "原文", "replacement": "修改后文本", "base_version": {version}}}}}\n```\n'
     '- 末尾追加内容：```json\n{{"name": "canvas_append", "parameters": {{"content": "追加内容"}}}}\n```\n'
     "正文里请先简要说明你做了什么修改；未修改则不要输出 JSON 块。\n\n"
     "【画布当前内容 v{version}】\n{content}"
 )
 
 _CANVAS_OP_PATTERN = re.compile(
-    r"```(?:json)?\s*(\{[\s\S]*?\"name\"\s*:\s*\"canvas_(?:write_section|delete_section|replace_all|append)\"[\s\S]*?\})\s*```",
+    r"```(?:json)?\s*(\{[\s\S]*?\"name\"\s*:\s*\"canvas_(?:write_section|delete_section|replace_all|replace_selection|append)\"[\s\S]*?\})\s*```",
     re.IGNORECASE,
 )
 
@@ -485,13 +491,16 @@ def parse_canvas_ops(text: str) -> list[dict[str, Any]]:
             op = "delete_section"
         elif name == "canvas_replace_all":
             op = "replace_all"
+        elif name == "canvas_replace_selection":
+            op = "replace_selection"
         else:
             op = "append"
         ops.append(
             {
                 "op": op,
                 "section": str(parameters.get("section") or "") or None,
-                "content": str(parameters.get("content") or ""),
+                "selection": str(parameters.get("selection") or "") or None,
+                "content": str(parameters.get("replacement") or "") if op == "replace_selection" else str(parameters.get("content") or ""),
                 "base_version": parameters.get("base_version"),
             }
         )

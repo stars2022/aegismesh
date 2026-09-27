@@ -1,186 +1,213 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { EditorContent, useEditor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import { Markdown } from "@tiptap/markdown";
+import { TableKit } from "@tiptap/extension-table";
+import { TaskItem, TaskList } from "@tiptap/extension-list";
+import { Image } from "@tiptap/extension-image";
 import {
-  RotateCcw,
-  RotateCw,
-  Bold,
-  Italic,
-  Underline,
-  Code,
-  Link,
-  Image as ImageIcon,
-  Table as TableIcon,
-  CheckSquare,
-  Quote,
-  List,
-  ListOrdered,
-  Minus,
-  BookOpen,
-  Copy,
-  ChevronDown,
-  Plus,
-  Clock,
-  Sparkles,
-  FileText,
-  Check,
-  Tag,
-  ArrowRight,
-  X,
+  Bold, BookOpen, Check, CheckSquare, ChevronDown, Code, Copy, FileText,
+  Image as ImageIcon, Italic, Link, List, ListOrdered, Menu, Minus, Quote,
+  Redo2, Save, Sparkles, Table2, Underline, Undo2, X,
 } from "lucide-react";
 import type { CanvasDocument } from "./api";
+import { api } from "./api";
+import "./CanvasWorkspace.css";
 
-export const DEFAULT_CANVAS_TEMPLATE = `# 产品设计笔记
+export const DEFAULT_CANVAS_TEMPLATE = "# 协同画布\n";
 
-记录产品设计过程中的思考、方法与实践经验。
+type LinkDialog = { kind: "link" | "image" | "cover"; url: string; alt: string };
+type OutlineItem = { text: string; level: number; pos: number };
+type SelectionAction = "polish" | "expand" | "correct" | "restructure";
+type DiffLine = { kind: "same" | "added" | "removed"; text: string };
 
-## 🎯 1. 产品设计的核心目标
-优秀的方案，始终围绕着 **用户价值** 展开。我们需要在 **用户需求**、**技术可行性** 与 **商业价值** 之间找到平衡，创造简单、优雅、高效的解决方案。
-
-> 💡 **设计原则**
-> 以用户为中心，保持简单，关注细节，持续迭代。
-
-## 🎨 2. 设计方法与步骤
-1. **发现问题**：通过用户调研、数据分析等方式，找到真正的用户需求。
-2. **定义方案**：明确产品目标，梳理核心功能与体验路径。
-3. **设计与验证**：快速原型设计，通过用户测试验证方案的有效性。
-4. **持续迭代**：根据反馈不断优化，追求更好的用户体验。
-
-## 📋 3. 本周待办清单
-- [x] 完成用户访谈整理
-- [x] 更新产品原型设计
-- [ ] 与开发团队评审技术方案
-- [ ] 整理竞品分析报告
-- [ ] 撰写设计总结文档
-
-## 📊 4. 竞品对比分析
-| 产品 | 核心优势 | 不足之处 | 参考价值 |
-| :--- | :--- | :--- | :--- |
-| **Notion** | 灵活的模块化设计 | 学习成本较高 | ★★★★☆ |
-| **语雀** | 本土化体验好 | 功能相对单一 | ★★★☆☆ |
-| **飞书文档** | 协作能力强 | 个性化能力较弱 | ★★★★☆ |
-
-## 💻 5. 示例代码
-\`\`\`javascript
-// 计算斐波那契数列
-function fibonacci(n) {
-  if (n <= 1) return n;
-  return fibonacci(n - 1) + fibonacci(n - 2);
+function diffLines(before: string, after: string): DiffLine[] {
+  const a = before.split("\n"), b = after.split("\n");
+  if (a.length * b.length > 90000) {
+    let start = 0;
+    while (start < Math.min(a.length, b.length) && a[start] === b[start]) start++;
+    let end = 0;
+    while (end < Math.min(a.length - start, b.length - start) && a[a.length - 1 - end] === b[b.length - 1 - end]) end++;
+    return [
+      ...a.slice(0, start).map((text): DiffLine => ({ kind: "same", text })),
+      ...a.slice(start, a.length - end).map((text): DiffLine => ({ kind: "removed", text })),
+      ...b.slice(start, b.length - end).map((text): DiffLine => ({ kind: "added", text })),
+      ...a.slice(a.length - end).map((text): DiffLine => ({ kind: "same", text })),
+    ];
+  }
+  const table = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
+  for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--)
+    table[i][j] = a[i] === b[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+  const result: DiffLine[] = [];
+  let i = 0, j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) result.push({ kind: "same", text: a[i++] }), j++;
+    else if (j < b.length && (i === a.length || table[i][j + 1] >= table[i + 1][j])) result.push({ kind: "added", text: b[j++] });
+    else result.push({ kind: "removed", text: a[i++] });
+  }
+  return result;
 }
-console.log(fibonacci(10)); // 55
-\`\`\`
 
-> “ 好的设计不是让复杂的东西看起来简单，而是让简单的东西变得更有力量。 ”
-> —— Dieter Rams
-`;
+function formatDate(value?: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("zh-CN");
+}
 
-const COVER_PRESETS = [
-  {
-    name: "雪山旷野 (Alpine Snow)",
-    bg: "url('https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=1600&auto=format&fit=crop&q=80') center/cover no-repeat, linear-gradient(135deg, #1e3c72 0%, #2a5298 60%, #e0eafc 100%)",
-  },
-  {
-    name: "晨曦极光 (Aurora Sky)",
-    bg: "linear-gradient(135deg, #1e3c72 0%, #2a5298 50%, #70a1ff 100%)",
-  },
-  {
-    name: "翡翠森林 (Emerald Forest)",
-    bg: "linear-gradient(135deg, #134e5e 0%, #71b280 100%)",
-  },
-  {
-    name: "暮色晚霞 (Sunset Glow)",
-    bg: "linear-gradient(135deg, #ff7e5f 0%, #feb47b 100%)",
-  },
-  {
-    name: "深邃赛博 (Cyber Mesh)",
-    bg: "linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%)",
-  },
-];
+function safeUrl(raw: string, image: boolean): string | null {
+  try {
+    const url = new URL(raw.trim());
+    if (url.protocol === "https:" || url.protocol === "http:") return url.href;
+    if (!image && url.protocol === "mailto:") return url.href;
+  } catch {
+    return null;
+  }
+  return null;
+}
 
-export interface CanvasWorkspaceProps {
+export function CanvasWorkspace({
+  document,
+  sessionTitle,
+  onOpenHistory,
+  onSave,
+  onAskAI,
+  onUploadImage,
+}: {
   document: CanvasDocument;
+  sessionTitle: string;
+  onOpenHistory: () => void;
   onSave: (content: string, baseVersion: number) => Promise<CanvasDocument>;
-}
-
-export function CanvasWorkspace({ document, onSave }: CanvasWorkspaceProps) {
-  const initialContent = document.content || DEFAULT_CANVAS_TEMPLATE;
-  const baseline = useRef({ version: document.version, content: initialContent });
-  const [draft, setDraft] = useState(initialContent);
-  const [view, setView] = useState<"preview" | "edit" | "split">("preview");
-  const [inspectorOpen, setInspectorOpen] = useState(true);
-  const [inspectorTab, setInspectorTab] = useState<"outline" | "info">("outline");
-  const [coverIndex, setCoverIndex] = useState(0);
-  const [tags, setTags] = useState<string[]>([
-    "产品设计",
-    "用户体验",
-    "设计方法",
-    "竞品分析",
-    "总结",
-  ]);
-  const [newTagInput, setNewTagInput] = useState("");
-  const [addingTag, setAddingTag] = useState(false);
+  onAskAI?: (selection: string, action: SelectionAction) => void;
+  onUploadImage?: (file: File) => Promise<string>;
+}) {
+  const initial = document.content || DEFAULT_CANVAS_TEMPLATE;
+  const baseline = useRef({ version: document.version, content: initial });
+  const initialized = useRef(false);
+  const [draft, setDraft] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [outlineOpen, setOutlineOpen] = useState(true);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [priorRevision, setPriorRevision] = useState<{ version: number; content: string } | null>(null);
+  const [reviewError, setReviewError] = useState("");
+  useEffect(() => { setPriorRevision(null); setReviewOpen(false); }, [document.version]);
+  const [menuOpen, setMenuOpen] = useState<"style" | "insert" | null>(null);
+  const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
+  const [dialog, setDialog] = useState<LinkDialog | null>(null);
+  const [selection, setSelection] = useState("");
+  const [selectionPosition, setSelectionPosition] = useState({ left: 0, top: 0 });
   const [copied, setCopied] = useState(false);
-  const [insertMenuOpen, setInsertMenuOpen] = useState(false);
-  const [styleMenuOpen, setStyleMenuOpen] = useState(false);
+  const [draggingImage, setDraggingImage] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const editor = useEditor({
+    extensions: [
+      StarterKit,
+      TaskList,
+      TaskItem.configure({ nested: true }),
+      TableKit.configure({ table: { resizable: true } }),
+      Image.configure({ allowBase64: false }),
+      Markdown.configure({ markedOptions: { gfm: true } }),
+    ],
+    content: initial,
+    contentType: "markdown",
+    immediatelyRender: false,
+    editorProps: { attributes: { class: "canvas-prose", "aria-label": "画布正文" } },
+    onUpdate: ({ editor: instance }) => setDraft(instance.getMarkdown()),
+    onSelectionUpdate: ({ editor: instance }) => {
+      const { from, to } = instance.state.selection;
+      setSelection(from < to ? instance.state.doc.textBetween(from, to, " ").trim() : "");
+      if (from < to) {
+        const end = instance.view.coordsAtPos(to);
+        setSelectionPosition({
+          left: Math.max(8, Math.min(end.left, window.innerWidth - 360)),
+          top: end.top > 62 ? end.top - 46 : end.bottom + 8,
+        });
+      }
+    },
+  }, [document.id]);
 
-  // Undo / Redo history
-  const [history, setHistory] = useState<string[]>([initialContent]);
-  const [historyIndex, setHistoryIndex] = useState(0);
+  useEffect(() => {
+    if (!menuOpen && !selection) return;
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target as Element;
+      if (!target.closest?.(".canvas-wysiwyg-menu-wrap")) setMenuOpen(null);
+      if (!target.closest?.(".canvas-wysiwyg-selection-actions, .canvas-prose")) setSelection("");
+    };
+    const closeEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { setMenuOpen(null); setSelection(""); }
+    };
+    window.document.addEventListener("pointerdown", closeOutside);
+    window.document.addEventListener("keydown", closeEscape);
+    return () => { window.document.removeEventListener("pointerdown", closeOutside); window.document.removeEventListener("keydown", closeEscape); };
+  }, [menuOpen, selection]);
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (!editor) return;
+    if (!initialized.current) {
+      const normalized = editor.getMarkdown();
+      baseline.current = { version: document.version, content: normalized };
+      setDraft(normalized);
+      initialized.current = true;
+      return;
+    }
+    if (document.version === baseline.current.version && document.content === baseline.current.content) return;
+    if (draft !== baseline.current.content && document.version !== baseline.current.version) {
+      setError("智能体已更新画布。本地修改仍在，请复制草稿或载入最新版本后再编辑。");
+      return;
+    }
+    if (draft === baseline.current.content) {
+      editor.commands.setContent(document.content || DEFAULT_CANVAS_TEMPLATE, {
+        contentType: "markdown", emitUpdate: false,
+      });
+      const normalized = editor.getMarkdown();
+      baseline.current = { version: document.version, content: normalized };
+      setDraft(normalized);
+      setError("");
+    }
+  }, [editor, document.version, document.content]);
+
   const dirty = draft !== baseline.current.content;
   const conflicted = document.version !== baseline.current.version;
-
-  // Sync when document version or content updates from outside (e.g. agent edits)
-  useEffect(() => {
-    if (draft === baseline.current.content) {
-      const nextContent = document.content || DEFAULT_CANVAS_TEMPLATE;
-      baseline.current = { version: document.version, content: nextContent };
-      setDraft(nextContent);
-      setError("");
-      setHistory((prev) => [...prev.slice(-20), nextContent]);
-      setHistoryIndex((prev) => prev + 1);
-    } else if (document.version !== baseline.current.version) {
-      setError("画布已被其他智能体更新。当前本地修改已保留，请对比后保存或重新加载。");
-    }
-  }, [document.version, document.content]);
-
-  // Push to history on draft changes (debounced)
-  const updateDraft = (newText: string) => {
-    setDraft(newText);
-    setHistory((prev) => {
-      const sliced = prev.slice(0, historyIndex + 1);
-      return [...sliced, newText].slice(-30);
+  const title = useMemo(() => draft.match(/^#\s+(.+)$/m)?.[1]?.trim() || "未命名文稿", [draft]);
+  const outline = useMemo<OutlineItem[]>(() => {
+    if (!editor) return [];
+    const items: OutlineItem[] = [];
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === "heading") {
+        items.push({ text: node.textContent || "未命名标题", level: node.attrs.level, pos });
+      }
     });
-    setHistoryIndex((prev) => prev + 1);
-  };
+    return items;
+  }, [editor, draft]);
+  const words = useMemo(() => {
+    const text = editor?.state.doc.textContent || "";
+    return (text.match(/[\u4e00-\u9fff]|[A-Za-z0-9_-]+/g) || []).length;
+  }, [editor, draft]);
+  const changes = useMemo(() => priorRevision ? diffLines(priorRevision.content, document.content) : [], [priorRevision, document.content]);
 
-  const handleUndo = () => {
-    if (historyIndex > 0) {
-      const nextIndex = historyIndex - 1;
-      setHistoryIndex(nextIndex);
-      setDraft(history[nextIndex]);
-    }
-  };
-
-  const handleRedo = () => {
-    if (historyIndex < history.length - 1) {
-      const nextIndex = historyIndex + 1;
-      setHistoryIndex(nextIndex);
-      setDraft(history[nextIndex]);
+  const openReview = async () => {
+    if (reviewOpen) { setReviewOpen(false); return; }
+    setReviewOpen(true);
+    setReviewError("");
+    if (document.version < 2) return;
+    try {
+      const previous = await api.getCanvasRevision(document.id, document.version - 1);
+      setPriorRevision(previous);
+    } catch (reason) {
+      setReviewError(reason instanceof Error ? reason.message : "读取版本失败");
     }
   };
 
   const save = async () => {
-    if (!dirty || saving || conflicted) return;
-    const submitted = draft;
+    if (!editor || !dirty || saving || conflicted) return;
+    const submitted = editor.getMarkdown();
     setSaving(true);
     setError("");
     try {
       const updated = await onSave(submitted, baseline.current.version);
       baseline.current = { version: updated.version, content: submitted };
+      setDraft(submitted);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "保存失败，请稍后重试");
     } finally {
@@ -188,792 +215,191 @@ export function CanvasWorkspace({ document, onSave }: CanvasWorkspaceProps) {
     }
   };
 
-  // Cursor insertion utilities
-  const insertAtCursor = (before: string, after: string = "", defaultText: string = "") => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      // If in preview mode, switch to edit and append
-      setView("edit");
-      updateDraft(draft + "\n\n" + before + defaultText + after);
+  const applyUrl = () => {
+    if (!editor || !dialog) return;
+    const url = safeUrl(dialog.url, dialog.kind !== "link");
+    if (!url) {
+      setError("请输入有效的 HTTPS/HTTP 地址；链接还支持 mailto。 ");
       return;
     }
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selected = draft.substring(start, end) || defaultText;
-    const replacement = before + selected + after;
-    const newDraft = draft.substring(0, start) + replacement + draft.substring(end);
-    updateDraft(newDraft);
-    setTimeout(() => {
-      textarea.focus();
-      textarea.setSelectionRange(start + before.length, start + before.length + selected.length);
-    }, 0);
-  };
-
-  const handleToggleTask = (taskText: string, currentChecked: boolean) => {
-    // Clean text to match line
-    const cleanText = taskText.trim().replace(/^\[[ xX]\]\s*/, "");
-    const searchPattern = currentChecked
-      ? new RegExp(`- \\[x\\]\\s*${cleanText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i")
-      : new RegExp(`- \\[ \\]\\s*${cleanText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i");
-    const replacement = currentChecked ? `- [ ] ${cleanText}` : `- [x] ${cleanText}`;
-    if (searchPattern.test(draft)) {
-      const newDraft = draft.replace(searchPattern, replacement);
-      updateDraft(newDraft);
-    }
-  };
-
-  // Extract headings for Table of Contents
-  const headings = useMemo(() => {
-    const lines = draft.split("\n");
-    const list: Array<{ level: number; text: string; id: string }> = [];
-    lines.forEach((line) => {
-      const match = line.match(/^(#{1,3})\s+(.+)$/);
-      if (match) {
-        const level = match[1].length;
-        const text = match[2].trim();
-        const id = "sec-" + text.replace(/[^\w\u4e00-\u9fa5]+/g, "-").toLowerCase();
-        list.push({ level, text, id });
+    if (dialog.kind === "cover") {
+      const first = editor.state.doc.firstChild;
+      const range = first?.type.name === "image" ? { from: 0, to: first.nodeSize } : 0;
+      editor.commands.insertContentAt(range, { type: "image", attrs: { src: url, alt: dialog.alt || "封面" } });
+    } else if (dialog.kind === "image") {
+      editor.chain().focus().setImage({ src: url, alt: dialog.alt || "图片" }).run();
+    } else {
+      if (editor.state.selection.empty) {
+        editor.chain().focus().insertContent({
+          type: "text", text: dialog.alt || url, marks: [{ type: "link", attrs: { href: url } }],
+        }).run();
+      } else {
+        editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
       }
-    });
-    return list;
-  }, [draft]);
-
-  // Extract title and subtitle
-  const docTitle = useMemo(() => {
-    const match = draft.match(/^#\s+(.+)$/m);
-    return match ? match[1].trim() : document.title || "产品设计笔记";
-  }, [draft, document.title]);
-
-  const docSubtitle = useMemo(() => {
-    const lines = draft.split("\n").map((l) => l.trim()).filter(Boolean);
-    const titleIdx = lines.findIndex((l) => l.startsWith("# "));
-    if (titleIdx >= 0 && lines[titleIdx + 1] && !lines[titleIdx + 1].startsWith("#") && !lines[titleIdx + 1].startsWith(">")) {
-      return lines[titleIdx + 1];
     }
-    return "记录产品设计过程中的思考、方法与实践经验。";
-  }, [draft]);
-
-  // Word count & stats
-  const stats = useMemo(() => {
-    const chars = draft.length;
-    const cjk = (draft.match(/[\u4e00-\u9fa5]/g) || []).length;
-    const words = (draft.match(/[a-zA-Z0-9_-]+/g) || []).length;
-    const wordCount = cjk + words;
-    const readTime = Math.max(1, Math.ceil(wordCount / 300));
-    return { chars, wordCount, readTime };
-  }, [draft]);
-
-  // Custom markdown components for rich preview
-  const canvasMarkdownComponents = useMemo(
-    () => ({
-      h1: ({ children, ...props }: any) => {
-        const text = String(children);
-        const id = "sec-" + text.replace(/[^\w\u4e00-\u9fa5]+/g, "-").toLowerCase();
-        return (
-          <h1 id={id} className="canvas-h1" {...props}>
-            {children}
-          </h1>
-        );
-      },
-      h2: ({ children, ...props }: any) => {
-        const text = String(children);
-        const id = "sec-" + text.replace(/[^\w\u4e00-\u9fa5]+/g, "-").toLowerCase();
-        return (
-          <h2 id={id} className="canvas-h2" {...props}>
-            {children}
-          </h2>
-        );
-      },
-      h3: ({ children, ...props }: any) => {
-        const text = String(children);
-        const id = "sec-" + text.replace(/[^\w\u4e00-\u9fa5]+/g, "-").toLowerCase();
-        return (
-          <h3 id={id} className="canvas-h3" {...props}>
-            {children}
-          </h3>
-        );
-      },
-      blockquote: ({ children, ...props }: any) => {
-        const raw = String(children);
-        if (
-          raw.includes("💡") ||
-          raw.includes("[!NOTE]") ||
-          raw.includes("[!TIP]") ||
-          raw.includes("设计原则")
-        ) {
-          return (
-            <div className="canvas-callout">
-              <div className="canvas-callout-icon">💡</div>
-              <div className="canvas-callout-content">{children}</div>
-            </div>
-          );
-        }
-        if (
-          raw.includes("“") ||
-          raw.includes("”") ||
-          raw.includes("——") ||
-          raw.includes("Dieter Rams")
-        ) {
-          return (
-            <div className="canvas-quote-card">
-              <span className="canvas-quote-mark">“</span>
-              <div className="canvas-quote-content">{children}</div>
-            </div>
-          );
-        }
-        return (
-          <blockquote className="canvas-blockquote" {...props}>
-            {children}
-          </blockquote>
-        );
-      },
-      table: ({ children, ...props }: any) => (
-        <div className="canvas-table-wrapper">
-          <table className="canvas-table" {...props}>
-            {children}
-          </table>
-        </div>
-      ),
-      code: ({ inline, className, children, ...props }: any) => {
-        if (inline) {
-          return (
-            <code className="canvas-inline-code" {...props}>
-              {children}
-            </code>
-          );
-        }
-        const match = /language-(\w+)/.exec(className || "");
-        const lang = match ? match[1] : "javascript";
-        return (
-          <div className="canvas-code-card">
-            <div className="canvas-code-header">
-              <span className="canvas-code-title">示例代码</span>
-              <div className="canvas-code-actions">
-                <span className="canvas-code-lang">{lang}</span>
-                <button
-                  type="button"
-                  className="canvas-code-copy-btn"
-                  onClick={() => void navigator.clipboard.writeText(String(children))}
-                  title="复制代码"
-                >
-                  <Copy size={13} />
-                </button>
-              </div>
-            </div>
-            <pre className="canvas-code-pre">
-              <code className={className} {...props}>
-                {children}
-              </code>
-            </pre>
-          </div>
-        );
-      },
-      li: ({ children, className, checked, ...props }: any) => {
-        if (typeof checked === "boolean") {
-          return (
-            <li className="canvas-task-item" {...props}>
-              <input
-                type="checkbox"
-                checked={checked}
-                className="canvas-task-checkbox"
-                onChange={() => handleToggleTask(String(children), checked)}
-              />
-              <span className={`canvas-task-text ${checked ? "completed" : ""}`}>
-                {children}
-              </span>
-            </li>
-          );
-        }
-        return <li {...props}>{children}</li>;
-      },
-    }),
-    [draft],
-  );
-
-  const handleCopyMarkdown = () => {
-    void navigator.clipboard.writeText(draft);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setDialog(null);
+    setError("");
   };
 
-  const handleAddTag = () => {
-    if (newTagInput.trim() && !tags.includes(newTagInput.trim())) {
-      setTags([...tags, newTagInput.trim()]);
-      setNewTagInput("");
-      setAddingTag(false);
+  const copyMarkdown = async () => {
+    if (!editor) return;
+    try {
+      await navigator.clipboard.writeText(editor.getMarkdown());
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setError("复制失败，请检查浏览器的剪贴板权限");
     }
+  };
+
+  const insertImageFiles = async (files: File[], position?: number) => {
+    if (!editor || !onUploadImage || uploadingImage) return;
+    const images = files.filter((file) => /^(image\/png|image\/jpeg|image\/gif|image\/webp)$/.test(file.type));
+    if (images.length !== files.length || images.some((file) => file.size > 10 * 1024 * 1024)) {
+      setError("仅支持不超过 10 MB 的 PNG、JPEG、WebP 或 GIF 图片");
+      return;
+    }
+    setUploadingImage(true);
+    setError("");
+    let insertAt = position ?? editor.state.selection.from;
+    try {
+      for (const file of images) {
+        const url = await onUploadImage(file);
+        editor.commands.insertContentAt(insertAt, { type: "image", attrs: { src: url, alt: file.name } });
+        insertAt += 1;
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "图片上传失败");
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const toggleMenu = (kind: "style" | "insert", button: HTMLButtonElement) => {
+    const rect = button.getBoundingClientRect();
+    setMenuPosition({
+      left: Math.max(8, Math.min(rect.left, window.innerWidth - 170)),
+      top: rect.bottom + 6,
+    });
+    setMenuOpen(menuOpen === kind ? null : kind);
   };
 
   return (
-    <div className="canvas-workspace">
-      {/* Top Formatting Toolbar */}
-      <header className="canvas-toolbar">
-        <div className="canvas-toolbar-group left">
-          <button
-            type="button"
-            className="canvas-tool-btn"
-            onClick={handleUndo}
-            disabled={historyIndex <= 0}
-            title="撤销 (Ctrl+Z)"
-          >
-            <RotateCcw size={15} />
-          </button>
-          <button
-            type="button"
-            className="canvas-tool-btn"
-            onClick={handleRedo}
-            disabled={historyIndex >= history.length - 1}
-            title="重做 (Ctrl+Y)"
-          >
-            <RotateCw size={15} />
-          </button>
-
-          <span className="canvas-tool-divider" />
-
-          {/* Heading Style Dropdown */}
-          <div className="canvas-dropdown-wrap">
-            <button
-              type="button"
-              className="canvas-tool-btn dropdown-btn"
-              onClick={() => {
-                setStyleMenuOpen(!styleMenuOpen);
-                setInsertMenuOpen(false);
-              }}
-              title="文本样式"
-            >
-              <span>正文</span>
-              <ChevronDown size={13} />
-            </button>
-            {styleMenuOpen && (
-              <div className="canvas-dropdown-menu">
-                <button
-                  type="button"
-                  onClick={() => {
-                    insertAtCursor("");
-                    setStyleMenuOpen(false);
-                  }}
-                >
-                  正文
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    insertAtCursor("# ", "", "一级标题");
-                    setStyleMenuOpen(false);
-                  }}
-                >
-                  <strong>标题 1 (H1)</strong>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    insertAtCursor("## ", "", "二级标题");
-                    setStyleMenuOpen(false);
-                  }}
-                >
-                  <strong>标题 2 (H2)</strong>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    insertAtCursor("### ", "", "三级标题");
-                    setStyleMenuOpen(false);
-                  }}
-                >
-                  <strong>标题 3 (H3)</strong>
-                </button>
-              </div>
-            )}
-          </div>
-
-          <span className="canvas-tool-divider" />
-
-          {/* Inline Formats */}
-          <button
-            type="button"
-            className="canvas-tool-btn"
-            onClick={() => insertAtCursor("**", "**", "加粗文本")}
-            title="加粗 (Ctrl+B)"
-          >
-            <Bold size={15} />
-          </button>
-          <button
-            type="button"
-            className="canvas-tool-btn"
-            onClick={() => insertAtCursor("*", "*", "斜体文本")}
-            title="斜体 (Ctrl+I)"
-          >
-            <Italic size={15} />
-          </button>
-          <button
-            type="button"
-            className="canvas-tool-btn"
-            onClick={() => insertAtCursor("<u>", "</u>", "下划线文本")}
-            title="下划线"
-          >
-            <Underline size={15} />
-          </button>
-          <button
-            type="button"
-            className="canvas-tool-btn"
-            onClick={() => insertAtCursor("`", "`", "代码")}
-            title="行内代码"
-          >
-            <Code size={15} />
-          </button>
-
-          <span className="canvas-tool-divider" />
-
-          {/* Block Inserts */}
-          <button
-            type="button"
-            className="canvas-tool-btn"
-            onClick={() => insertAtCursor("[", "](https://example.com)", "链接描述")}
-            title="插入链接"
-          >
-            <Link size={15} />
-          </button>
-          <button
-            type="button"
-            className="canvas-tool-btn"
-            onClick={() => insertAtCursor("![", "](https://example.com/image.png)", "图片描述")}
-            title="插入图片"
-          >
-            <ImageIcon size={15} />
-          </button>
-          <button
-            type="button"
-            className="canvas-tool-btn"
-            onClick={() =>
-              insertAtCursor(
-                "\n| 产品 | 核心优势 | 不足之处 | 参考价值 |\n| :--- | :--- | :--- | :--- |\n| Notion | 灵活的模块化设计 | 学习成本较高 | ★★★★☆ |\n| 语雀 | 本土化体验好 | 功能相对单一 | ★★★☆☆ |\n| 飞书文档 | 协作能力强 | 个性化能力较弱 | ★★★★☆ |\n\n",
-              )
-            }
-            title="插入对比表格"
-          >
-            <TableIcon size={15} />
-          </button>
-          <button
-            type="button"
-            className="canvas-tool-btn"
-            onClick={() => insertAtCursor("- [ ] ", "", "待办事项")}
-            title="待办清单"
-          >
-            <CheckSquare size={15} />
-          </button>
-          <button
-            type="button"
-            className="canvas-tool-btn"
-            onClick={() => insertAtCursor("> ", "", "引用内容")}
-            title="插入引用"
-          >
-            <Quote size={15} />
-          </button>
-          <button
-            type="button"
-            className="canvas-tool-btn"
-            onClick={() => insertAtCursor("- ", "", "无序列表项")}
-            title="无序列表"
-          >
-            <List size={15} />
-          </button>
-          <button
-            type="button"
-            className="canvas-tool-btn"
-            onClick={() => insertAtCursor("1. ", "", "有序列表项")}
-            title="有序列表"
-          >
-            <ListOrdered size={15} />
-          </button>
-          <button
-            type="button"
-            className="canvas-tool-btn"
-            onClick={() => insertAtCursor("\n---\n")}
-            title="分割线"
-          >
-            <Minus size={15} />
-          </button>
-
-          {/* Insert Dropdown Menu */}
-          <div className="canvas-dropdown-wrap">
-            <button
-              type="button"
-              className="canvas-tool-btn dropdown-btn"
-              onClick={() => {
-                setInsertMenuOpen(!insertMenuOpen);
-                setStyleMenuOpen(false);
-              }}
-              title="插入组件"
-            >
-              <span>插入</span>
-              <ChevronDown size={13} />
-            </button>
-            {insertMenuOpen && (
-              <div className="canvas-dropdown-menu">
-                <button
-                  type="button"
-                  onClick={() => {
-                    insertAtCursor(
-                      "\n> 💡 **设计原则**\n> 以用户为中心，保持简单，关注细节，持续迭代。\n\n",
-                    );
-                    setInsertMenuOpen(false);
-                  }}
-                >
-                  💡 提示高亮框 (Callout)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    insertAtCursor(
-                      "\n1. **发现问题**：通过调研提炼用户核心诉求。\n2. **定义方案**：明确目标与核心功能路径。\n3. **设计与验证**：快速原型测试有效性。\n4. **持续迭代**：根据反馈不断优化。\n\n",
-                    );
-                    setInsertMenuOpen(false);
-                  }}
-                >
-                  🔢 步骤卡片 (Step List)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    insertAtCursor(
-                      "\n```javascript\n// 示例代码\nfunction fibonacci(n) {\n  if (n <= 1) return n;\n  return fibonacci(n - 1) + fibonacci(n - 2);\n}\nconsole.log(fibonacci(10)); // 55\n```\n\n",
-                    );
-                    setInsertMenuOpen(false);
-                  }}
-                >
-                  💻 示例代码块 (Code Block)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    insertAtCursor(
-                      '\n> “ 好的设计不是让复杂的东西看起来简单，而是让简单的东西变得更有力量。 ”\n> —— Dieter Rams\n\n',
-                    );
-                    setInsertMenuOpen(false);
-                  }}
-                >
-                  “ 名言卡片 (Quote Card)
-                </button>
-              </div>
-            )}
-          </div>
+    <div className="canvas-wysiwyg">
+      <header className="canvas-wysiwyg-toolbar">
+        <div className="canvas-wysiwyg-context">
+          <button type="button" className="canvas-wysiwyg-history-toggle" aria-label="打开会话列表" title="会话列表" onClick={onOpenHistory}><Menu size={18} /></button>
+          <strong title={sessionTitle}>{sessionTitle}</strong>
         </div>
-
-        {/* Right Toolbar Actions */}
-        <div className="canvas-toolbar-group right">
-          {/* View Mode Switcher */}
-          <div className="canvas-view-toggle-pills" role="group" aria-label="视图模式">
-            <button
-              type="button"
-              className={view === "preview" ? "active" : ""}
-              onClick={() => setView("preview")}
-            >
-              预览
-            </button>
-            <button
-              type="button"
-              className={view === "edit" ? "active" : ""}
-              onClick={() => setView("edit")}
-            >
-              编辑
-            </button>
-            <button
-              type="button"
-              className={view === "split" ? "active" : ""}
-              onClick={() => setView("split")}
-            >
-              双栏
-            </button>
+        <div className="canvas-wysiwyg-tools">
+          <button type="button" title="撤销" aria-label="撤销" disabled={!editor?.can().undo()} onClick={() => editor?.chain().focus().undo().run()}><Undo2 size={16} /></button>
+          <button type="button" title="重做" aria-label="重做" disabled={!editor?.can().redo()} onClick={() => editor?.chain().focus().redo().run()}><Redo2 size={16} /></button>
+          <span className="canvas-wysiwyg-divider" />
+          <div className="canvas-wysiwyg-menu-wrap">
+            <button type="button" aria-expanded={menuOpen === "style"} onClick={(event) => toggleMenu("style", event.currentTarget)}>样式 <ChevronDown size={13} /></button>
+            {menuOpen === "style" && <div className="canvas-wysiwyg-menu" style={menuPosition}>
+              <button type="button" onClick={() => { editor?.chain().focus().setParagraph().run(); setMenuOpen(null); }}>正文</button>
+              {[1, 2, 3].map((level) => <button key={level} type="button" onClick={() => { editor?.chain().focus().toggleHeading({ level: level as 1 | 2 | 3 }).run(); setMenuOpen(null); }}>标题 {level}</button>)}
+            </div>}
           </div>
-
-          <button
-            type="button"
-            className="canvas-action-btn"
-            onClick={handleCopyMarkdown}
-            title="复制 Markdown"
-          >
-            {copied ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
-            <span>{copied ? "已复制" : "复制"}</span>
-          </button>
-
-          <button
-            type="button"
-            className={`canvas-save-badge-btn ${dirty ? "dirty" : "saved"}`}
-            disabled={!dirty || saving || conflicted}
-            onClick={() => void save()}
-            title="保存修改 (Ctrl+S)"
-          >
-            <span className="status-dot" />
-            <span>{saving ? "保存中..." : dirty ? "保存修改" : "已保存"}</span>
-          </button>
-
-          <button
-            type="button"
-            className={`canvas-action-btn outline-toggle ${inspectorOpen ? "active" : ""}`}
-            onClick={() => setInspectorOpen(!inspectorOpen)}
-            title="大纲与文档属性"
-          >
-            <BookOpen size={15} />
-          </button>
+          <span className="canvas-wysiwyg-divider" />
+          <button type="button" title="加粗" aria-label="加粗" aria-pressed={editor?.isActive("bold") || false} onClick={() => editor?.chain().focus().toggleBold().run()}><Bold size={16} /></button>
+          <button type="button" title="斜体" aria-label="斜体" aria-pressed={editor?.isActive("italic") || false} onClick={() => editor?.chain().focus().toggleItalic().run()}><Italic size={16} /></button>
+          <button type="button" title="下划线" aria-label="下划线" aria-pressed={editor?.isActive("underline") || false} onClick={() => editor?.chain().focus().toggleUnderline().run()}><Underline size={16} /></button>
+          <button type="button" title="行内代码" aria-label="行内代码" aria-pressed={editor?.isActive("code") || false} onClick={() => editor?.chain().focus().toggleCode().run()}><Code size={16} /></button>
+          <span className="canvas-wysiwyg-divider" />
+          <button type="button" title="链接" aria-label="链接" onClick={() => setDialog({ kind: "link", url: editor?.getAttributes("link").href || "", alt: "" })}><Link size={16} /></button>
+          <button type="button" title="图片" aria-label="图片" onClick={() => setDialog({ kind: "image", url: "", alt: "" })}><ImageIcon size={16} /></button>
+          <input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden onChange={(event) => { if (event.target.files) void insertImageFiles(Array.from(event.target.files)); event.target.value = ""; }} />
+          <button type="button" title="表格" aria-label="表格" onClick={() => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}><Table2 size={16} /></button>
+          <button type="button" title="待办" aria-label="待办" onClick={() => editor?.chain().focus().toggleTaskList().run()}><CheckSquare size={16} /></button>
+          <button type="button" title="引用" aria-label="引用" onClick={() => editor?.chain().focus().toggleBlockquote().run()}><Quote size={16} /></button>
+          <button type="button" title="无序列表" aria-label="无序列表" onClick={() => editor?.chain().focus().toggleBulletList().run()}><List size={16} /></button>
+          <button type="button" title="有序列表" aria-label="有序列表" onClick={() => editor?.chain().focus().toggleOrderedList().run()}><ListOrdered size={16} /></button>
+          <div className="canvas-wysiwyg-menu-wrap">
+            <button type="button" aria-expanded={menuOpen === "insert"} onClick={(event) => toggleMenu("insert", event.currentTarget)}>插入 <ChevronDown size={13} /></button>
+            {menuOpen === "insert" && <div className="canvas-wysiwyg-menu" style={menuPosition}>
+              <button type="button" onClick={() => { setDialog({ kind: "cover", url: "", alt: "" }); setMenuOpen(null); }}>插入或更换封面</button>
+              <button type="button" onClick={() => { imageInputRef.current?.click(); setMenuOpen(null); }}>从设备上传图片</button>
+              <button type="button" onClick={() => { editor?.chain().focus().toggleCodeBlock().run(); setMenuOpen(null); }}>代码块</button>
+              <button type="button" onClick={() => { editor?.chain().focus().setHorizontalRule().run(); setMenuOpen(null); }}>分隔线</button>
+              <button type="button" onClick={() => { editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(); setMenuOpen(null); }}>3 × 3 表格</button>
+            </div>}
+          </div>
+          <button type="button" title="分隔线" aria-label="分隔线" onClick={() => editor?.chain().focus().setHorizontalRule().run()}><Minus size={16} /></button>
+        </div>
+        <div className="canvas-wysiwyg-actions">
+          <button type="button" title="审查上一版变更" aria-label="审查上一版变更" aria-pressed={reviewOpen} onClick={() => void openReview()}><FileText size={16} /><span>变更</span></button>
+          <button type="button" title="复制 Markdown" onClick={() => void copyMarkdown()}>{copied ? <Check size={15} /> : <Copy size={15} />}<span>{copied ? "已复制" : "复制"}</span></button>
+          <button type="button" className="canvas-wysiwyg-save" aria-label={saving ? "保存中" : dirty ? "保存画布" : "画布已保存"} disabled={!dirty || saving || conflicted} onClick={() => void save()}><Save size={15} /><span>{saving ? "保存中" : dirty ? "保存" : "已保存"}</span></button>
+          <button type="button" title="大纲与文档信息" aria-label="大纲与文档信息" aria-pressed={outlineOpen} onClick={() => setOutlineOpen(!outlineOpen)}><BookOpen size={16} /></button>
         </div>
       </header>
 
-      {/* Warning banner if conflicted */}
-      {error && (
-        <div className="canvas-editor-warning" role="alert">
-          <span>{error}</span>
-          {conflicted && (
-            <button
-              type="button"
-              onClick={() => {
-                const latest = document.content || DEFAULT_CANVAS_TEMPLATE;
-                baseline.current = { version: document.version, content: latest };
-                setDraft(latest);
-                setError("");
-              }}
-            >
-              载入最新版本
-            </button>
-          )}
-        </div>
-      )}
+      {error && <div className="canvas-wysiwyg-warning" role="alert">
+        <span>{error}</span>
+        {conflicted && <><button type="button" onClick={() => void copyMarkdown()}>复制本地稿</button><button type="button" onClick={() => {
+          editor?.commands.setContent(document.content, { contentType: "markdown", emitUpdate: false });
+          const normalized = editor?.getMarkdown() || document.content;
+          baseline.current = { version: document.version, content: normalized };
+          setDraft(normalized);
+          setError("");
+        }}>载入最新版</button></>}
+      </div>}
 
-      {/* Main Document Workspace */}
-      <div className="canvas-main-area">
-        <div className="canvas-scroll-viewport">
-          <div className="canvas-doc-paper">
-            {/* Cover Banner */}
-            <div
-              className="canvas-cover-banner"
-              style={{ background: COVER_PRESETS[coverIndex].bg }}
-            >
-              <button
-                type="button"
-                className="canvas-change-cover-btn"
-                onClick={() => setCoverIndex((coverIndex + 1) % COVER_PRESETS.length)}
-                title="更换封面风格"
-              >
-                <ImageIcon size={14} />
-                <span>更换封面</span>
-              </button>
-            </div>
-
-            {/* Document Header */}
-            <div className="canvas-doc-header">
-              <h1 className="canvas-doc-title">{docTitle}</h1>
-              <p className="canvas-doc-subtitle">{docSubtitle}</p>
-
-              {/* Tag Row */}
-              <div className="canvas-tag-bar">
-                {tags.map((tag) => (
-                  <span key={tag} className="canvas-tag-chip">
-                    #{tag}
-                  </span>
-                ))}
-                {addingTag ? (
-                  <div className="canvas-new-tag-input-wrap">
-                    <input
-                      type="text"
-                      className="canvas-new-tag-input"
-                      value={newTagInput}
-                      placeholder="标签名"
-                      autoFocus
-                      onChange={(e) => setNewTagInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleAddTag();
-                        if (e.key === "Escape") setAddingTag(false);
-                      }}
-                    />
-                    <button type="button" onClick={handleAddTag}>
-                      <Check size={12} />
-                    </button>
-                    <button type="button" onClick={() => setAddingTag(false)}>
-                      <X size={12} />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    className="canvas-add-tag-btn"
-                    onClick={() => setAddingTag(true)}
-                    title="添加标签"
-                  >
-                    <Plus size={13} />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Document Content View */}
-            {view === "edit" ? (
-              <textarea
-                ref={textareaRef}
-                className="canvas-markdown-textarea"
-                aria-label="Markdown 正文编辑器"
-                spellCheck={false}
-                value={draft}
-                onChange={(e) => updateDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
-                    e.preventDefault();
-                    void save();
-                  }
-                }}
-              />
-            ) : view === "preview" ? (
-              <div className="canvas-document-preview message-markdown">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={canvasMarkdownComponents}
-                >
-                  {draft}
-                </ReactMarkdown>
-              </div>
-            ) : (
-              /* Split View */
-              <div className="canvas-split-container">
-                <textarea
-                  ref={textareaRef}
-                  className="canvas-markdown-textarea split"
-                  aria-label="Markdown 正文编辑器"
-                  spellCheck={false}
-                  value={draft}
-                  onChange={(e) => updateDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
-                      e.preventDefault();
-                      void save();
-                    }
-                  }}
-                />
-                <div className="canvas-document-preview split message-markdown">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={canvasMarkdownComponents}
-                  >
-                    {draft}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            )}
+      <div className={`canvas-wysiwyg-body ${outlineOpen || reviewOpen ? "with-outline" : ""}`}>
+        <div className={`canvas-wysiwyg-scroll ${draggingImage ? "dragging-image" : ""}`} onScroll={() => { setMenuOpen(null); setSelection(""); }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setDraggingImage(true); } }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDraggingImage(false); }} onDrop={(event) => {
+          if (!event.dataTransfer.files.length) return;
+          event.preventDefault();
+          setDraggingImage(false);
+          const pos = editor?.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+          void insertImageFiles(Array.from(event.dataTransfer.files), pos);
+        }}>
+          <div className="canvas-wysiwyg-paper">
+            <div className="canvas-wysiwyg-kicker"><FileText size={15} /> 文稿 · v{document.version}</div>
+            <EditorContent editor={editor} />
           </div>
+          {draggingImage && <div className="canvas-wysiwyg-drop-hint">松开以将图片插入文稿</div>}
+          {uploadingImage && <div className="canvas-wysiwyg-upload-hint" role="status">图片上传中…</div>}
         </div>
-
-        {/* Right Document Sidebar (大纲 & 文档信息) */}
-        {inspectorOpen && (
-          <aside className="canvas-doc-sidebar">
-            <div className="canvas-sidebar-header">
-              <div className="canvas-sidebar-tabs">
-                <button
-                  type="button"
-                  className={inspectorTab === "outline" ? "active" : ""}
-                  onClick={() => setInspectorTab("outline")}
-                >
-                  大纲
-                </button>
-                <button
-                  type="button"
-                  className={inspectorTab === "info" ? "active" : ""}
-                  onClick={() => setInspectorTab("info")}
-                >
-                  文档信息
-                </button>
-              </div>
-            </div>
-
-            <div className="canvas-sidebar-body">
-              {inspectorTab === "outline" ? (
-                <div className="canvas-toc-panel">
-                  <div className="canvas-toc-root-item">
-                    <FileText size={14} />
-                    <span>{docTitle}</span>
-                  </div>
-                  {headings.length > 0 ? (
-                    <ul className="canvas-toc-list">
-                      {headings.map((h, i) => (
-                        <li
-                          key={i}
-                          className={`canvas-toc-item level-${h.level}`}
-                          onClick={() => {
-                            const el = window.document.getElementById(h.id);
-                            if (el) el.scrollIntoView({ behavior: "smooth" });
-                          }}
-                        >
-                          <span className="toc-bullet">›</span>
-                          <span className="toc-text">{h.text}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="canvas-toc-empty">暂无章节标题（输入 ## 即可生成大纲）</p>
-                  )}
-
-                  {/* Tags section under Outline */}
-                  <div className="canvas-sidebar-section">
-                    <div className="canvas-sidebar-section-title">
-                      <span>标签</span>
-                      <button
-                        type="button"
-                        className="sidebar-add-tag"
-                        onClick={() => setAddingTag(true)}
-                      >
-                        <Plus size={12} />
-                      </button>
-                    </div>
-                    <div className="canvas-sidebar-tags">
-                      {tags.map((t) => (
-                        <span key={t} className="sidebar-tag-pill">
-                          #{t}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="canvas-info-panel">
-                  <div className="canvas-sidebar-section">
-                    <div className="canvas-sidebar-section-title">字数统计</div>
-                    <div className="canvas-stat-row">
-                      <span className="stat-label">正文</span>
-                      <span className="stat-value">{stats.wordCount}</span>
-                    </div>
-                    <div className="canvas-stat-row">
-                      <span className="stat-label">字符数</span>
-                      <span className="stat-value">{stats.chars}</span>
-                    </div>
-                    <div className="canvas-stat-row">
-                      <span className="stat-label">阅读时间</span>
-                      <span className="stat-value">约 {stats.readTime} 分钟</span>
-                    </div>
-                  </div>
-
-                  <div className="canvas-sidebar-section">
-                    <div className="canvas-sidebar-section-title">文档属性</div>
-                    <div className="canvas-stat-row">
-                      <span className="stat-label">创建时间</span>
-                      <span className="stat-value">2024-03-12 10:24</span>
-                    </div>
-                    <div className="canvas-stat-row">
-                      <span className="stat-label">更新时间</span>
-                      <span className="stat-value">今天 15:36</span>
-                    </div>
-                    <div className="canvas-stat-row">
-                      <span className="stat-label">文档路径</span>
-                      <span className="stat-value path">/产品设计/{docTitle}</span>
-                    </div>
-                    <div className="canvas-stat-row">
-                      <span className="stat-label">状态</span>
-                      <span className="stat-value status">
-                        <span className="dot" /> 已保存
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </aside>
-        )}
+        {reviewOpen ? <aside className="canvas-wysiwyg-outline canvas-wysiwyg-review" aria-label="版本变更审查">
+          <div className="canvas-wysiwyg-review-header"><strong>版本变更</strong><button type="button" aria-label="关闭变更审查" onClick={() => setReviewOpen(false)}><X size={16} /></button></div>
+          <p>v{Math.max(1, document.version - 1)} → v{document.version} · 红色为删除，绿色为新增</p>
+          {dirty && <p>当前还有未保存修改；下方只比较已保存版本。</p>}
+          {reviewError ? <p role="alert">{reviewError}</p> : priorRevision ? <div className="canvas-wysiwyg-diff">{changes.map((line, index) => <div key={index} className={`kind-${line.kind}`}><span>{line.kind === "added" ? "+" : line.kind === "removed" ? "−" : " "}</span><code>{line.text || " "}</code></div>)}</div> : <p>{document.version < 2 ? "尚无上一版可供对比。" : "正在读取上一版…"}</p>}
+          {priorRevision && <button type="button" className="canvas-wysiwyg-restore" disabled={dirty} onClick={() => { if (!window.confirm(`将 v${priorRevision.version} 载入编辑器？需要再次保存才会生效。`)) return; editor?.commands.setContent(priorRevision.content, { contentType: "markdown" }); setReviewOpen(false); }}>载入上一版到编辑器</button>}
+        </aside> : outlineOpen && <aside className="canvas-wysiwyg-outline">
+          <div className="canvas-wysiwyg-outline-title">大纲</div>
+          <strong className="canvas-wysiwyg-doc-title">{title}</strong>
+          <nav aria-label="文档大纲">
+            {outline.filter((item) => item.level > 1).length ? outline.filter((item) => item.level > 1).map((item, index) => (
+              <button key={`${item.pos}-${index}`} type="button" className={`level-${item.level}`} onClick={() => editor?.chain().focus().setTextSelection(item.pos + 1).scrollIntoView().run()}>{item.text}</button>
+            )) : <p>添加章节标题后会显示在这里。</p>}
+          </nav>
+          <div className="canvas-wysiwyg-info">
+            <div><span>字数</span><strong>{words}</strong></div>
+            <div><span>版本</span><strong>v{document.version}</strong></div>
+            <div><span>创建</span><strong>{formatDate(document.created_at)}</strong></div>
+            <div><span>更新</span><strong>{formatDate(document.updated_at)}</strong></div>
+          </div>
+        </aside>}
       </div>
+
+      {selection && onAskAI && <div className="canvas-wysiwyg-selection-actions" role="toolbar" aria-label="选中文本操作" style={selectionPosition} onMouseDown={(event) => event.preventDefault()}>
+        <button type="button" title="加粗" aria-label="加粗选中文本" onClick={() => editor?.chain().focus().toggleBold().run()}><Bold size={15} /></button>
+        <button type="button" title="斜体" aria-label="斜体选中文本" onClick={() => editor?.chain().focus().toggleItalic().run()}><Italic size={15} /></button>
+        <span className="canvas-wysiwyg-divider" />
+        {([ ["polish", "润色"], ["expand", "扩写"], ["correct", "纠错"], ["restructure", "重构"] ] as const).map(([action, label]) => <button key={action} type="button" onClick={() => { onAskAI(selection, action); setSelection(""); }}>{label}</button>)}
+      </div>}
+
+      {dialog && <div className="canvas-url-backdrop" onMouseDown={() => setDialog(null)}>
+        <form className="canvas-url-dialog" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); applyUrl(); }}>
+          <div><strong>{dialog.kind === "link" ? "插入链接" : dialog.kind === "cover" ? "设置封面" : "插入图片"}</strong><button type="button" aria-label="关闭" onClick={() => setDialog(null)}><X size={16} /></button></div>
+          <label>地址<input autoFocus value={dialog.url} placeholder="https://example.com" onChange={(event) => setDialog({ ...dialog, url: event.target.value })} /></label>
+          <label>{dialog.kind === "link" ? "显示文字（无选区时使用）" : "替代文字"}<input value={dialog.alt} placeholder={dialog.kind === "link" ? "链接文字" : "描述这张图片"} onChange={(event) => setDialog({ ...dialog, alt: event.target.value })} /></label>
+          <button type="submit">插入</button>
+        </form>
+      </div>}
     </div>
   );
 }

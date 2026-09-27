@@ -94,7 +94,7 @@ def _apply_seed(db: Session) -> None:
             ProviderConfig(
                 id="deepseek",
                 name="DeepSeek 官方 API",
-                kind="deepseek",
+                kind="openai-chat",
                 base_url="https://api.deepseek.com",
                 api_key_env="DEEPSEEK_API_KEY",
                 default_model="deepseek-flash",

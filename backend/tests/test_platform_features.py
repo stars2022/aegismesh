@@ -175,6 +175,23 @@ def test_canvas_read_endpoint() -> None:
         assert test_client.get("/api/canvas/canvas-none").status_code == 404
 
 
+def test_canvas_revision_returns_owner_scoped_snapshot() -> None:
+    session = f"revision-{uuid.uuid4().hex}"
+    with client() as test_client:
+        created = test_client.get(f"/api/canvas/session/{session}")
+        assert created.status_code == 200
+        canvas = created.json()
+        assert canvas["content"] == "# 协同画布\n"
+        saved = test_client.put(f"/api/canvas/session/{session}", json={
+            "content": "# 协同画布\n\n新增正文\n", "base_version": canvas["version"],
+        })
+        assert saved.status_code == 200
+        previous = test_client.get(f"/api/canvas/{canvas['id']}/revisions/1")
+        assert previous.status_code == 200
+        assert previous.json()["content"] == canvas["content"]
+        assert test_client.get(f"/api/canvas/{canvas['id']}/revisions/999").status_code == 404
+
+
 def test_stream_endpoint_fails_closed_without_mtls(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "aip_tls_port", 0)
     agent = create_agent(

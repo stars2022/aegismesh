@@ -124,7 +124,7 @@ def clean_model_output(text: str) -> str:
     )
     cleaned = re.sub(r'name="[^"]*"\s*(?:string="[^"]*")?>', "", cleaned)
     cleaned = re.sub(
-        r'```(?:json)?\s*\{\s*"name"\s*:\s*"(?:dispatch_task|list_agents|check_subagent_status|fetch_session_history|web_search|run_swarm_discussion|execute_workflow|canvas_read|canvas_write_section|canvas_delete_section|canvas_replace_all|canvas_append|canvas_history)"[\s\S]*?\}\s*```',
+        r'```(?:json)?\s*\{\s*"name"\s*:\s*"(?:dispatch_task|list_agents|check_subagent_status|fetch_session_history|web_search|run_swarm_discussion|execute_workflow|canvas_read|canvas_write_section|canvas_delete_section|canvas_replace_all|canvas_replace_selection|canvas_append|canvas_history)"[\s\S]*?\}\s*```',
         "",
         cleaned,
     )
@@ -1306,6 +1306,7 @@ class TransportRegistry:
         self._transports: dict[str, PartnerTransport] = {
             "openai-compatible": OpenAICompatibleTransport(),
             "openai-chat": OpenAICompatibleTransport(),
+            "deepseek": OpenAICompatibleTransport(),  # Legacy seeded provider kind.
             "openai-responses": OpenAIResponsesTransport(),
             "anthropic": AnthropicTransport(),
             "aip-rpc": AipSdkTransport(),

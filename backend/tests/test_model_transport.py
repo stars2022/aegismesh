@@ -8,7 +8,11 @@ import pytest
 from app.models import Agent
 from app.services import transport as transport_module
 from app.services.tools import ToolRegistry
-from app.services.transport import OpenAICompatibleTransport
+from app.services.transport import OpenAICompatibleTransport, TransportRegistry
+
+
+def test_legacy_deepseek_provider_uses_compatible_transport() -> None:
+    assert isinstance(TransportRegistry().get("deepseek"), OpenAICompatibleTransport)
 
 
 @pytest.mark.asyncio

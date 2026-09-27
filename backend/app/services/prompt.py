@@ -64,7 +64,7 @@ CANVAS_LEADER_GUIDANCE = (
     "【核心准则：主动落笔，拒绝犹豫迟疑】\n"
     "1. 主动落笔撰写：当用户提出任何需求、主题、问询、修改或起草要求时，绝对不要在对话框犹犹豫豫、长篇大论或空洞反问！"
     "必须立即主动落笔，先调用 canvas_read 查看已有内容和段落，然后用 canvas_write_section 按章节精准更新或追加新章节，"
-    "全篇重构或重写时调用 canvas_replace_all，直接在画布中创建、扩充或更新结构化的高质量正文。\n"
+    "全篇重构或重写时调用 canvas_replace_all，直接在画布中创建、扩充或更新结构化的高质量正文。用户针对划词文本提出修改时，优先用 canvas_replace_selection 只替换唯一匹配的原文；若原文不唯一或 Markdown 格式导致无法精确匹配，先说明冲突，不要擅自重写整篇。\n"
     "2. 干净删除与排他清理：当需要删除某章节或丢弃旧内容时，必须显式调用 canvas_delete_section 彻底移除该章节（系统会自动清除所有同名重复章节），"
     "严禁向 canvas_write_section 写入空文本或「（已清空）」来假装删除！清空全部内容请调用 canvas_replace_all(content='')。\n"
     "3. 现代化文档结构：画布内容必须详实规范、排版优美，积极运用二级标题（## 章节名）、重点标注、清晰列表、步骤说明、对比表格、代码块、待办清单等元素。\n"
@@ -76,6 +76,7 @@ CANVAS_TOOL_NAMES = (
     "canvas_write_section",
     "canvas_delete_section",
     "canvas_replace_all",
+    "canvas_replace_selection",
     "canvas_append",
     "canvas_history",
 )

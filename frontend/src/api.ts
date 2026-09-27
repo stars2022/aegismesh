@@ -37,6 +37,8 @@ export type CanvasDocument = {
   title: string
   content: string
   version: number
+  created_at?: string | null
+  updated_at?: string | null
   revisions: { version: number; editor_name: string; summary: string; created_at: string }[]
 }
 
@@ -249,6 +251,8 @@ export const api = {
     request<CanvasDocument>(
       `/api/canvas/${canvasId}`,
     ),
+  getCanvasRevision: (canvasId: string, version: number) =>
+    request<{ version: number; content: string; summary: string }>(`/api/canvas/${encodeURIComponent(canvasId)}/revisions/${version}`),
   getSessionCanvas: (sessionId: string) =>
     request<CanvasDocument>(
       `/api/canvas/session/${encodeURIComponent(sessionId)}`,

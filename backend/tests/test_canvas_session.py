@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
+from app.services import canvas as canvas_module
 from app.models import CanvasDoc, CanvasRevision, Invocation
 from app.services.canvas import (
     CanvasError,
@@ -62,13 +65,43 @@ def test_markdown_save_checks_owner_and_version(db) -> None:
     assert saved.title == "新标题"
     assert saved.version == 2
     assert saved.content == "# 新标题\n\n正文"
-    assert db.query(CanvasRevision).filter(CanvasRevision.canvas_id == saved.id).count() == 1
+    revisions = db.query(CanvasRevision).filter(CanvasRevision.canvas_id == saved.id).order_by(CanvasRevision.version).all()
+    assert [revision.version for revision in revisions] == [1, 2]
+    assert revisions[0].content_after == "# 协同画布\n"
 
     with pytest.raises(CanvasError, match="版本"):
         replace_document(db, saved, content="过期稿", base_version=1, owner_id="demo-owner")
     with pytest.raises(CanvasError, match="无权访问"):
         get_or_create_session_canvas(db, "session-edit", "demo-other")
     assert db.get(CanvasDoc, saved.id).content == "# 新标题\n\n正文"
+
+
+def test_canvas_replace_selection_requires_unique_current_text(db) -> None:
+    doc = get_or_create_session_canvas(db, "session-selection", "demo-owner")
+    saved = replace_document(
+        db, doc, content="# 研究\n\n唯一原文\n", base_version=1, owner_id="demo-owner",
+    )
+    with pytest.raises(CanvasError, match="版本号"):
+        apply_op(db, saved, editor_id="leader", editor_name="主智能体", op="replace_selection", selection="唯一原文", content="新内容")
+    with pytest.raises(CanvasError, match="版本冲突"):
+        apply_op(db, saved, editor_id="leader", editor_name="主智能体", op="replace_selection", selection="唯一原文", content="新内容", base_version=1)
+    with pytest.raises(CanvasError, match="匹配到 0 处"):
+        apply_op(db, saved, editor_id="leader", editor_name="主智能体", op="replace_selection", selection="不存在", content="新内容", base_version=2)
+    applied = apply_op(db, saved, editor_id="leader", editor_name="主智能体", op="replace_selection", selection="唯一原文", content="新内容", base_version=2)
+    assert applied["version"] == 3
+    assert db.get(CanvasDoc, saved.id).content == "# 研究\n\n新内容\n"
+
+
+def test_only_untouched_legacy_sample_is_retired(db, monkeypatch) -> None:
+    old = "# 旧版演示\n\n预置文章"
+    monkeypatch.setattr(canvas_module, "_LEGACY_DEMO_TEMPLATE_SHA256", hashlib.sha256(old.encode()).hexdigest())
+    doc = CanvasDoc(id=canvas_id_for("legacy-demo"), owner_id="owner", title="旧版演示", content=old, version=1)
+    db.add(doc)
+    db.commit()
+    converted = get_or_create_session_canvas(db, "legacy-demo", "owner")
+    assert converted.content == "# 协同画布\n"
+    assert converted.version == 2
+    assert [row.content_after for row in db.query(CanvasRevision).filter(CanvasRevision.canvas_id == doc.id).order_by(CanvasRevision.version)] == [old, "# 协同画布\n"]
 
 
 def test_legacy_snapshot_cannot_be_claimed_by_another_owner(db) -> None:
@@ -217,4 +250,3 @@ def test_parse_canvas_ops_protocol_support() -> None:
     assert ops[1]["op"] == "replace_all"
     assert ops[1]["content"] == "# 新标题\n\n全新内容"
     assert ops[1]["base_version"] == 6
-

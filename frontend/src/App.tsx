@@ -4,6 +4,8 @@ import {
   createElement,
   FormEvent,
   isValidElement,
+  lazy,
+  Suspense,
   useEffect,
   useMemo,
   useRef,
@@ -42,6 +44,7 @@ import {
   Lock,
   LogOut,
   Menu,
+  Maximize2,
   MessageSquare,
   MessageSquareText,
   Network,
@@ -54,6 +57,7 @@ import {
   Pin,
   Plus,
   Minus,
+  Minimize2,
   Radio,
   Download,
   Globe,
@@ -81,7 +85,7 @@ import {
   Paperclip,
 } from "lucide-react";
 import { api, type CanvasDocument } from "./api";
-import { CanvasWorkspace, DEFAULT_CANVAS_TEMPLATE } from "./CanvasWorkspace";
+const CanvasWorkspace = lazy(() => import("./CanvasWorkspace").then((module) => ({ default: module.CanvasWorkspace })));
 import { hasCompletedTaskMessage, upsertRecoveredAssistant } from "./chatRecovery";
 import { equalizeWeights, normalizeWeights, rebalanceWeights } from "./routingWeights";
 import ReactMarkdown from "react-markdown";
@@ -6366,6 +6370,7 @@ function CanvasFloatingAssistant({
   onClearHistory,
   canvasData,
   composerTextareaRef,
+  openRequest,
 }: {
   messages: ChatMessage[];
   showAllMessages: boolean;
@@ -6397,10 +6402,19 @@ function CanvasFloatingAssistant({
   onClearHistory: () => void;
   canvasData: CanvasDocument | null;
   composerTextareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  openRequest: number;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [tab, setTab] = useState<"chat" | "route" | "collab" | "menu">("chat");
   const threadRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (openRequest > 0) {
+      setTab("chat");
+      setCollapsed(false);
+    }
+  }, [openRequest]);
 
   // Auto-scroll chat to bottom
   useEffect(() => {
@@ -6409,26 +6423,21 @@ function CanvasFloatingAssistant({
     }
   }, [messages, sending, collapsed, tab]);
 
-  if (collapsed) {
-    return (
-      <button
-        type="button"
-        className="canvas-floating-pill"
-        onClick={() => setCollapsed(false)}
-        title="展开智能协同助手"
-      >
+  const selectedAgent = agents.find((a) => a.id === agentId);
+
+  return (
+    <>
+    <button type="button" className={`canvas-floating-mobile-pill ${collapsed ? "" : "hidden"}`} aria-label="展开智能协同助手" tabIndex={collapsed ? 0 : -1} onClick={() => { setExpanded(false); setCollapsed(false); }}>
+      <Sparkles size={16} /><span>智能协同助手</span>{messages.length > 0 && <span className="pill-badge">{messages.length}</span>}
+    </button>
+    <button type="button" className={`canvas-floating-backdrop ${collapsed ? "collapsed" : ""}`} aria-label="收起协同助手" tabIndex={collapsed ? -1 : 0} onClick={() => { setCollapsed(true); setExpanded(false); }} />
+    <div className={`canvas-floating-assistant ${collapsed ? "collapsed" : ""} ${expanded ? "expanded" : ""}`}>
+      <button type="button" className="canvas-floating-pill" onClick={() => setCollapsed(false)} title="展开智能协同助手" aria-label="展开智能协同助手" tabIndex={collapsed ? 0 : -1}>
         <Sparkles size={16} className="sparkle-icon" />
         <span className="pill-title">智能协同助手</span>
         {sending && <span className="pill-pulse-dot" />}
         {messages.length > 0 && <span className="pill-badge">{messages.length}</span>}
       </button>
-    );
-  }
-
-  const selectedAgent = agents.find((a) => a.id === agentId);
-
-  return (
-    <div className="canvas-floating-assistant">
       <header className="floating-assistant-header">
         <div className="header-brand">
           <Sparkles size={16} className="sparkle-icon" />
@@ -6444,7 +6453,7 @@ function CanvasFloatingAssistant({
             type="button"
             className={`floating-tab ${tab === "chat" ? "active" : ""}`}
             onClick={() => setTab("chat")}
-            role="tab"
+            role="tab" aria-label="对话" title="对话" aria-selected={tab === "chat"}
           >
             <MessageSquare size={13} />
             <span>对话</span>
@@ -6453,7 +6462,7 @@ function CanvasFloatingAssistant({
             type="button"
             className={`floating-tab ${tab === "route" ? "active" : ""}`}
             onClick={() => setTab("route")}
-            role="tab"
+            role="tab" aria-label="路由" title="路由" aria-selected={tab === "route"}
           >
             <Route size={13} />
             <span>路由</span>
@@ -6462,7 +6471,7 @@ function CanvasFloatingAssistant({
             type="button"
             className={`floating-tab ${tab === "collab" ? "active" : ""}`}
             onClick={() => setTab("collab")}
-            role="tab"
+            role="tab" aria-label="协作" title="协作" aria-selected={tab === "collab"}
           >
             <Users size={13} />
             <span>协作</span>
@@ -6471,17 +6480,20 @@ function CanvasFloatingAssistant({
             type="button"
             className={`floating-tab ${tab === "menu" ? "active" : ""}`}
             onClick={() => setTab("menu")}
-            role="tab"
+            role="tab" aria-label="菜单" title="菜单" aria-selected={tab === "menu"}
           >
             <SlidersHorizontal size={13} />
             <span>菜单</span>
           </button>
         </div>
 
+        <button type="button" className="floating-resize-btn" onClick={() => setExpanded((value) => !value)} aria-label={expanded ? "缩小协同助手" : "放大协同助手"} title={expanded ? "缩小" : "放大"}>
+          {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+        </button>
         <button
           type="button"
           className="floating-minimize-btn"
-          onClick={() => setCollapsed(true)}
+          onClick={() => { setCollapsed(true); setExpanded(false); }}
           title="最小化为浮标"
         >
           <Minus size={15} />
@@ -6603,6 +6615,8 @@ function CanvasFloatingAssistant({
                   </button>
                   <Dropdown
                     className="floating-agent-dropdown"
+                    title="选择协调智能体"
+                    leadingIcon={<Bot size={14} />}
                     value={agentId}
                     onChange={handleAgentSelect}
                     options={agents
@@ -6769,6 +6783,7 @@ function CanvasFloatingAssistant({
         )}
       </div>
     </div>
+    </>
   );
 }
 
@@ -6816,6 +6831,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
       Boolean(initialActive?.isCanvas || activeMeta?.isCanvas),
   );
   const [canvasMobileView, setCanvasMobileView] = useState<"canvas" | "chat">("canvas");
+  const [canvasAssistantOpenRequest, setCanvasAssistantOpenRequest] = useState(0);
   const [canvasData, setCanvasData] = useState<CanvasDocument | null>(
     latestResult(initialActive?.messages || [])?.result_data?.canvas || null,
   );
@@ -8652,16 +8668,17 @@ void runMessage(next.text, next.agentId, next.attachments);
         </section>
       ) : isCanvasConv ? (
         <>
-          <CanvasWorkspace
-            document={
-              canvasData || {
-                id: `canvas-${session || activeId}`,
-                title: "产品设计笔记",
-                content: DEFAULT_CANVAS_TEMPLATE,
-                version: 1,
-                revisions: [],
-              }
-            }
+          {canvasData ? <Suspense fallback={<div className="canvas-loading-state">正在加载编辑器…</div>}><CanvasWorkspace
+            key={canvasData.id}
+            document={canvasData}
+            sessionTitle={activeMeta?.title || "协同画布"}
+            onOpenHistory={() => setMobileHistoryOpen(true)}
+            onAskAI={(selected, action) => {
+              const instruction = { polish: "润色表达并保持原意", expand: "补充有依据的细节，不编造事实", correct: "纠正错别字、语法和明显事实错误", restructure: "重组段落结构，使论证更清晰" }[action];
+              setInput(`请只针对画布中选中的文本${instruction}。先 canvas_read 获取最新版本，优先用 canvas_replace_selection 精确替换唯一原文；若无法唯一匹配，请说明原因，不要改动其他段落。选中文本：\n\n“${selected}”`);
+              setCanvasAssistantOpenRequest((value) => value + 1);
+            }}
+            onUploadImage={async (file) => (await api.uploadFile(file)).url}
             onSave={async (content, baseVersion) => {
               if (!session) throw new Error("当前画布尚未绑定会话");
               try {
@@ -8673,7 +8690,7 @@ void runMessage(next.text, next.agentId, next.attachments);
                 throw reason;
               }
             }}
-          />
+          /></Suspense> : <div className="canvas-loading-state">正在加载画布…</div>}
           <input
             type="file"
             ref={fileInputRef}
@@ -8726,6 +8743,7 @@ void runMessage(next.text, next.agentId, next.attachments);
             }}
             canvasData={canvasData}
             composerTextareaRef={composerTextareaRef}
+            openRequest={canvasAssistantOpenRequest}
           />
         </>
       ) : (

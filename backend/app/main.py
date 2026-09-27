@@ -1402,8 +1402,25 @@ def get_canvas(canvas_id: str, request: Request, db: DbSession) -> dict:
         "title": doc.title,
         "content": doc.content,
         "version": doc.version,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+        "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
         "revisions": canvas_history_rows(db, canvas_id, limit=30),
     }
+
+
+@app.get("/api/canvas/{canvas_id}/revisions/{version}", dependencies=[Depends(require_demo)], tags=["canvas"])
+def get_canvas_revision(canvas_id: str, version: int, request: Request, db: DbSession) -> dict:
+    from .models import CanvasDoc, CanvasRevision
+
+    doc = db.get(CanvasDoc, canvas_id)
+    if not doc or doc.owner_id != extract_canvas_user_id(request):
+        raise HTTPException(status_code=404, detail="画布不存在")
+    revision = db.query(CanvasRevision).filter(
+        CanvasRevision.canvas_id == canvas_id, CanvasRevision.version == version
+    ).first()
+    if not revision:
+        raise HTTPException(status_code=404, detail="该版本无可用快照")
+    return {"version": revision.version, "content": revision.content_after, "summary": revision.summary}
 
 
 @app.get("/api/canvas/session/{session_id}", dependencies=[Depends(require_demo)], tags=["canvas"])
@@ -1419,6 +1436,8 @@ def get_session_canvas(session_id: str, request: Request, db: DbSession) -> dict
         "title": doc.title,
         "content": doc.content,
         "version": doc.version,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+        "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
         "revisions": canvas_history_rows(db, doc.id, limit=30),
     }
 
@@ -1447,6 +1466,8 @@ def update_session_canvas(
         "title": doc.title,
         "content": doc.content,
         "version": doc.version,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+        "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
         "revisions": canvas_history_rows(db, doc.id, limit=30),
     }
 
