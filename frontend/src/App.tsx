@@ -81,10 +81,10 @@ import {
   Users,
   Wrench,
   X,
-  Loader2,
   Paperclip,
 } from "lucide-react";
 import { api, type CanvasDocument } from "./api";
+import { FlowMark, LoadingFlow } from "./LoadingFlow";
 const CanvasWorkspace = lazy(() => import("./CanvasWorkspace").then((module) => ({ default: module.CanvasWorkspace })));
 import { hasCompletedTaskMessage, upsertRecoveredAssistant } from "./chatRecovery";
 import { equalizeWeights, normalizeWeights, rebalanceWeights } from "./routingWeights";
@@ -446,7 +446,7 @@ function App({ onLogout }: { onLogout?: () => void }) {
               onClick={() => void load()}
               title="刷新"
             >
-              <RefreshCw size={17} className={loading ? "spin" : ""} />
+              {loading ? <FlowMark className="flow-mark-compact" /> : <RefreshCw size={17} />}
             </button>
             <a className="primary-small" href="/">
               <Play size={15} fill="currentColor" />
@@ -1082,7 +1082,7 @@ function Studio({
                 title="刷新发现池"
                 aria-label="刷新发现池"
               >
-                <RefreshCw size={13} className={adpLoading ? "spin" : ""} />
+                {adpLoading ? <FlowMark className="flow-mark-compact" /> : <RefreshCw size={13} />}
               </button>
             )}
           </div>
@@ -1183,10 +1183,7 @@ function Studio({
                     }}
                     disabled={regBusy === agent.id}
                   >
-                    <RefreshCw
-                      size={11}
-                      className={regBusy === agent.id ? "spin" : ""}
-                    />
+                    {regBusy === agent.id ? <FlowMark className="flow-mark-compact" /> : <RefreshCw size={11} />}
                     同步审核
                   </button>
                 ) : null}
@@ -1318,8 +1315,7 @@ function Studio({
         <div style={{ padding: "40px 20px", textAlign: "center", color: "var(--muted)" }}>
           {adpLoading ? (
             <div style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-              <RefreshCw size={16} className="spin" />
-              <span>正在从官方 ADP 发现服务拉取全网智能体...</span>
+              <LoadingFlow label="正在从官方 ADP 发现服务拉取全网智能体..." />
             </div>
           ) : adpError ? (
             <div>{adpError}</div>
@@ -1635,7 +1631,7 @@ function DiscoveryModal({
               onClick={() => void search(query)}
               disabled={loading || !query.trim()}
             >
-              {loading ? <RefreshCw size={13} className="spin" /> : <Search size={13} />}
+              {loading ? <FlowMark className="flow-mark-compact" /> : <Search size={13} />}
               <span>{loading ? "检索中..." : "在线发现"}</span>
             </button>
           </div>
@@ -1680,8 +1676,7 @@ function DiscoveryModal({
 
           {loading ? (
             <div className="preview-modal-loading" style={{ padding: "40px 0" }}>
-              <RefreshCw size={24} className="spin" />
-              <span>正在向官方发现服务查询候选智能体...</span>
+              <LoadingFlow label="正在向官方发现服务查询候选智能体..." />
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
@@ -1840,8 +1835,7 @@ function RegistrationPreviewModal({
 
         {loading ? (
           <div className="preview-modal-loading">
-            <RefreshCw size={24} className="spin" />
-            <span>正在实时组装与校验 ACS 标准能力规范...</span>
+            <LoadingFlow label="正在实时组装与校验 ACS 标准能力规范..." />
           </div>
         ) : (
           <div className="preview-modal-body">
@@ -2007,7 +2001,7 @@ function RegistrationPreviewModal({
           >
             {submitting ? (
               <>
-                <RefreshCw size={13} className="spin" />
+                <FlowMark className="flow-mark-compact" />
                 正在提交注册审核...
               </>
             ) : (
@@ -3213,7 +3207,7 @@ function Providers({
                   disabled={testing === provider.id}
                 >
                   {testing === provider.id ? (
-                    <RefreshCw className="spin" size={14} />
+                    <FlowMark className="flow-mark-compact" />
                   ) : (
                     <Play size={14} />
                   )}
@@ -4773,7 +4767,7 @@ function SubagentConversationView({
         {collab.current_tool && (
           <div className="subagent-msg-bubble current-tool-live" style={{ padding: "8px 12px", background: "rgba(99, 102, 241, 0.06)", border: "1px dashed rgba(99, 102, 241, 0.25)", borderRadius: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: "var(--accent)" }}>
-              <Sparkles size={12} className="spin-slow" />
+              <FlowMark className="flow-mark-compact" />
               <span>正在调用工具：</span>
               <code style={{ fontSize: 11, background: "rgba(99, 102, 241, 0.12)", padding: "2px 6px", borderRadius: 4 }}>
                 {toolNames[collab.current_tool] || collab.current_tool}
@@ -6548,7 +6542,7 @@ function CanvasFloatingAssistant({
                         </span>
                         {message.streaming && sending && idx === messages.length - 1 && (
                           <span className="msg-streaming-indicator">
-                            <span className="pulse" /> 正在落笔...
+                            <FlowMark className="flow-mark-compact" /> 正在落笔...
                           </span>
                         )}
                       </div>
@@ -6653,7 +6647,7 @@ function CanvasFloatingAssistant({
               </strong>
               {sending && (
                 <div className="route-running-pulse">
-                  <span className="pulse" />
+                  <FlowMark className="flow-mark-compact" />
                   <span>调度执行中...</span>
                 </div>
               )}
@@ -8670,7 +8664,7 @@ void runMessage(next.text, next.agentId, next.attachments);
         </section>
       ) : isCanvasConv ? (
         <>
-          {canvasData ? <Suspense fallback={<div className="canvas-loading-state">正在加载编辑器…</div>}><CanvasWorkspace
+          {canvasData ? <Suspense fallback={<LoadingFlow label="正在加载画布…" canvas />}><CanvasWorkspace
             key={canvasData.id}
             document={canvasData}
             agentBusy={sending}
@@ -8693,7 +8687,7 @@ void runMessage(next.text, next.agentId, next.attachments);
                 throw reason;
               }
             }}
-          /></Suspense> : <div className="canvas-loading-state">正在加载画布…</div>}
+          /></Suspense> : <LoadingFlow label="正在加载画布…" canvas />}
           <input
             type="file"
             ref={fileInputRef}
@@ -8889,7 +8883,7 @@ void runMessage(next.text, next.agentId, next.attachments);
                         </span>
                         {message.streaming && (
                           <div className="turn-status" role="status" aria-live="polite">
-                            <span className="pulse" />
+                            <FlowMark className="flow-mark-compact" />
                             <span className="turn-status-text">
                               {agents.find((agent) => agent.id === agentId)?.role ===
                               "leader"
@@ -9035,7 +9029,7 @@ void runMessage(next.text, next.agentId, next.attachments);
                         "AegisMesh"}
                     </span>
                     <div className="turn-status" role="status" aria-live="polite">
-                      <span className="pulse" />
+                      <FlowMark className="flow-mark-compact" />
                       <span className="turn-status-text">
                         {agents.find((agent) => agent.id === agentId)?.role ===
                         "leader"
@@ -9212,7 +9206,7 @@ void runMessage(next.text, next.agentId, next.attachments);
                   disabled={uploading}
                   title="上传学术文献、论文或图片 (PDF, DOCX, TXT, MD, CSV, JSON, PNG, JPG 等)"
                 >
-                  {uploading ? <Loader2 size={14} className="spin" /> : <Paperclip size={14} />}
+                  {uploading ? <FlowMark className="flow-mark-compact" /> : <Paperclip size={14} />}
                   <span>{uploading ? "解析中..." : "上传材料"}</span>
                 </button>
                 {!activeMeta?.isGroup && (
@@ -9423,7 +9417,7 @@ void runMessage(next.text, next.agentId, next.attachments);
                 <strong>{inspector?.selected_agent?.name || agents.find((a) => a.id === agentId)?.name || "科研智能体协作平台"}</strong>
                 {sending && (
                   <div className="route-running-pulse">
-                    <span className="pulse" />
+                    <FlowMark className="flow-mark-compact" />
                     <span>本轮任务调度执行中...</span>
                   </div>
                 )}
@@ -10281,7 +10275,7 @@ function PageSkeleton() {
   return (
     <div className="skeleton-grid">
       {Array.from({ length: 8 }).map((_, index) => (
-        <div key={index} />
+        <div key={index} className="flow-sweep" />
       ))}
     </div>
   );

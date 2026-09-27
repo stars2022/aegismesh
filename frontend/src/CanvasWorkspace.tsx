@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import type { CanvasDocument } from "./api";
 import { api } from "./api";
+import { FlowMark } from "./LoadingFlow";
 import "./CanvasWorkspace.css";
 
 export const DEFAULT_CANVAS_TEMPLATE = "# 协同画布\n";
@@ -425,7 +426,7 @@ export function CanvasWorkspace({
             <EditorContent editor={editor} />
           </div>
           {draggingImage && <div className="canvas-wysiwyg-drop-hint">松开以将图片插入文稿</div>}
-          {uploadingImage && <div className="canvas-wysiwyg-upload-hint" role="status">图片上传中…</div>}
+          {uploadingImage && <div className="canvas-wysiwyg-upload-hint" role="status"><FlowMark className="flow-mark-compact" />图片上传中…</div>}
         </div>
         {reviewOpen ? <aside className="canvas-wysiwyg-outline canvas-wysiwyg-review" aria-label="版本变更审查">
           <div className="canvas-wysiwyg-review-header"><strong>{pendingReview ? "确认协同改动" : "版本变更"}</strong><button type="button" aria-label="关闭变更审查" onClick={() => setReviewOpen(false)}><X size={16} /></button></div>

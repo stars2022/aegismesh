@@ -383,8 +383,6 @@ button { color: inherit; }
 .profile-row > button:hover { background: var(--cdcdcd7); }
 .avatar { width: 29px; height: 29px; display: grid; place-items: center; color: var(--cffffff); background: var(--c6c6c66); border-radius: 50%; font-size: 12px; font-weight: 600; }
 
-.admin-loading { min-height: 100vh; display: grid; place-items: center; color: var(--c777771); }
-.admin-loading svg { animation: spin .9s linear infinite; }
 .login-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: var(--cefefeb); }
 .login-card { width: min(390px, 100%); padding: 34px; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 24px 70px var(--rgb-2424208); }
 .login-mark { width: 40px; height: 40px; display: grid; place-items: center; margin-bottom: 28px; color: var(--cffffff); background: var(--ink); border-radius: 10px; }
@@ -981,13 +979,14 @@ tr:last-child td { border-bottom: 0; }
 }
 
 /* 运行态流光扫光 (DeepSeek Harness / dsh-ui-concise 风格 Shimmer Sweep) */
-.concise-turn-root[data-state='running'] .concise-turn-trigger::after {
+.concise-turn-root[data-state='running'] .concise-turn-trigger::after,
+.flow-sweep::after {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
   left: 0;
-  width: 250px;
+  width: var(--flow-sweep-width, 250px);
   background: linear-gradient(
     90deg,
     transparent 0%,
@@ -998,8 +997,14 @@ tr:last-child td { border-bottom: 0; }
   pointer-events: none;
 }
 
+.flow-sweep { position: relative; overflow: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-sweep::after { animation: none; display: none; }
+}
+
 @keyframes dsh-concise-sweep {
-  0% { left: -250px; }
+  0% { left: calc(-1 * var(--flow-sweep-width, 250px)); }
   90%, 100% { left: 100%; }
 }
 
@@ -1266,11 +1271,8 @@ tr:last-child td { border-bottom: 0; }
 .data-actions p { margin: 0; color: var(--c888882); font-size: 11px; }
 
 .skeleton-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-.skeleton-grid div { height: 120px; background: linear-gradient(90deg, var(--cebebe7), var(--cf5f5f2), var(--cebebe7)); background-size: 200% 100%; border-radius: 9px; animation: shimmer 1.4s infinite; }
+.skeleton-grid div { height: 120px; background: color-mix(in srgb, var(--ink) 8%, var(--paper)); border-radius: 9px; }
 .skeleton-grid div:nth-child(n+5) { grid-column: span 2; height: 250px; }
-@keyframes shimmer { to { background-position: -200% 0; } }
-.spin { animation: spin .9s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ===== 移动端自适应组件基类 ===== */
 .chat-mobile-header { display: none; }
@@ -2967,12 +2969,6 @@ tr:last-child td { border-bottom: 0; }
   background: var(--amber-soft);
   padding: 4px 8px;
   border-radius: 4px;
-}
-.spin-slow {
-  animation: spin 3s linear infinite;
-}
-@keyframes spin {
-  100% { transform: rotate(360deg); }
 }
 .live-subagent-task {
   font-size: 11px;
@@ -4925,15 +4921,6 @@ tr:last-child td { border-bottom: 0; }
   font-size: 11px;
   color: var(--muted);
   flex-shrink: 0;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.spin {
-  animation: spin 1s linear infinite;
 }
 
 /* ===== 移动端附件与上传优化 ===== */

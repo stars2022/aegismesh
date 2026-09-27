@@ -1,0 +1,26 @@
+.flow-mark,
+.flow-line {
+  display: inline-block;
+  flex: none;
+  background: color-mix(in srgb, var(--ink) 9%, var(--paper));
+  border-radius: 999px;
+}
+
+.flow-mark { --flow-sweep-width: 48px; width: 24px; height: 6px; vertical-align: middle; }
+.flow-mark-compact { width: 16px; height: 5px; }
+
+.loading-flow { display: inline-flex; align-items: center; justify-content: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.loading-flow-page { display: flex; flex-direction: column; min-height: 100dvh; gap: 15px; }
+.loading-flow-canvas { display: flex; flex: 1; flex-direction: column; justify-content: flex-start; min-height: 100%; gap: 20px; padding: 64px 24px 32px; }
+.loading-flow-sheet { display: flex; flex-direction: column; gap: 15px; width: min(100%, 760px); min-height: 330px; padding: 45px 40px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+.flow-line { height: 11px; }
+.flow-line-title { width: 45%; height: 27px; margin-bottom: 30px; }
+.flow-line-lead { width: 64%; height: 14px; margin-bottom: 20px; }
+.flow-line-wide { width: 100%; }
+.flow-line-short { width: 72%; }
+.loading-flow-canvas .loading-flow-label { text-align: center; }
+
+@media (max-width: 600px) {
+  .loading-flow-canvas { padding: 34px 18px; }
+  .loading-flow-sheet { min-height: 280px; padding: 32px 24px; }
+}
