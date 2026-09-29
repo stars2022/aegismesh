@@ -5,16 +5,19 @@ import time
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from acps_sdk.aip import StructuredDataItem, TaskCommandType, TaskState
 from acps_sdk.aip.aip_rpc_model import RpcRequest
 
 from app.models import Agent, HostedTask, Invocation, ProviderConfig, RoutingPolicy
+from app.database import Base
 from app.schemas import ChatRequest
 from app.services import aip_execution, hosted_aip, orchestrator, transport
 from app.services.aip_execution import AipExecutionContext, InboundAipOrchestrator
+from app.services.context_projection import ContextProjectionEngine, ProjectedSnippet
 from app.services.hosted_aip import HostedAipService
 from app.services.prompt import effective_tool_names
 from app.seed import DEFAULT_WEIGHTS
@@ -29,6 +32,18 @@ AICS = {
     "sources": "1.2.156.3088.1.BUPT.L2K8YU.JWCQL2.8DFGI8.0FKI",
 }
 PEER = "1.2.156.3088.1.BUPT.L2K8YU.GVNLWG.B3FPY7.15VB"
+
+
+@pytest.fixture
+def db(tmp_path):
+    # Separate physical connections reproduce cross-worker write locks that an
+    # in-memory StaticPool cannot expose. Keep parent autoflush on deliberately.
+    engine = create_engine(f"sqlite:///{tmp_path / 'inbound.sqlite3'}", poolclass=NullPool,
+                           connect_args={"check_same_thread": False, "timeout": .1})
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        yield session
+    engine.dispose()
 
 
 def wire_task(agent_id="travel", *, peer=None, context=None, session="same-wire-session"):
@@ -103,6 +118,10 @@ async def test_real_inbound_registry_recurses_via_transport_and_executes_search(
     db = fleet
     factory = sessionmaker(bind=db.get_bind())
     edges, searches, entry_tools = [], [], {}
+    # Force the CONTEXT_PROJECTED write before each remote call; it previously
+    # autoflushed and blocked the remote worker's independent SQLite connection.
+    monkeypatch.setattr(ContextProjectionEngine, "score_and_slice", lambda *a, **k: [
+        ProjectedSnippet("peer_report", "fixture", "Research evidence", "research context", .9)])
 
     class Search:
         def __init__(self, *_): pass

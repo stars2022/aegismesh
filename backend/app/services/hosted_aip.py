@@ -419,7 +419,7 @@ class HostedAipService:
         running = _background_rpc_tasks.get(task_key)
         if running and not running.done():
             return
-        factory = sessionmaker(bind=self.db.get_bind())
+        factory = sessionmaker(bind=self.db.get_bind(), autoflush=False, expire_on_commit=False)
 
         async def work():
             with factory() as db:

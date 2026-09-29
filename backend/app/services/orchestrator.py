@@ -173,7 +173,7 @@ class ReliableOrchestrator:
         self.db = db
         try:
             bind = db.get_bind()
-            self.session_factory = sessionmaker(bind=bind)
+            self.session_factory = sessionmaker(bind=bind, autoflush=False, expire_on_commit=False)
         except Exception:
             self.session_factory = SessionLocal
         self.router = QualityRouter()
@@ -2565,6 +2565,12 @@ class ReliableOrchestrator:
                         )
 
                     sub_task_text = task
+                    caller = self.db.get(Agent, effective_caller)
+                    caller_aic = caller.aic if caller else effective_caller
+                    # Persist projected-context events before another process
+                    # needs to write its inbound task/result to the same DB.
+                    # Never hold a SQLite write transaction across network I/O.
+                    self.db.commit()
                     invoke_task = asyncio.create_task(
                         self._invoke(
                             agent,
@@ -2577,7 +2583,7 @@ class ReliableOrchestrator:
                             stream_output=True,
                             on_text_override=_sub_on_text,
                             controller=sub_controller,
-                            caller_aic=(self.db.get(Agent, effective_caller).aic if self.db.get(Agent, effective_caller) else effective_caller),
+                            caller_aic=caller_aic,
                         )
                     )
                     while not invoke_task.done():
