@@ -76,6 +76,12 @@ RPC Start 立即返回 Accepted，调用方轮询至 AwaitingCompletion 后发 C
 
 ## 部署
 
+当前生产已使用八个独立 `aegismesh-aip-agent@<id>` TLS worker。下述通用
+`promote-release.sh` 只支持原 API + 单 TLS 布局，**不能直接用来完整升级当前生产**。
+2026-09-29 递归工具版本逐一验证八个 serverAuth 身份后，备份 DB/override，切换 API 与
+专用监听模板；旧 8443 入口保留原版本，未绕过其证书问题。所有 worker 启动前应一次性完成
+新增策略字段迁移，避免多进程同时 ALTER。具体版本与回滚位置见递归验收记录。
+
 旧 `scripts/deploy.sh` 是首次安装脚本，会重建 Nginx/systemd，不能用于已部署站点。现在默认只审计；`--bootstrap` 也拒绝覆盖已有服务。
 
 1. 构建、测试后准备一个新的完整 release 目录，保留已有 `.env`，共享原 `backend/data` 和 `logs`；不要覆盖生产目录或证书。

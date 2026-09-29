@@ -44,6 +44,8 @@ Base.metadata.create_all(engine)
 with engine.begin() as c:
     if 'interop_compatibility' not in {v['name'] for v in inspect(c).get_columns('routing_policies')}:
         c.execute(text('ALTER TABLE routing_policies ADD COLUMN interop_compatibility BOOLEAN DEFAULT 0'))
+    if 'external_delegation_enabled' not in {v['name'] for v in inspect(c).get_columns('routing_policies')}:
+        c.execute(text('ALTER TABLE routing_policies ADD COLUMN external_delegation_enabled BOOLEAN DEFAULT 0'))
 PY
 backup_dir="$APP_DIR/service-backup"
 mkdir -m 700 "$backup_dir"
