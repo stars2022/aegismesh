@@ -55,6 +55,16 @@ def test_directory_membership_and_aic_join_preserve_history(db, pool):
     assert response == directory("known-aic", "new-aic")
 
 
+def test_retired_identity_cannot_reappear_as_external_candidate(db, pool, monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "aip_retired_aics", ["known-aic", "retired-uncached"])
+    response = directory("known-aic", "retired-uncached", "new-aic")
+    assert [a.aic for a in discovery_candidates(db, response)] == ["new-aic"]
+    from app.services.agent_search import search_constraints
+    assert discovery_candidates(db, response, search_constraints({"aic": "known-aic"})) == []
+    assert db.get(Agent, pool.id).aic == "known-aic"  # No history deletion or identity rewriting.
+
+
 def test_refresh_preserves_local_controls_circuit_and_observations(db, pool):
     pool.active = False
     pool.circuit_state = "open"

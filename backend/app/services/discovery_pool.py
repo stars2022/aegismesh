@@ -7,6 +7,7 @@ from copy import deepcopy
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..models import Agent, RoutingPolicy
 from .agent_search import matches_agent
 from .discovery import health_from_alive_map
@@ -20,9 +21,10 @@ PUBLIC_FIELDS = (
 
 def discovery_candidates(db: Session, response: dict, constraints: dict | None = None) -> list[Agent]:
     local = {a.aic: a for a in db.scalars(select(Agent)).all()}
+    retired = set(get_settings().aip_retired_aics)
     candidates = []
     for aic, acs in (response.get("acsMap") or {}).items():
-        if not aic or not isinstance(acs, dict):
+        if not aic or aic in retired or not isinstance(acs, dict):
             continue
         endpoints = [e for e in (acs.get("endPoints") or []) if isinstance(e, dict)
                      and str(e.get("url") or "").startswith("https://")

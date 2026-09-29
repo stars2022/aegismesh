@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     aip_tls_port: int = 0
     # Each distinct hosted AIC needs its own TLS authority (host + port).
     aip_agent_public_urls: dict[str, str] = {}
+    aip_agent_versions: dict[str, str] = {}
+    # Superseded identities remain in the official registry/history, but must
+    # not be rediscovered as callable external agents by this deployment.
+    aip_retired_aics: list[str] = []
     aip_tls_agent_id: str = ""
     # Set by scripts.serve after certificate validation, never by an HTTP header.
     aip_tls_local_aic: str = ""

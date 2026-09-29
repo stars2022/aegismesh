@@ -47,7 +47,7 @@ def build_acs(agent: Agent, rpc_url: str | None) -> dict:
         "protocolVersion": "02.02",
         "name": agent.name,
         "description": agent.description,
-        "version": "1.0.0",
+        "version": get_settings().aip_agent_versions.get(agent.id, "1.0.0") if hosted else "1.0.0",
         "provider": {"countryCode": "CN", "organization": "AegisMesh Workspace"},
         "securitySchemes": security_schemes,
         "endPoints": [

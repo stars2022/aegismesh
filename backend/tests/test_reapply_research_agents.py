@@ -60,6 +60,18 @@ def test_replacement_has_new_identity_mtls_san_and_own_port(entry):
     assert all(e["security"] == [{"mtls": []}] for e in acs["endPoints"])
 
 
+def test_live_acs_uses_registered_version_without_changing_other_agents(entry, monkeypatch):
+    monkeypatch.setattr(get_settings(), "aip_agent_versions", {"docs_overview": "2.0.0"})
+    from app.services.acs import build_acs
+    agent = Agent(id="docs_overview", aic=NEW_AIC, name="文献助手", description="检索与综述",
+                  role="partner", transport="openai-compatible", active=True, streaming_enabled=True,
+                  security_schemes=["mtls"], skills=[], tools=[], model_name="", model_provider="",
+                  updated_at=utcnow(), group_enabled=False)
+    assert build_acs(agent, "https://aip.demmo.cc.cd:8459/aip/docs_overview/rpc")["version"] == "2.0.0"
+    agent.id = "news_retrieval"
+    assert build_acs(agent, "https://aip.demmo.cc.cd:8455/aip/news_retrieval/rpc")["version"] == "1.0.0"
+
+
 def test_other_agents_cannot_be_reapplied():
     with pytest.raises(ValueError, match="four hosted research"):
         workflow.replacement_acs(Agent(id="news_coordinator"))
