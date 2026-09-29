@@ -1,0 +1,283 @@
+{
+  "agentId": "empirical_design",
+  "registrationAgentId": "01a0c919-79db-77f8-898c-766ca1dd2993",
+  "aic": "1.2.156.3088.1.BUPT.L2K8YU.9MQAHM.WDOPTX.07US",
+  "preserveApprovalStatus": "APPROVED",
+  "before": {
+    "aic": "1.2.156.3088.1.BUPT.L2K8YU.9MQAHM.WDOPTX.07US",
+    "name": "研究设计与数据分析智能体",
+    "active": true,
+    "skills": [
+      {
+        "id": "methods.research_design",
+        "name": "实验、实证与调查研究设计",
+        "tags": [
+          "研究设计",
+          "实验设计",
+          "实证研究",
+          "问卷设计",
+          "A/B测试",
+          "变量设计",
+          "样本设计",
+          "方法论"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "设计多智能体系统的基准评测与消融实验",
+          "为用户行为研究制定问卷、变量和采样方案"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "设计实验、准实验、问卷调查、案例研究和混合研究方案，明确研究假设、变量操作化、采样策略、对照条件与验证指标。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      },
+      {
+        "id": "methods.data_analysis",
+        "name": "统计分析、因果推断与稳健性检验",
+        "tags": [
+          "数据分析",
+          "统计分析",
+          "回归分析",
+          "因果推断",
+          "DID",
+          "工具变量",
+          "稳健性检验",
+          "计量分析"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "为面板数据设计 DID 与稳健性检验方案",
+          "分析实验数据并解释统计结果与限制"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "根据数据结构制定描述统计、回归分析、因果识别、异质性分析与稳健性检验方案，解释方法假设和结果边界。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      },
+      {
+        "id": "methods.theory_modeling",
+        "name": "理论框架与概念模型构建",
+        "tags": [
+          "理论建模",
+          "概念模型",
+          "理论框架",
+          "研究假设",
+          "因果机制",
+          "数学推导"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "构建多智能体协作绩效的概念模型和研究假设",
+          "说明一个优化模型的变量、约束与推导前提"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "提炼核心概念、作用机制和可检验假设，构建概念框架、因果路径或数学模型，并说明推导前提。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      }
+    ],
+    "version": "1.0.0",
+    "provider": {},
+    "endPoints": [
+      {
+        "url": "https://aip.demmo.cc.cd:8443/aip/empirical_design/rpc",
+        "security": [
+          {
+            "mtls": []
+          }
+        ],
+        "transport": "JSONRPC"
+      }
+    ],
+    "entityMeta": {
+      "role": "partner",
+      "model": "deepseek-chat",
+      "tools": [
+        "extract_file_content",
+        "calculator",
+        "current_time"
+      ],
+      "platform": "AegisMesh",
+      "modelProvider": "deepseek"
+    },
+    "description": "融合理论框架、实验与实证设计、统计分析和因果推断，为科研及业务研究提供变量定义、方法选择、分析方案、稳健性检验与结果解释。",
+    "capabilities": {
+      "streaming": true,
+      "messageQueue": [],
+      "notification": true
+    },
+    "protocolVersion": "02.02",
+    "securitySchemes": {
+      "mtls": {
+        "type": "mutualTLS",
+        "description": "ACPs 双向身份认证"
+      }
+    },
+    "lastModifiedTime": "2026-09-22T20:46:43.861523+08:00",
+    "defaultInputModes": [
+      "text/plain",
+      "application/json"
+    ],
+    "defaultOutputModes": [
+      "application/json",
+      "text/markdown"
+    ]
+  },
+  "requestedAcs": {
+    "aic": "1.2.156.3088.1.BUPT.L2K8YU.9MQAHM.WDOPTX.07US",
+    "name": "研究设计与数据分析智能体",
+    "active": true,
+    "skills": [
+      {
+        "id": "methods.research_design",
+        "name": "实验、实证与调查研究设计",
+        "tags": [
+          "研究设计",
+          "实验设计",
+          "实证研究",
+          "问卷设计",
+          "A/B测试",
+          "变量设计",
+          "样本设计",
+          "方法论"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "设计多智能体系统的基准评测与消融实验",
+          "为用户行为研究制定问卷、变量和采样方案"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "设计实验、准实验、问卷调查、案例研究和混合研究方案，明确研究假设、变量操作化、采样策略、对照条件与验证指标。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      },
+      {
+        "id": "methods.data_analysis",
+        "name": "统计分析、因果推断与稳健性检验",
+        "tags": [
+          "数据分析",
+          "统计分析",
+          "回归分析",
+          "因果推断",
+          "DID",
+          "工具变量",
+          "稳健性检验",
+          "计量分析"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "为面板数据设计 DID 与稳健性检验方案",
+          "分析实验数据并解释统计结果与限制"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "根据数据结构制定描述统计、回归分析、因果识别、异质性分析与稳健性检验方案，解释方法假设和结果边界。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      },
+      {
+        "id": "methods.theory_modeling",
+        "name": "理论框架与概念模型构建",
+        "tags": [
+          "理论建模",
+          "概念模型",
+          "理论框架",
+          "研究假设",
+          "因果机制",
+          "数学推导"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "构建多智能体协作绩效的概念模型和研究假设",
+          "说明一个优化模型的变量、约束与推导前提"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "提炼核心概念、作用机制和可检验假设，构建概念框架、因果路径或数学模型，并说明推导前提。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      }
+    ],
+    "version": "1.0.0",
+    "provider": {},
+    "endPoints": [
+      {
+        "url": "https://aip.demmo.cc.cd:8445/aip/empirical_design/rpc",
+        "security": [
+          {
+            "mtls": []
+          }
+        ],
+        "transport": "JSONRPC"
+      }
+    ],
+    "entityMeta": {
+      "role": "partner",
+      "model": "deepseek-chat",
+      "tools": [
+        "extract_file_content",
+        "calculator",
+        "current_time"
+      ],
+      "platform": "AegisMesh",
+      "modelProvider": "deepseek"
+    },
+    "description": "融合理论框架、实验与实证设计、统计分析和因果推断，为科研及业务研究提供变量定义、方法选择、分析方案、稳健性检验与结果解释。",
+    "capabilities": {
+      "streaming": true,
+      "messageQueue": [],
+      "notification": true
+    },
+    "protocolVersion": "02.02",
+    "securitySchemes": {
+      "mtls": {
+        "type": "mutualTLS",
+        "description": "ACPs 双向身份认证"
+      }
+    },
+    "lastModifiedTime": "2026-09-22T20:46:43.861523+08:00",
+    "defaultInputModes": [
+      "text/plain",
+      "application/json"
+    ],
+    "defaultOutputModes": [
+      "application/json",
+      "text/markdown"
+    ],
+    "certificate": {
+      "altNames": {
+        "dns": [
+          "aip.demmo.cc.cd"
+        ]
+      }
+    }
+  }
+}

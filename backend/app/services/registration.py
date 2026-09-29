@@ -10,7 +10,31 @@ from ..config import get_settings
 
 
 class RegistrationError(RuntimeError):
-    pass
+    def __init__(self, message: str, status_code: int = 502) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def validate_registration_acs(acs: dict) -> None:
+    """Reject invalid declarations locally, without creating an upstream draft."""
+    endpoints = acs.get("endPoints") or []
+    schemes = acs.get("securitySchemes") or {}
+    rpc_endpoints = [e for e in endpoints if str(e.get("transport", "")).upper() in {"JSONRPC", "HTTP_JSON", "AIP"}]
+    if not rpc_endpoints:
+        raise RegistrationError("提审缺少公开 AIP RPC 端点", 422)
+    for endpoint in rpc_endpoints:
+        if not str(endpoint.get("url") or "").startswith("https://"):
+            raise RegistrationError("提审 RPC 端点必须使用 HTTPS", 422)
+    # The registry requires mutual TLS on AMQP declarations as well as RPC.
+    for endpoint in endpoints:
+        protected = any(
+            isinstance(requirement, dict) and any(
+                isinstance(schemes.get(key), dict) and schemes[key].get("type") == "mutualTLS"
+                for key in requirement
+            ) for requirement in (endpoint.get("security") or [])
+        )
+        if not protected:
+            raise RegistrationError("提审端点必须声明 mutualTLS 双向证书认证，请检查端点安全配置", 422)
 
 
 # registry-server 的 ApprovalStatus → 平台内注册状态
@@ -72,12 +96,17 @@ class RegistryClient:
                 )
                 response.raise_for_status()
         except httpx.TimeoutException as exc:
-            raise RegistrationError("注册服务登录超时") from exc
+            raise RegistrationError("注册服务登录超时，请稍后重试", 504) from exc
         except httpx.HTTPStatusError as exc:
-            raise RegistrationError(f"注册服务登录失败：HTTP {exc.response.status_code}") from exc
+            raise RegistrationError(f"注册服务登录失败：HTTP {exc.response.status_code}，请检查服务端注册账号配置", 503) from exc
         except httpx.HTTPError as exc:
-            raise RegistrationError(f"注册服务不可达：{exc}") from exc
-        payload = response.json()
+            raise RegistrationError("注册服务暂时不可达，请稍后重试", 503) from exc
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RegistrationError("注册服务登录响应不是有效 JSON") from exc
+        if not isinstance(payload, dict):
+            raise RegistrationError("注册服务登录响应格式异常")
         token = payload.get("accessToken") or payload.get("access_token")
         if not token:
             raise RegistrationError("注册服务登录响应缺少 accessToken")
@@ -114,20 +143,27 @@ class RegistryClient:
                     )
                 response.raise_for_status()
         except httpx.TimeoutException as exc:
-            raise RegistrationError("注册服务请求超时") from exc
+            raise RegistrationError("注册服务请求超时，请同步状态后再决定是否重试提交", 504) from exc
         except httpx.HTTPStatusError as exc:
             detail = ""
             try:
                 body = exc.response.json()
-                detail = str(body.get("detail") or body)
+                detail = str(body.get("detail") or body.get("message") or body) if isinstance(body, dict) else str(body)
             except ValueError:
-                detail = exc.response.text[:200]
-            raise RegistrationError(f"注册服务返回 {exc.response.status_code}：{detail}") from exc
+                detail = "上游返回了非 JSON 错误响应"
+            upstream = exc.response.status_code
+            status = 422 if upstream in {400, 422} else 409 if upstream == 409 else 503 if upstream in {401, 403, 429} else 502
+            if "mutualtls" in detail.lower():
+                detail = "端点必须声明 mutualTLS 双向证书认证，请检查端点安全配置"
+            raise RegistrationError(f"注册服务返回 {upstream}：{detail[:400]}", status) from exc
         except httpx.HTTPError as exc:
-            raise RegistrationError(f"注册服务不可达：{exc}") from exc
+            raise RegistrationError("注册服务暂时不可达，请稍后重试", 503) from exc
         if not response.content:
             return None
-        return response.json()
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise RegistrationError("注册服务响应不是有效 JSON，请同步状态后再决定是否重试提交") from exc
 
     async def save_agent(self, name: str, version: str, description: str, acs: dict) -> str:
         """创建 Agent 草稿，返回注册服务分配的 agent_id。"""

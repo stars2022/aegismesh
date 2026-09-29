@@ -120,7 +120,7 @@ async def test_hard_deadline_timeout_releases_active_tasks(db: Session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_coordination_cancellation_and_subtasks_cleanup(db: Session) -> None:
+async def test_coordination_cancellation_and_subtasks_cleanup(db: Session, registered_directory) -> None:
     """父任务取消时，必须取消并 await 全部子任务，同时释放所有 active_tasks 租约。"""
     setup_policy_and_agents(db)
 
@@ -572,5 +572,4 @@ async def test_orchestrator_call_chain_loop_rejection(db: Session) -> None:
     res_depth_exceeded = await dispatch_max_depth({"task": "超限派发", "agent": "partner-a"})
     assert res_depth_exceeded["ok"] is False
     assert "超出最大调用链深度限制" in res_depth_exceeded["error"]
-
 

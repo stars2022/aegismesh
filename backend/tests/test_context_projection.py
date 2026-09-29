@@ -210,7 +210,7 @@ class MockRecordingTransport(PartnerTransport):
 
 
 @pytest.mark.asyncio
-async def test_subagent_projection_end_to_end(db: Session):
+async def test_subagent_projection_end_to_end(db: Session, registered_directory):
     """验证派发子任务时，平台自动注入前序相关片段，且记录 TraceEvent"""
     session_id = "test-session-e2e-ccacp"
 

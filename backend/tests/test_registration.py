@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from app.main import app, settings
 from app.database import SessionLocal
 from app.models import Agent
-from app.services.registration import RegistryClient, RegistrationError
+from app.services.registration import RegistryClient, RegistrationError, validate_registration_acs
 
 main_module = importlib.import_module("app.main")
 
@@ -31,6 +31,17 @@ def make_client(handler) -> RegistryClient:
         password="secret-1",
         transport=httpx.MockTransport(handler),
     )
+
+
+def test_registration_requires_mtls_on_mq_as_well_as_rpc():
+    acs = {"securitySchemes": {"mtls": {"type": "mutualTLS"}}, "endPoints": [
+        {"transport": "JSONRPC", "url": "https://aip.example/rpc", "security": [{"mtls": []}]},
+        {"transport": "AMQP", "url": "amqps://mq.example/acps?inbox=inbox_{AIC}"},
+    ]}
+    with pytest.raises(RegistrationError, match="mutualTLS"):
+        validate_registration_acs(acs)
+    acs["endPoints"][1]["security"] = [{"mtls": []}]
+    validate_registration_acs(acs)
 
 
 async def test_login_save_submit_and_detail_flow() -> None:
@@ -178,9 +189,69 @@ def test_local_registration_submits_empty_aic_and_hosted_rpc(monkeypatch: pytest
         assert submitted.status_code == 200
         assert submitted.json()["registration_status"] == "pending"
         assert captured["acs"]["aic"] == ""
+        assert captured["acs"]["securitySchemes"]["mtls"]["type"] == "mutualTLS"
+        assert captured["acs"]["endPoints"][0]["security"] == [{"mtls": []}]
         assert captured["acs"]["endPoints"][0]["url"] == f"https://aip.example.com:8443/aip/{agent_id}/rpc"
+        assert captured["acs"]["certificate"]["altNames"]["dns"] == ["aip.example.com"]
         assert captured["submitted"] == "registry-local-1"
         test_client.delete(f"/api/agents/{agent_id}")
+
+
+@pytest.mark.parametrize("upstream,expected", [(400, 422), (422, 422), (409, 409), (403, 503), (429, 503), (502, 502)])
+async def test_registry_rejection_keeps_actionable_status(upstream, expected):
+    def handler(request):
+        if request.url.path == "/auth/login":
+            return httpx.Response(200, json={"accessToken": "test-token"})
+        return httpx.Response(upstream, json={"detail": "endPoint must use mutualTLS security scheme"})
+    with pytest.raises(RegistrationError) as error:
+        await make_client(handler).submit("draft-1")
+    assert error.value.status_code == expected
+    assert "mutualTLS" in str(error.value) and "双向证书" in str(error.value)
+
+
+@pytest.mark.parametrize("endpoint,schemes", [
+    ({"url": "http://agent.example/rpc", "transport": "JSONRPC", "security": [{"mtls": []}]}, {"mtls": {"type": "mutualTLS"}}),
+    ({"url": "https://agent.example/rpc", "transport": "JSONRPC"}, {}),
+    ({"url": "https://agent.example/rpc", "transport": "JSONRPC", "security": [{"mtls": []}]}, {"mtls": {"type": "apiKey"}}),
+])
+def test_registration_preflight_rejects_insecure_declarations(endpoint, schemes):
+    with pytest.raises(RegistrationError) as error:
+        validate_registration_acs({"endPoints": [endpoint], "securitySchemes": schemes})
+    assert error.value.status_code == 422
+
+
+def test_registration_endpoint_preserves_draft_on_rejected_submission(db, monkeypatch):
+    import asyncio
+    from starlette.requests import Request
+    from app.schemas import RegistrationRequest
+    enable_test_aip_runtime(monkeypatch)
+    agent = Agent(id="discovery", aic="local:discovery", name="发现助手", transport="provider", security_schemes=[])
+    db.add(agent); db.commit()
+
+    class FakeRegistry:
+        def configured(self): return True
+        async def save_agent(self, *args): return "saved-draft"
+        async def submit(self, _id): raise RegistrationError("注册服务返回 400：需要补充技能", 422)
+
+    monkeypatch.setattr(main_module, "RegistryClient", FakeRegistry)
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(main_module.register_agent(agent.id, RegistrationRequest(), Request({"type": "http"}), db))
+    assert error.value.status_code == 422
+    assert agent.registration_agent_id == "saved-draft"
+    assert "需要补充技能" in agent.registration_message
+    assert agent.aic == "local:discovery"
+
+
+async def test_registry_html_error_does_not_leak_gateway_page():
+    def handler(request):
+        if request.url.path == "/auth/login":
+            return httpx.Response(200, json={"accessToken": "test-token"})
+        return httpx.Response(502, text="<html>private gateway diagnostics</html>")
+    with pytest.raises(RegistrationError) as error:
+        await make_client(handler).submit("draft-1")
+    assert error.value.status_code == 502
+    assert "private" not in str(error.value)
 
 
 def test_approved_sync_reads_official_status_and_persists_aic(monkeypatch: pytest.MonkeyPatch) -> None:

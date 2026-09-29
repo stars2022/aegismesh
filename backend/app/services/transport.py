@@ -501,6 +501,7 @@ def build_aip_start_command(
     session_id: str,
     task_text: str,
     history: list[dict[str, str]] | None,
+    execution_context: dict[str, Any] | None = None,
 ):
     """Task text stays the first item. Context is a second text item plus structured data."""
     try:
@@ -524,6 +525,9 @@ def build_aip_start_command(
             )
         )
         items.append(StructuredDataItem(data=document, metadata={"role": "context", "kind": CONTEXT_KIND}))
+    if execution_context is not None:
+        items.append(StructuredDataItem(data=execution_context,
+                                       metadata={"role": "execution-context"}))
     return TaskCommand(
         id=f"cmd-{uuid.uuid4()}",
         sentAt=datetime.now(timezone.utc).isoformat(),
@@ -627,25 +631,34 @@ class AipSdkTransport:
         harness: bool = False,
         on_text: StreamCallback | None = None,
         controller: Any | None = None,
+        caller_aic: str | None = None,
+        interop_compatibility: bool = False,
+        execution_context: dict[str, Any] | None = None,
     ) -> PartnerResult:
         if not agent.endpoint_url:
             raise ValueError(f"AIP endpoint is missing for {agent.name}")
         settings = get_settings()
-        if not settings.leader_aic:
+        leader_aic = caller_aic or settings.leader_aic
+        if not leader_aic:
             raise RuntimeError("请先配置可信注册签发的 LEADER_AIC")
         rpc_client_cls, stream_client_cls, task_state = _load_aip_sdk()
         user_input = compose_aip_user_input(query, history)
         session_id = session_id or f"session-{uuid.uuid4()}"
-        command = build_aip_start_command(settings.leader_aic, session_id, query, history)
+        command = build_aip_start_command(leader_aic, session_id, query, history, execution_context)
         ssl_context = _aip_ssl_context(agent.endpoint_url, settings)
+        if interop_compatibility:
+            from .interop import identity_context
+            if not agent.endpoint_url.startswith("https://"):
+                raise RuntimeError("兼容模式要求 HTTPS AIP 端点")
+            ssl_context = identity_context(leader_aic)
         identity_binding = bool(settings.aip_identity_binding_enabled)
         client_kwargs = {
-            "leader_id": settings.leader_aic,
+            "leader_id": leader_aic,
             "ssl_context": ssl_context,
             "expected_partner_aic": agent.aic,
-            "identity_binding_enabled": identity_binding,
+            "identity_binding_enabled": identity_binding or interop_compatibility,
         }
-        if agent.streaming_enabled:
+        if agent.streaming_enabled and not interop_compatibility:
             stream_client = stream_client_cls(
                 partner_stream_url=partner_stream_url(agent.endpoint_url),
                 partner_rpc_url=agent.endpoint_url,
@@ -668,8 +681,9 @@ class AipSdkTransport:
             finally:
                 await stream_client.close()
         rpc_client = rpc_client_cls(partner_url=agent.endpoint_url, **client_kwargs)
+        access_started, access_status = time.monotonic(), 500
         try:
-            return await self._consume_rpc(
+            result = await self._consume_rpc(
                 rpc_client,
                 task_state,
                 agent=agent,
@@ -679,8 +693,25 @@ class AipSdkTransport:
                 timeout_seconds=timeout_seconds,
                 poll_interval=settings.aip_poll_interval_seconds,
                 controller=controller,
+                require_completion=interop_compatibility,
             )
+            access_status = 200
+            return result
+        except BaseException:
+            # Cancellation/timeout must not leave a remote subtree generating.
+            if command is not None and hasattr(rpc_client, "cancel_task"):
+                from contextlib import suppress
+                with suppress(Exception):
+                    await asyncio.wait_for(rpc_client.cancel_task(
+                        task_id=command.taskId, session_id=session_id), timeout=3)
+            raise
         finally:
+            if interop_compatibility and command is not None:
+                from .amp_service import amp_service
+                await amp_service.record_access(caller_aic=leader_aic, callee_aic=agent.aic,
+                    reporter_aic=leader_aic, task_id=command.taskId,
+                    url=agent.endpoint_url, route="aip/rpc", status_code=access_status,
+                    duration_ms=int((time.monotonic()-access_started)*1000), session_id=session_id)
             await rpc_client.close()
 
     async def _consume_stream(
@@ -877,6 +908,7 @@ class AipSdkTransport:
         poll_interval: float,
         controller: Any | None,
         command: Any = None,
+        require_completion: bool = False,
     ) -> PartnerResult:
         started = time.monotonic()
         last_products_len = 0
@@ -916,7 +948,10 @@ class AipSdkTransport:
                 task = await client.complete_task(task_id=task.taskId, session_id=session_id)
                 state = _state_value(task.status.state)
             except Exception:
-                pass
+                if require_completion:
+                    raise
+        if require_completion and state != _state_value(task_state.Completed):
+            raise RuntimeError(f"AIP task not confirmed complete: {state}")
         if state not in {_state_value(task_state.Completed), _state_value(task_state.AwaitingCompletion)}:
             raise RuntimeError(f"AIP task ended in {state}")
         return self._result_from_task(task, state=state, task_id=task.taskId, mode="aip-direct-rpc")

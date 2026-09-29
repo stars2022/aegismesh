@@ -2,131 +2,162 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
+import time
 import uuid
-from typing import Any
-
+from contextlib import suppress
+from types import SimpleNamespace
 from sqlalchemy import select
-
 from ..config import get_settings
 from ..database import SessionLocal
 from ..models import Agent
-from .runtime_recovery import runtime_marker
+from .aip_group import mq_settings, message_emitter
+from .interop import identity_context, deliveries, ready_partners, outgoing_groups
+from .amp_service import amp_service
 
-logger = logging.getLogger(__name__)
-
-
-def _mq_kwargs() -> dict[str, Any]:
-    settings = get_settings()
-    if settings.aip_group_mq_host:
-        return {
-            "rabbitmq_host": settings.aip_group_mq_host,
-            "rabbitmq_port": settings.aip_group_mq_port,
-            "rabbitmq_vhost": settings.aip_group_mq_vhost,
-            "rabbitmq_user": settings.aip_group_mq_user,
-            "rabbitmq_password": settings.aip_group_mq_password,
-        }
-    if settings.aip_group_mq_url:
-        from .aip_group import parse_mq_url
-
-        return parse_mq_url(settings.aip_group_mq_url)
-    return {}
+logger = logging.getLogger("uvicorn.error.aip_group_partner")
 
 
-async def _execute_local_task(agent_id: str, task_text: str) -> str:
-    """复用托管运行时执行群任务，返回文本结果。"""
+async def handle_command(agent_id, client, command, is_mentioned, leader_aic):
+    """SDK verifies AMQP user_id; only the group's authenticated leader may execute."""
+    from acps_sdk.aip import TaskCommandType, TaskState
+    from acps_sdk.aip.aip_rpc_model import RpcRequest
     from .hosted_aip import HostedAipService
-
+    if not is_mentioned or command.senderId != leader_aic:
+        return
+    if command.command not in {TaskCommandType.Start, TaskCommandType.Complete, TaskCommandType.Cancel, TaskCommandType.Get}:
+        await client.reject_task(command.taskId, command.sessionId, "Unsupported command")
+        return
+    started = time.monotonic()
     with SessionLocal() as db:
         agent = db.get(Agent, agent_id)
-        if agent is None:
-            raise RuntimeError(f"群组 Partner 智能体 {agent_id} 不存在")
-        service = HostedAipService(db, agent)
-        task_id = f"group-{uuid.uuid4().hex[:10]}"
-        from ..models import HostedTask
+        if not agent or not agent.active:
+            await client.reject_task(command.taskId, command.sessionId, "Agent unavailable")
+            return
+        binding = deliveries.get((command.senderId, agent.aic, command.taskId))
+        runtime = None
+        if binding:
+            received = "\n".join(i.text for i in (command.dataItems or []) if getattr(i, "type", "") == "text")
+            if command.command == TaskCommandType.Start and received != binding.query:
+                await client.reject_task(command.taskId, command.sessionId, "Task binding mismatch")
+                return
+            async def execute(*args, **kwargs):
+                binding.running = asyncio.create_task(binding.execute())
+                binding.result = await binding.running
+                return binding.result
+            runtime = SimpleNamespace(execute=execute)
+        # Bound calls already have their metrics recorded by the orchestrator.
+        service = HostedAipService(db, agent, runtime=runtime, owner_peer_aic=command.senderId,
+                                   record_metrics=binding is None)
+        first = command.command == TaskCommandType.Start and service._task_row(command.taskId) is None
+        if first:
+            await client.accept_task(command.taskId, command.sessionId)
+            await client.start_working(command.taskId, command.sessionId)
+        response = await service.dispatch(RpcRequest.model_validate({
+            "jsonrpc": "2.0", "id": str(uuid.uuid4()), "method": "rpc",
+            "params": {"command": command.model_dump(mode="json")},
+        }))
+        result = response.result
+        if response.error or result is None:
+            await client.fail_task(command.taskId, command.sessionId, "Task unavailable")
+            return
+        await client.send_task_result(task_id=command.taskId, session_id=command.sessionId,
+                                     state=result.status.state, products=result.products)
+        if first:
+            await amp_service.record_access(caller_aic=command.senderId, callee_aic=agent.aic,
+                reporter_aic=agent.aic, task_id=command.taskId, session_id=command.sessionId,
+                method="AMQP", url="aip/group/task", route="aip/group/task",
+                status_code=200 if result.status.state in {TaskState.AwaitingCompletion, TaskState.Completed} else 500,
+                duration_ms=int((time.monotonic()-started)*1000))
 
-        task = HostedTask(
-            task_id=task_id,
-            agent_id=agent.id,
-            session_id="aip-group",
-            state="accepted",
-            query=task_text,
-            command_history=[],
-            result_data={"_runtime": runtime_marker()},
-        )
-        db.add(task)
-        db.commit()
-        await service._run(task)
-        db.commit()
-        return task.result_text or ""
 
-
-async def _partner_loop() -> None:
-    """AIP 国标群组 Partner：监听收件箱邀请，入群后执行群任务并回传。"""
-    from acps_sdk.aip import TaskCommandType, TaskState, TextDataItem
+async def _partner_loop(agent_id: str, aic: str) -> None:
     from acps_sdk.aip.aip_group_partner import GroupPartnerMqClient
-
-    settings = get_settings()
-    with SessionLocal() as db:
-        agent_id = settings.aip_group_partner_agent_id or ""
-        if not agent_id:
-            agent = db.scalars(
-                select(Agent).where(Agent.role == "partner", Agent.transport != "aip-rpc").order_by(Agent.id)
-            ).first()
-            agent_id = agent.id if agent else ""
-        agent = db.get(Agent, agent_id) if agent_id else None
-        if agent is None:
-            logger.warning("event=group_partner_skip reason=no_agent")
-            return
-        partner_aic = agent.aic
-        agent_name = agent.name
-
-    client = GroupPartnerMqClient(partner_aic=partner_aic, **_mq_kwargs())
-
-    async def on_command(message: Any) -> None:
-        command = getattr(message, "command", None) or message
-        task_id = getattr(command, "taskId", "") or f"task-{uuid.uuid4().hex[:8]}"
-        session_id = getattr(command, "sessionId", "") or "aip-group"
-        text = "\n".join(
-            item.text for item in (getattr(command, "dataItems", None) or []) if getattr(item, "type", "") == "text"
-        )
-        if not text or getattr(command, "command", None) != TaskCommandType.Start:
-            return
-        logger.info("event=group_partner_task group=%s task=%s", getattr(command, "groupId", ""), task_id)
+    # Separate client per group: joining another invitation must not evict an
+    # existing group. Retry inbox connection after failures; close all on shutdown.
+    while True:
+        inbox = None
+        groups = {}
         try:
-            answer = await _execute_local_task(settings.aip_group_partner_agent_id, text)
-            from acps_sdk.aip import Product
+            kwargs = {**mq_settings(), "ssl_context": identity_context(aic),
+                      "identity_binding_enabled": True, "message_emitter": message_emitter(aic)}
+            inbox = GroupPartnerMqClient(partner_aic=aic, **kwargs)
+            await asyncio.wait_for(inbox.connect(), 15)
 
-            await client.send_task_result(
-                task_id=task_id,
-                session_id=session_id,
-                state=TaskState.AwaitingCompletion,
-                products=[Product(id=f"product-{task_id}", name="Group task result", dataItems=[TextDataItem(text=answer or "已完成")])],
-            )
-        except Exception as exc:
-            await client.send_task_result(
-                task_id=task_id,
-                session_id=session_id,
-                state=TaskState.Failed,
-                status_data_items=[TextDataItem(text=f"执行失败：{exc}")],
-            )
+            async def invitation(inv):
+                for gid, peer in list(groups.items()):
+                    if not peer.is_joined:
+                        await peer.close()
+                        groups.pop(gid, None)
+                if inv.groupId in groups:
+                    return
+                if len(groups) >= 32:
+                    logger.warning("Group capacity reached for %s", agent_id)
+                    return
+                child = GroupPartnerMqClient(partner_aic=aic, **kwargs)
+                async def on_command(command, is_mentioned):
+                    await handle_command(agent_id, child, command, is_mentioned, inv.group.leader.aic)
+                child.set_command_handler(on_command)
+                try:
+                    await child.connect()
+                    if await child.join_group_from_invitation(inv):
+                        groups[inv.groupId] = child
+                finally:
+                    if inv.groupId not in groups:
+                        await child.close()
 
-    client.set_invitation_handler(lambda invitation: None)
-    client.set_command_handler(on_command)
-    try:
-        await client.connect()
-        await client.ensure_inbox_queue()
-        await client.start_inbox_consuming()
-        logger.info("event=group_partner_ready aic=%s agent=%s", partner_aic, agent_name)
-        await asyncio.Future()  # 常驻
-    except Exception as exc:
-        logger.error("event=group_partner_error error=%s", exc)
+            # One consumer per AIC, for both SDK leader error replies and partner
+            # invitations. Keep SDK payload and AMQP user_id identity validation.
+            from acps_sdk.aip.aip_group_model import InboxGroupInvitation, InboxGroupInvitationError
+            from acps_sdk.aip.aip_group_identity import assert_incoming_group_message_identity, extract_amqp_user_id
+            async def route_inbox(message):
+                async with message.process():
+                    body = json.loads(message.body)
+                    kind = body.get("type")
+                    model = InboxGroupInvitation if kind == "group-invitation" else InboxGroupInvitationError if kind == "group-invitation-error" else None
+                    if model is None:
+                        return
+                    value = model.model_validate(body)
+                    assert_incoming_group_message_identity(value, amqp_user_id=extract_amqp_user_id(message), expected_group_id=value.groupId)
+                    if kind == "group-invitation":
+                        await invitation(value)
+                    else:
+                        for owner in list(outgoing_groups.get(aic, [])):
+                            pending = owner._pending_invitations.get(value.senderId or value.partnerAic)
+                            if pending and pending.invitation_token == value.invitationToken:
+                                await owner._handle_invitation_error(value)
+            queue = await inbox.ensure_inbox_queue()
+            await queue.consume(route_inbox)
+            ready_partners.add(aic)
+            logger.info("event=group_partner_ready agent=%s aic=%s", agent_id, aic)
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Group Partner connection failed: %s", agent_id)
+        finally:
+            ready_partners.discard(aic)
+            for client in [*groups.values(), inbox]:
+                if client:
+                    with suppress(Exception):
+                        await asyncio.wait_for(client.close(), 5)
+        await asyncio.sleep(10)
 
 
 async def start_partner_listener() -> asyncio.Task | None:
     settings = get_settings()
-    if not settings.aip_group_partner_enabled:
+    if not settings.aip_group_partner_enabled or not settings.aip_group_listener_worker:
         return None
-    if not _mq_kwargs():
-        logger.warning("event=group_partner_skip reason=mq_not_configured")
+    if not mq_settings():
+        logger.error("Group Partner enabled but MQ not configured")
         return None
-    return asyncio.create_task(_partner_loop())
+    with SessionLocal() as db:
+        agents = [(a.id, a.aic) for a in db.scalars(select(Agent)).all()
+                  if a.active and a.transport != "aip-rpc" and a.registration_status == "approved"
+                  and not a.aic.startswith("local:")
+                  and (not settings.aip_group_partner_agent_id or a.id == settings.aip_group_partner_agent_id)]
+    async def supervise():
+        async with asyncio.TaskGroup() as group:
+            for agent_id, aic in agents:
+                group.create_task(_partner_loop(agent_id, aic))
+    return asyncio.create_task(supervise(), name="aip-group-partners")

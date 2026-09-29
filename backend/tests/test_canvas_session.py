@@ -67,7 +67,7 @@ def test_markdown_save_checks_owner_and_version(db) -> None:
     assert saved.content == "# 新标题\n\n正文"
     revisions = db.query(CanvasRevision).filter(CanvasRevision.canvas_id == saved.id).order_by(CanvasRevision.version).all()
     assert [revision.version for revision in revisions] == [1, 2]
-    assert revisions[0].content_after == "# 协同画布\n"
+    assert revisions[0].content_after == ""
 
     with pytest.raises(CanvasError, match="版本"):
         replace_document(db, saved, content="过期稿", base_version=1, owner_id="demo-owner")
@@ -99,9 +99,32 @@ def test_only_untouched_legacy_sample_is_retired(db, monkeypatch) -> None:
     db.add(doc)
     db.commit()
     converted = get_or_create_session_canvas(db, "legacy-demo", "owner")
-    assert converted.content == "# 协同画布\n"
+    assert converted.content == ""
     assert converted.version == 2
-    assert [row.content_after for row in db.query(CanvasRevision).filter(CanvasRevision.canvas_id == doc.id).order_by(CanvasRevision.version)] == [old, "# 协同画布\n"]
+    assert [row.content_after for row in db.query(CanvasRevision).filter(CanvasRevision.canvas_id == doc.id).order_by(CanvasRevision.version)] == [old, ""]
+
+
+def test_only_untouched_default_heading_is_removed(db) -> None:
+    old = CanvasDoc(id=canvas_id_for("old-default"), owner_id="owner", title="协同画布", content="# 协同画布\n", version=1)
+    edited = CanvasDoc(id=canvas_id_for("edited-default"), owner_id="owner", title="协同画布", content="# 协同画布\n\n用户正文", version=2)
+    db.add_all([old, edited])
+    db.commit()
+
+    migrated = get_or_create_session_canvas(db, "old-default", "owner")
+    assert migrated.content == ""
+    assert migrated.title == "未命名画布"
+    assert migrated.version == 2
+    revisions = db.query(CanvasRevision).filter(CanvasRevision.canvas_id == old.id).order_by(CanvasRevision.version).all()
+    assert [revision.content_after for revision in revisions] == ["# 协同画布\n", ""]
+    assert get_or_create_session_canvas(db, "edited-default", "owner").content == "# 协同画布\n\n用户正文"
+
+
+def test_blank_canvas_does_not_inject_title_on_agent_replace(db) -> None:
+    doc = get_or_create_session_canvas(db, "blank-replace", "owner")
+    assert doc.content == ""
+    assert doc.title == "未命名画布"
+    assert replace_all(doc.content, "新正文", default_title=doc.title) == "新正文\n"
+    assert replace_all(doc.content, "", default_title=doc.title) == ""
 
 
 def test_legacy_snapshot_cannot_be_claimed_by_another_owner(db) -> None:

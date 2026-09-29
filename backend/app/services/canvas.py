@@ -20,6 +20,28 @@ class CanvasError(RuntimeError):
 
 SECTION_HEADING = re.compile(r"^##\s+.+$", re.MULTILINE)
 _LEGACY_DEMO_TEMPLATE_SHA256 = "11b6c1b9751b9485123901ee9dca81154c9b25e1c9dc8add7b803c7022625bca"
+_OLD_DEFAULT_CANVAS_TEMPLATE = "# 协同画布\n"
+
+
+def _retire_untouched_default_heading(db: Session, doc: CanvasDoc) -> CanvasDoc:
+    """Remove only the untouched system heading, preserving its original revision."""
+    if doc.version != 1 or doc.title != "协同画布" or doc.content != _OLD_DEFAULT_CANVAS_TEMPLATE:
+        return doc
+    if not db.query(CanvasRevision.id).filter(CanvasRevision.canvas_id == doc.id, CanvasRevision.version == 1).first():
+        db.add(CanvasRevision(
+            canvas_id=doc.id, version=1, editor_name="系统", op="create",
+            summary="创建画布", content_after=doc.content,
+        ))
+    doc.content = ""
+    doc.title = "未命名画布"
+    doc.version = 2
+    db.add(CanvasRevision(
+        canvas_id=doc.id, version=2, editor_name="系统", op="remove_default_heading",
+        summary="移除未修改的默认标题", content_after="",
+    ))
+    db.commit()
+    db.refresh(doc)
+    return doc
 
 
 def _retire_untouched_demo_template(db: Session, doc: CanvasDoc) -> CanvasDoc:
@@ -32,7 +54,7 @@ def _retire_untouched_demo_template(db: Session, doc: CanvasDoc) -> CanvasDoc:
             summary="旧版示例快照", content_after=doc.content,
         ))
     doc.content = DEFAULT_CANVAS_TEMPLATE
-    doc.title = "协同画布"
+    doc.title = "未命名画布"
     doc.version = 2
     db.add(CanvasRevision(
         canvas_id=doc.id, version=2, editor_name="系统", op="remove_demo_template",
@@ -50,7 +72,7 @@ def canvas_id_for(session_id: str) -> str:
 
 def _claim_canvas(db: Session, doc: CanvasDoc, session_id: str, owner_id: str | None) -> CanvasDoc:
     if not owner_id:
-        return _retire_untouched_demo_template(db, doc)
+        return _retire_untouched_default_heading(db, _retire_untouched_demo_template(db, doc))
     if doc.owner_id and doc.owner_id != owner_id:
         raise CanvasError("画布不存在或无权访问")
     if not doc.owner_id:
@@ -72,7 +94,7 @@ def _claim_canvas(db: Session, doc: CanvasDoc, session_id: str, owner_id: str | 
         db.refresh(doc)
         if doc.owner_id != owner_id:
             raise CanvasError("画布不存在或无权访问")
-    return _retire_untouched_demo_template(db, doc)
+    return _retire_untouched_default_heading(db, _retire_untouched_demo_template(db, doc))
 
 
 def get_or_create_session_canvas(
@@ -100,7 +122,7 @@ def get_or_create_session_canvas(
         doc = CanvasDoc(
             id=canvas_id,
             owner_id=owner_id or "",
-            title=str(snapshot.get("title") or "协同画布")[:160],
+            title=str(snapshot.get("title") or "未命名画布")[:160],
             content=snapshot["content"],
             version=max(1, int(snapshot.get("version") or 1)),
         )
@@ -131,27 +153,23 @@ def get_or_create_session_canvas(
             if existing is None:
                 raise
             return _claim_canvas(db, existing, session_id, owner_id)
-        return doc
+        return _retire_untouched_default_heading(db, doc)
     return get_or_create_canvas(db, canvas_id, owner_id=owner_id or "")
 
 
-DEFAULT_CANVAS_TEMPLATE = "# 协同画布\n"
+DEFAULT_CANVAS_TEMPLATE = ""
 
 
 def get_or_create_canvas(
-    db: Session, canvas_id: str, title: str = "协同画布", owner_id: str = ""
+    db: Session, canvas_id: str, title: str = "未命名画布", owner_id: str = ""
 ) -> CanvasDoc:
     doc = db.get(CanvasDoc, canvas_id)
     if doc is not None and owner_id and doc.owner_id != owner_id:
         raise CanvasError("画布不存在或无权访问")
     if doc is not None:
-        return _retire_untouched_demo_template(db, doc)
+        return _retire_untouched_default_heading(db, _retire_untouched_demo_template(db, doc))
     if doc is None:
-        initial_content = (
-            DEFAULT_CANVAS_TEMPLATE
-            if title in ("协同画布", "产品设计笔记", "未命名画布")
-            else f"# {title}\n"
-        )
+        initial_content = DEFAULT_CANVAS_TEMPLATE if title in ("协同画布", "产品设计笔记", "未命名画布") else f"# {title}\n"
         doc = CanvasDoc(
             id=canvas_id, owner_id=owner_id, title=title,
             content=initial_content, version=1,
@@ -341,21 +359,21 @@ def write_section(content: str, section: str, body: str) -> str:
 
 
 def replace_all(content: str, new_content: str, default_title: str = "协同画布") -> str:
-    """全篇替换或清空画布。若 new_content 为空，清空全部正文并保留一级大标题。"""
+    """全篇替换或清空画布；仅保留用户已有的一级标题。"""
     stripped = new_content.strip()
     if not stripped:
         # 清空模式：保留原有的一级大标题
         heading = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
-        top_title = heading.group(1).strip() if heading else default_title
-        return f"# {top_title}\n"
+        return f"# {heading.group(1).strip()}\n" if heading else ""
 
     heading = re.search(r"^#\s+(.+)$", stripped, re.MULTILINE)
     if heading:
         return stripped + "\n"
     # 如果新文本没有一级标题，补充已有的大标题
     old_heading = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
-    top_title = old_heading.group(1).strip() if old_heading else default_title
-    return f"# {top_title}\n\n{stripped}\n"
+    if old_heading:
+        return f"# {old_heading.group(1).strip()}\n\n{stripped}\n"
+    return stripped + "\n"
 
 
 def apply_op(

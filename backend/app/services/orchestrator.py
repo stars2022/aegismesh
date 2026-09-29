@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import get_settings
 from ..database import SessionLocal
-from ..models import Agent, Invocation, ProviderConfig, RouteAttempt, RoutingPolicy, TraceEvent
+from ..models import Agent, CanvasDoc, Invocation, ProviderConfig, RouteAttempt, RoutingPolicy, TraceEvent
 from ..schemas import ChatRequest
 from .adaptive_lease import (
     AdaptiveDeadlineController,
@@ -48,7 +48,9 @@ from .amp_service import amp_service
 from .context_projection import ContextProjectionEngine
 from .prompt import CANVAS_TOOL_NAMES, fence_untrusted
 from .runtime_recovery import runtime_marker
-from .discovery import AdpDiscoveryClient, DiscoveryError, health_from_alive_map
+from .discovery import AdpDiscoveryClient
+from .agent_search import LIST_AGENTS_SCHEMA, search_constraints, matches_agent
+from .discovery_pool import discovery_candidates, remember_selected_candidate, rank_discovery
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +157,11 @@ class AgentTaskLease:
 
 
 class ReliableOrchestrator:
+    coordination_tool_rounds = COORDINATION_TOOL_ROUNDS
+    max_dispatches = COORDINATION_TOOL_ROUNDS
+    allow_coordination_fallback = True
+    blocked_aics: frozenset[str] = frozenset()
+
     def __init__(
         self,
         db: Session,
@@ -176,107 +183,24 @@ class ReliableOrchestrator:
         self.controller = controller
         self.context_projection = ContextProjectionEngine()
         self._web_search_cache: dict[str, dict[str, Any]] = {}
+        self._discovered_agents: dict[str, Agent] = {}
 
-    async def _discover_external_agents(
-        self,
-        query: str,
-        request: ChatRequest,
-        *,
-        limit: int = 8,
+    def _routing_policy(self) -> RoutingPolicy:
+        policy = self.db.get(RoutingPolicy, 1)
+        if policy is None:
+            raise RuntimeError("路由评分策略尚未初始化")
+        return policy
+
+    async def _discover_agents(
+        self, query: str, request: ChatRequest, *, limit: int = 8,
+        constraints: dict | None = None,
     ) -> list[Agent]:
-        """Build request-scoped AIP candidates from ADP without persisting them locally."""
-        try:
-            response = await AdpDiscoveryClient().discover(
-                query=query,
-                limit=limit,
-                session_id=request.session_id,
-            )
-        except DiscoveryError as exc:
-            logger.warning("Real-time ADP discovery failed: %s", exc)
-            return []
-
-        local_aics = set(self.db.scalars(select(Agent.aic)).all())
-        alive_map = response.get("aliveMap") or {}
-        candidates: list[Agent] = []
-        for aic, acs in (response.get("acsMap") or {}).items():
-            if not isinstance(acs, dict) or not aic or aic in local_aics:
-                continue
-            endpoints = [
-                item
-                for item in (acs.get("endPoints") or [])
-                if isinstance(item, dict)
-                and str(item.get("url") or "").startswith("https://")
-            ]
-            endpoint = next(
-                (
-                    item
-                    for item in endpoints
-                    if str(item.get("transport") or "").upper()
-                    in {"JSONRPC", "HTTP_JSON", "AIP"}
-                ),
-                endpoints[0] if endpoints else None,
-            )
-            if endpoint is None:
-                continue
-            security_node = acs.get("securitySchemes") or {}
-            security_schemes = (
-                list(security_node.keys())
-                if isinstance(security_node, dict)
-                else [str(item) for item in security_node]
-            )
-            if not security_schemes:
-                endpoint_security = endpoint.get("security") or []
-                security_schemes = [
-                    str(key)
-                    for item in endpoint_security
-                    if isinstance(item, dict)
-                    for key in item
-                ]
-            digest = hashlib.sha256(str(aic).encode("utf-8")).hexdigest()[:12]
-            candidates.append(
-                Agent(
-                    id=f"adp_{digest}",
-                    aic=str(aic),
-                    name=str(acs.get("name") or aic),
-                    role="partner",
-                    description=str(acs.get("description") or ""),
-                    endpoint_url=str(endpoint.get("url") or ""),
-                    transport="aip-rpc",
-                    usage_mode="external",
-                    streaming_enabled=bool(
-                        (acs.get("capabilities") or {}).get("streaming", False)
-                    ),
-                    notification_enabled=bool(
-                        (acs.get("capabilities") or {}).get("notification", False)
-                    ),
-                    active=bool(acs.get("active", True)),
-                    health=health_from_alive_map(alive_map, str(aic)),
-                    input_modes=list(
-                        acs.get("inputModes") or ["text/plain", "application/json"]
-                    ),
-                    output_modes=list(
-                        acs.get("outputModes")
-                        or ["application/json", "text/markdown", "text/plain"]
-                    ),
-                    security_schemes=security_schemes,
-                    skills=list(acs.get("skills") or []),
-                    tools=[],
-                    model_provider="",
-                    model_name="",
-                    estimated_cost_per_1k=0.0,
-                    avg_latency_ms=0.0,
-                    success_count=0,
-                    failure_count=0,
-                    feedback_positive_count=0,
-                    feedback_negative_count=0,
-                    request_count=0,
-                    active_tasks=0,
-                    queued_tasks=0,
-                    circuit_state="closed",
-                    consecutive_failures=0,
-                    registration_status="discovered",
-                )
-            )
+        """Discover live membership, then join local runtime and scoring history by AIC."""
+        response = await AdpDiscoveryClient().discover(
+            query=query, limit=limit, session_id=request.session_id, **(constraints or {}),
+        )
+        candidates = discovery_candidates(self.db, response, constraints)
+        self._discovered_agents.update({a.id: a for a in candidates})
         return candidates
 
     async def _emit_event(self, event_type: str, data: dict[str, Any]) -> None:
@@ -368,8 +292,7 @@ class ReliableOrchestrator:
                 {"messages": len(history), "turns": len(history) // 2},
             )
 
-        policy = self.db.get(RoutingPolicy, 1)
-        assert policy is not None
+        policy = self._routing_policy()
 
         driver = self._driver(request.agent_id)
         ranked: list[ScoredCandidate] = []
@@ -694,6 +617,35 @@ class ReliableOrchestrator:
             self.db.commit()
             raise
 
+    async def _apply_external_canvas_result(self, agent, invocation, result, snapshot) -> None:
+        canvas_id, version, complete = snapshot
+        applied, errors = [], []
+        for operation in parse_canvas_ops(result.text or ""):
+            try:
+                supplied = operation.get("base_version")
+                if operation["op"] != "append" and supplied != snapshot[1]:
+                    raise CanvasError("外部编辑缺少正确的画布基准版本，未应用")
+                if operation["op"] == "replace_all" and not complete:
+                    raise CanvasError("外部智能体未获得完整画布，不能整篇替换")
+                with self.session_factory() as cdb:
+                    doc = cdb.get(CanvasDoc, canvas_id)
+                    if doc is None:
+                        raise CanvasError("画布不存在")
+                    change = apply_op(cdb, doc, editor_id=agent.id, editor_name=agent.name,
+                                      **{**operation, "base_version": version})
+                    version = change["version"]
+                    applied.append(change)
+                await self._notify_canvas(canvas_id, agent.id, agent.name, change)
+            except CanvasError as exc:
+                errors.append(str(exc))
+                self._event(invocation, "CANVAS_CONFLICT", {"agentId": agent.id, "error": str(exc)[:200]})
+                break
+        result.data = {**(result.data or {}), "canvas": {
+            "status": "conflict" if errors else "applied" if applied else "no_operations",
+            "applied": applied, "errors": errors}}
+        if errors:
+            result.text += "\n\n画布修改未全部应用：" + "；".join(errors)
+
     def _internal_partners(self) -> list[Agent]:
         """平台自动调度的执行型智能体。发现后固定的 Partner 不在此列。"""
         return list(
@@ -782,13 +734,56 @@ class ReliableOrchestrator:
         stream_output: bool = False,
         on_text_override: StreamCallback | None = None,
         controller: AdaptiveDeadlineController | None = None,
+        caller_aic: str | None = None,
+        _mq_delivered: bool = False,
     ) -> PartnerResult:
+        target_controller = controller or self.controller
+        timeout = timeout_seconds if timeout_seconds is not None else policy.request_timeout_seconds
+        hard_deadline = (
+            request.hard_deadline_seconds
+            or (target_controller.absolute_deadline_seconds if target_controller else None)
+            or timeout
+            or 60.0
+        )
+        if target_controller:
+            hard_deadline = min(hard_deadline, target_controller.absolute_deadline_seconds
+                                - (time.monotonic() - target_controller.started_at))
+        if hard_deadline <= 0:
+            raise AbsoluteTimeoutError("任务已达到总时长上限，未发起新的调用")
+        # User-selected registered Partners also go through the platform Leader
+        # in compatibility mode. The Leader's own model runtime is not a self-call.
+        routed_caller = caller_aic or (
+            get_settings().leader_aic if agent.registration_status == "approved"
+            and agent.aic != get_settings().leader_aic else None)
+        if policy.interop_compatibility and routed_caller and agent.transport != "aip-rpc" and not _mq_delivered:
+            from .interop import invoke_hosted
+            try:
+                return await invoke_hosted(routed_caller, agent, query, invocation.session_id,
+                    hard_deadline,
+                    lambda: self._invoke(agent, query, invocation, request, policy, history,
+                        timeout_seconds=timeout_seconds, harness=harness, tool_registry=tool_registry,
+                        max_rounds=max_rounds, stream_output=stream_output,
+                        on_text_override=on_text_override, controller=controller, _mq_delivered=True))
+            except asyncio.TimeoutError as exc:
+                raise TimeoutError(f"官方 MQ 调用超时（任务剩余预算 {hard_deadline:.1f} 秒），未回退本地直调") from exc
         self._admit_circuit(agent)
+        canvas_snapshot = None
         if agent.transport == "aip-rpc":
             history = self._prepare_external_history(agent, query, invocation, history)
+            if request.canvas:
+                with self.session_factory() as cdb:
+                    doc = get_or_create_session_canvas(cdb, invocation.session_id, invocation.owner_id)
+                    canvas_snapshot = (doc.id, doc.version, len(doc.content) <= 32000)
+                    query += "\n\n" + CANVAS_PROTOCOL_INSTRUCTIONS.format(
+                        version=doc.version, content=doc.content[:32000])
+                    if not canvas_snapshot[2]:
+                        query += "\n[画布过长，仅提供前 32000 字符。禁止整篇替换；不确定的章节请勿修改。]"
         provider = self._provider_for(agent)
         transport = self.transports.get(provider.kind if provider else agent.transport)
         kwargs: dict[str, Any] = {"session_id": invocation.session_id, "history": history}
+        if agent.transport == "aip-rpc" and policy.interop_compatibility:
+            kwargs.update(caller_aic=caller_aic or get_settings().leader_aic,
+                          interop_compatibility=True)
         if provider:
             kwargs["provider"] = provider
             if tool_registry is None:
@@ -811,7 +806,6 @@ class ReliableOrchestrator:
             kwargs["tool_registry"] = tool_registry
             kwargs["max_rounds"] = max_rounds
 
-        target_controller = controller or self.controller
         callback = on_text_override or (self.stream_callback if stream_output else None)
         if agent.streaming_enabled and (callback or target_controller):
             async def _instrumented_stream(text: str) -> None:
@@ -826,14 +820,6 @@ class ReliableOrchestrator:
         if target_controller:
             kwargs["controller"] = target_controller
 
-        timeout = timeout_seconds if timeout_seconds is not None else policy.request_timeout_seconds
-        hard_deadline = (
-            getattr(request, "hard_deadline_seconds", None)
-            or (target_controller.absolute_deadline_seconds if target_controller else None)
-            or timeout_seconds
-            or getattr(policy, "request_timeout_seconds", 60.0)
-            or 60.0
-        )
         sig = inspect.signature(transport.execute)
         safe_kwargs = {
             k: v
@@ -843,11 +829,15 @@ class ReliableOrchestrator:
         invoke_started = time.monotonic()
         try:
             res = await asyncio.wait_for(
-                transport.execute(agent, query, timeout, **safe_kwargs),
+                # AIP's timeout covers the complete task/handshake, unlike a
+                # provider's per-request read timeout. Share the task budget.
+                transport.execute(agent, query, hard_deadline if agent.transport == "aip-rpc" else timeout, **safe_kwargs),
                 timeout=hard_deadline,
             )
             if target_controller and getattr(res, "completion_tokens", 0):
                 target_controller.calibrate_tokens(res.completion_tokens)
+            if canvas_snapshot:
+                await self._apply_external_canvas_result(agent, invocation, res, canvas_snapshot)
             return res
         except asyncio.TimeoutError as err:
             elapsed = time.monotonic() - invoke_started
@@ -978,7 +968,7 @@ class ReliableOrchestrator:
             session_id=invocation.session_id,
             overall_objective=request.message,
             history=history,
-            delegation_path=[leader.id],
+            delegation_path=[*request.delegation_path, leader.id],
         )
 
         collaborations: list[dict[str, Any]] = []
@@ -1012,7 +1002,7 @@ class ReliableOrchestrator:
                 history,
                 harness=request.interface == "harness",
                 tool_registry=registry,
-                max_rounds=COORDINATION_TOOL_ROUNDS + (2 if request.canvas else 0),
+                max_rounds=self.coordination_tool_rounds + (2 if request.canvas else 0),
                 stream_output=True,
             )
             # 检查是否有在后台异步运行的子任务尚未结束
@@ -1143,6 +1133,8 @@ class ReliableOrchestrator:
 
             # 协调模式失败时，尝试由 leader 直接自执行生成答复兜底
             try:
+                if not self.allow_coordination_fallback:
+                    raise RuntimeError(error_msg)
                 self._event(
                     invocation,
                     "SELF_EXECUTION_FALLBACK",
@@ -1396,6 +1388,7 @@ class ReliableOrchestrator:
         subagent_leases: dict[str, AgentTaskLease] | None = None,
     ) -> ToolRegistry:
         registry = self._runtime_registry(self._provider_for(leader))
+        current_chain = [*request.delegation_path, leader.id]
         if request.canvas:
             for item in self._canvas_tools(
                 canvas_id=canvas_id_for(invocation.session_id),
@@ -1405,30 +1398,8 @@ class ReliableOrchestrator:
                 registry.register(*item)
         registry.register(
             "list_agents",
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_agents",
-                    "description": "发现阶段工具：返回按质量评分排序的候选智能体名单（本地 ACS List + 全网 ADP 发现，含 match_score 匹配分与资格说明）。请参考排名自行选择派发对象；若用户指名道姓要求某智能体，直接点名派发即可，无需再看评分。调用链中已存在的智能体不可重复调用。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "scope": {
-                                "type": "string",
-                                "enum": ["all", "local", "network"],
-                                "description": "发现范围：all=全网及本地，local=仅本地及已固定，network=仅全网ADP发现池。默认 all",
-                                "default": "all",
-                            },
-                            "query": {
-                                "type": "string",
-                                "description": "可选搜索关键词或特定技能领域（用于全网发现精准匹配）",
-                            },
-                        },
-                        "additionalProperties": False,
-                    },
-                },
-            },
-            lambda args: self._list_agents(args, current_chain=[leader.id]),
+            LIST_AGENTS_SCHEMA,
+            lambda args: self._list_agents(args, current_chain=current_chain),
         )
         registry.register(
             "dispatch_task",
@@ -1436,12 +1407,12 @@ class ReliableOrchestrator:
                 "type": "function",
                 "function": {
                     "name": "dispatch_task",
-                    "description": "把一个子任务交给平台调度执行：平台自动选择最合适的执行型智能体（也可用 agent 指定）。系统全程基于调用链（call_chain）追踪链路。若指定智能体执行失败或超时，应优先检索其他相关候选智能体；若无可用候选，向用户汇报具体原因并询问是否代为生成，严禁擅自直接虚构替代品。",
+                    "description": "把一个子任务交给平台调度执行：未指定 agent 时按路由排名选择执行者；指定后只调用该目标，失败时如实报告，未经用户同意不得改派。系统通过 call_chain 防止循环调用。严禁虚构调用成功或替代成果。",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "task": {"type": "string", "description": "自包含、可直接执行的子任务描述"},
-                            "agent": {"type": "string", "description": "可选，指定执行者智能体的 ID 或名称"},
+                            "agent": {"type": "string", "description": "可选，指定执行者的 agent_id、AIC、准确名称或目录中的 AIP HTTPS 地址；优先使用发现结果的 agent_id/AIC"},
                             "call_chain": {
                                 "type": "array",
                                 "items": {"type": "string"},
@@ -1467,7 +1438,7 @@ class ReliableOrchestrator:
                 shared_context,
                 subagent_leases,
                 caller_agent_id=leader.id,
-                call_chain=[leader.id],
+                call_chain=current_chain,
             ),
         )
         registry.register(
@@ -1521,11 +1492,12 @@ class ReliableOrchestrator:
             collaborations=collaborations,
             active_subagent_tasks=active_subagent_tasks,
             subagent_leases=subagent_leases,
-            call_chain=[leader.id],
+            call_chain=current_chain,
         )
         for name in ("execute_workflow", "run_swarm_discussion"):
-            schema, executor = advanced._tools[name]
-            registry.register(name, schema, executor)
+            if name in advanced._tools:
+                schema, executor = advanced._tools[name]
+                registry.register(name, schema, executor)
         return registry
 
     def _subagent_registry(
@@ -1699,29 +1671,7 @@ class ReliableOrchestrator:
         ):
             wrapped.register(
                 "list_agents",
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "list_agents",
-                        "description": "发现阶段工具：返回按质量评分排序的候选智能体名单（本地 ACS List + 全网 ADP 发现，含 match_score 匹配分与资格说明）。请参考排名自行选择派发对象；若用户指名道姓要求某智能体，直接点名派发即可，无需再看评分。已在当前调用链中的智能体将被标注为不可重复调用。",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "scope": {
-                                    "type": "string",
-                                    "enum": ["all", "local", "network"],
-                                    "description": "发现范围：all=全网及本地，local=仅本地及已固定，network=仅全网ADP发现池。默认 all",
-                                    "default": "all",
-                                },
-                                "query": {
-                                    "type": "string",
-                                    "description": "可选搜索关键词或特定技能领域（用于全网发现精准匹配）",
-                                },
-                            },
-                            "additionalProperties": False,
-                        },
-                    },
-                },
+                LIST_AGENTS_SCHEMA,
                 lambda args: self._list_agents(args, current_chain=current_chain),
             )
             dispatch_fn = self._dispatch_task(
@@ -1742,12 +1692,12 @@ class ReliableOrchestrator:
                     "type": "function",
                     "function": {
                         "name": "dispatch_task",
-                        "description": "【并行分工工具】把独立的子任务交给平台调度执行。支持一次性并发派发多个不同分支，各分支独立执行并通过 check_subagent_status 汇聚结果。",
+                        "description": "【并行分工工具】把独立的子任务交给平台调度执行。支持并发派发不同分支，通过 check_subagent_status 汇聚结果。指定 agent 后只调用该目标，失败时如实报告，未经用户同意不得改派。",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "task": {"type": "string", "description": "自包含、可直接执行的细分子任务描述"},
-                                "agent": {"type": "string", "description": "可选，指定执行者智能体的 ID 或名称"},
+                                "agent": {"type": "string", "description": "可选，指定执行者的 agent_id、AIC、准确名称或目录中的 AIP HTTPS 地址；优先使用发现结果的 agent_id/AIC"},
                                 "call_chain": {
                                     "type": "array",
                                     "items": {"type": "string"},
@@ -1862,12 +1812,12 @@ class ReliableOrchestrator:
                         (a for a in self.db.query(Agent).filter(Agent.name == name).all() if a),
                         None,
                     )
-                    if agent and agent.transport == "aip-rpc" and agent.endpoint_url and agent.aic:
+                    if agent and agent.transport == "aip-rpc" and agent.endpoint_url and agent.aic and not policy.interop_compatibility:
                         external.append(ExternalPartner(aic=agent.aic, name=name, rpc_url=agent.endpoint_url))
                     else:
                         internal.append(name)
 
-                transport_label = "本地黑板"
+                transport_label = "AIP 兼容派发" if policy.interop_compatibility else "本地黑板"
                 speeches: list[dict[str, Any]] = []
 
                 def record_speech(sender: str, statement: str, round_no: int = 1) -> None:
@@ -2057,80 +2007,21 @@ class ReliableOrchestrator:
     ) -> list[dict[str, Any]]:
         scope = str(arguments.get("scope") or "all").lower().strip()
         query = str(arguments.get("query") or "").strip()
-        blocked_set = set(current_chain or [])
-        results: list[dict[str, Any]] = []
-        seen_aics: set[str] = set()
-        # 发现阶段即完成路由排名：每个候选都带质量分，供主智能体参考选择；
-        # 主智能体点名直派时不重复评分。
-        policy = self.db.get(RoutingPolicy, 1)
-        requirements = RoutingRequirements(query=query or "智能体协作")
-
-        # 1. 本地及已固定的内部协同智能体
-        if scope in ("all", "local"):
-            tokens = [t.lower().strip() for t in re.split(r'[\s,，;；、|]+', query) if t.strip()] if query else []
-            for agent in self._internal_partners():
-                if tokens:
-                    skills_text = " ".join(item.get("name", "") for item in (agent.skills or []))
-                    haystack = f"{agent.name} {agent.description} {agent.id} {skills_text}".lower()
-                    if not any(t in haystack for t in tokens):
-                        continue
-                seen_aics.add(agent.aic)
-                scored = self.router.score(agent, policy, requirements) if policy else None
-                results.append(
-                    {
-                        "agent_id": agent.id,
-                        "aic": agent.aic,
-                        "name": agent.name,
-                        "role": agent.role,
-                        "description": (agent.description or "")[:200],
-                        "skills": [item.get("name") for item in (agent.skills or [])][:5],
-                        "health": agent.health or "unknown",
-                        "source": "local",
-                        "is_pinned": True,
-                        "in_call_chain": agent.id in blocked_set,
-                        "callable": agent.id not in blocked_set,
-                        "match_score": round(scored.score, 1) if scored else 0.0,
-                        "eligible": scored.eligible if scored else False,
-                        "score_note": "；".join(scored.reasons[:2]) if scored else "",
-                    }
-                )
-
-        # 2. 全网 ADP 发现池中的外部智能体
-        if scope in ("all", "network"):
-            try:
-                adp_candidates = await self._discover_external_agents(
-                    query=query or "智能体",
-                    request=ChatRequest(message=query or "智能体"),
-                    limit=6,
-                )
-                for cand in adp_candidates:
-                    if cand.aic in seen_aics:
-                        continue
-                    seen_aics.add(cand.aic)
-                    scored = self.router.score(cand, policy, requirements) if policy else None
-                    results.append(
-                        {
-                            "agent_id": cand.id,
-                            "aic": cand.aic,
-                            "name": cand.name,
-                            "role": cand.role,
-                            "description": (cand.description or "")[:200],
-                            "skills": [item.get("name") for item in (cand.skills or [])][:5],
-                            "health": cand.health or "online",
-                            "source": "adp_network",
-                            "is_pinned": False,
-                            "in_call_chain": cand.id in blocked_set,
-                            "callable": cand.id not in blocked_set,
-                            "match_score": round(scored.score, 1) if scored else 0.0,
-                            "eligible": scored.eligible if scored else False,
-                            "score_note": "；".join(scored.reasons[:2]) if scored else "",
-                        }
-                    )
-            except Exception as exc:
-                logger.warning("ADP discovery in _list_agents failed: %s", exc)
-
-        results.sort(key=lambda item: (-item.get("match_score", 0.0), item["agent_id"]))
-        return results
+        constraints = search_constraints(arguments)
+        targeted = any(constraints[k] for k in ("aic", "name", "endpoint_url"))
+        limit = max(1, min(30, int(arguments.get("limit") or 10)))
+        if scope not in {"all", "local", "network"}:
+            raise ValueError("发现范围必须是 all、local 或 network")
+        candidates = await self._discover_agents(
+            query or "智能体", ChatRequest(message=query or "智能体"),
+            limit=limit, constraints=constraints if targeted else None,
+        )
+        # Scope only filters the live result; it never adds a cached-only row.
+        if scope == "local":
+            candidates = [a for a in candidates if a.transport != "aip-rpc"]
+        blocked = [*(current_chain or []),
+                   *(a.id for a in candidates if a.aic in self.blocked_aics)]
+        return rank_discovery(self.db, candidates, query, blocked)[:limit]
 
     def _check_subagent_status(
         self,
@@ -2363,7 +2254,7 @@ class ReliableOrchestrator:
             task = str(arguments.get("task") or "").strip()
             if not task:
                 return {"ok": False, "error": "task 不能为空"}
-            if invocation.attempt_count >= COORDINATION_TOOL_ROUNDS:
+            if invocation.attempt_count >= self.max_dispatches:
                 return {
                     "ok": False,
                     "error": "已达到派发上限，请根据现有回传生成最终答复",
@@ -2413,93 +2304,39 @@ class ReliableOrchestrator:
                         "error": f"禁止嵌套或循环调用：智能体 \"{chain_match}\" 已在当前调用链中 ({loop_str})，不可重复调用自身或上级智能体",
                     }
 
-            agents = self._internal_partners()
-            ranked = self.router.rank(agents, policy, RoutingRequirements(query=task))
-            eligible = [candidate for candidate in ranked if candidate.eligible]
             target: ScoredCandidate | None = None
             if requested:
-                target = next(
-                    (
-                        candidate
-                        for candidate in ranked
-                        if candidate.agent.id == requested or candidate.agent.name == requested
-                    ),
-                    None,
-                )
-                if target is not None and not target.eligible:
-                    return {
-                        "ok": False,
-                        "error": f"智能体 {requested} 当前不可用：{'；'.join(target.reasons)}",
-                    }
-                if target is None:
-                    explicit_agent = self.db.get(Agent, requested)
-                    if explicit_agent is None:
-                        explicit_agent = self.db.scalars(
-                            select(Agent).where(Agent.name == requested)
-                        ).first()
-                    if explicit_agent is None:
-                        explicit_agent = self.db.scalars(
-                            select(Agent).where(Agent.aic == requested)
-                        ).first()
-                    if explicit_agent is None:
-                        all_local = list(self.db.scalars(select(Agent)).all())
-                        req_clean = requested.lower().strip()
-                        for a in all_local:
-                            if (
-                                req_clean == a.name.lower()
-                                or req_clean in a.name.lower()
-                                or a.name.lower() in req_clean
-                                or req_clean == a.id.lower()
-                                or req_clean in a.id.lower()
-                            ):
-                                explicit_agent = a
-                                break
-
-                    if explicit_agent and explicit_agent.active is not False:
-                        target = ScoredCandidate(agent=explicit_agent, score=0.0, eligible=True, breakdown={}, reasons=["点名直派，无需评分"])
-                    elif explicit_agent is None:
-                        try:
-                            discovered = await self._discover_external_agents(
-                                query=requested,
-                                request=request,
-                                limit=10,
-                            )
-                            match = next(
-                                (c for c in discovered if c.id == requested or c.aic == requested or c.name == requested or requested in c.name or requested in c.id),
-                                None,
-                            )
-                            if match is None and (requested.startswith("adp_") or requested.startswith("1.2.156.")):
-                                discovered_broad = await self._discover_external_agents(
-                                    query="智能体",
-                                    request=request,
-                                    limit=30,
-                                )
-                                match = next(
-                                    (c for c in discovered_broad if c.id == requested or c.aic == requested or requested in c.name or requested in c.id),
-                                    None,
-                                )
-                            if match:
-                                target = ScoredCandidate(agent=match, score=0.0, eligible=True, breakdown={}, reasons=["动态发现直派，无需评分"])
-                            else:
-                                return {
-                                    "ok": False,
-                                    "error": f"未找到智能体「{requested}」（既非本地协同智能体，亦未在全网发现中匹配到对应可用端点）。",
-                                }
-                        except Exception as exc:
-                            logger.warning("Dynamic ADP discovery for %s failed: %s", requested, exc)
-                            return {
-                                "ok": False,
-                                "error": f"智能体「{requested}」在全网发现解析时异常：{exc}",
-                            }
-            elif eligible:
-                target = eligible[0]
+                requested = requested.removeprefix("aic://")
+                # Cached ids resolve an AIC, not a live candidate. Always verify
+                # the target with ADP before scoring/dispatching it.
+                known = (self.db.get(Agent, requested) or self._discovered_agents.get(requested)
+                         or self.db.scalar(select(Agent).where(Agent.aic == requested)))
+                filters = search_constraints({"aic": known.aic} if known else {"query": requested})
+                if not filters["aic"] and not filters["endpoint_url"]:
+                    filters["name"], filters["exact_name"] = requested, True
+                discovered = await self._discover_agents(
+                    query=task, request=request, limit=30, constraints=filters)
+                matches = [a for a in discovered if matches_agent(a, filters)]
+                matches = list({a.aic or a.id: a for a in matches}.values())
+                if len(matches) != 1:
+                    return {"ok": False, "error": (
+                        f"智能体「{requested}」存在多个同名目标，请使用 AIC 或 agent_id 指定。"
+                        if matches else f"未找到指定智能体「{requested}」，不会改派其他对象。"),
+                        "candidates": [{"agent_id": a.id, "aic": a.aic, "name": a.name} for a in matches]}
+                target = self.router.score(matches[0], policy, RoutingRequirements(query=task))
+                if not target.eligible:
+                    return {"ok": False, "error": f"指定智能体不可用：{'；'.join(target.reasons)}"}
+            else:
+                agents = await self._discover_agents(task, request, limit=30)
+                ranked = self.router.rank([a for a in agents if a.id not in current_chain], policy, RoutingRequirements(query=task))
+                target = next((candidate for candidate in ranked if candidate.eligible), None)
             if target is None:
                 return {"ok": False, "error": "没有可用的执行型智能体"}
 
             agent = target.agent
 
             # 2. Anti-recursion / loop prevention check against current_chain
-            if agent.id in current_chain:
+            if agent.id in current_chain or agent.aic in self.blocked_aics:
                 loop_str = " -> ".join(current_chain + [agent.id])
                 return {
                     "ok": False,
@@ -2514,6 +2351,7 @@ class ReliableOrchestrator:
                 if not allowed:
                     return {"ok": False, "error": reject_reason}
 
+            agent = remember_selected_candidate(self.db, agent)
             next_chain = list(current_chain) + [agent.id]
 
             attempt = RouteAttempt(
@@ -2727,20 +2565,6 @@ class ReliableOrchestrator:
                         )
 
                     sub_task_text = task
-                    if request.canvas and agent.transport == "aip-rpc":
-                        # 国标外部 Partner 的画布参与方式：快照随任务下发，回传文本解析编辑操作
-                        with self.session_factory() as cdb:
-                            cdoc = get_or_create_canvas(
-                                cdb, canvas_id_for(invocation.session_id)
-                            )
-                            sub_task_text = (
-                                task
-                                + "\n\n"
-                                + CANVAS_PROTOCOL_INSTRUCTIONS.format(
-                                    version=cdoc.version, content=cdoc.content[:6000]
-                                )
-                            )
-                            cdb.commit()
                     invoke_task = asyncio.create_task(
                         self._invoke(
                             agent,
@@ -2753,6 +2577,7 @@ class ReliableOrchestrator:
                             stream_output=True,
                             on_text_override=_sub_on_text,
                             controller=sub_controller,
+                            caller_aic=(self.db.get(Agent, effective_caller).aic if self.db.get(Agent, effective_caller) else effective_caller),
                         )
                     )
                     while not invoke_task.done():
@@ -2769,32 +2594,6 @@ class ReliableOrchestrator:
                             else:
                                 raise AbsoluteTimeoutError(msg or "子任务达到绝对时长上限")
                     result = await invoke_task
-                    if request.canvas and agent.transport == "aip-rpc":
-                        for op_item in parse_canvas_ops(result.text or ""):
-                            with self.session_factory() as cdb:
-                                cdoc = get_or_create_canvas(
-                                    cdb, canvas_id_for(invocation.session_id)
-                                )
-                                try:
-                                    applied = apply_op(
-                                        cdb, cdoc,
-                                        editor_id=agent.id, editor_name=agent.name,
-                                        op=str(op_item["op"]),
-                                        section=op_item.get("section"),
-                                        selection=op_item.get("selection"),
-                                        content=str(op_item.get("content") or ""),
-                                        base_version=op_item.get("base_version"),
-                                    )
-                                    cdb.commit()
-                                    await self._notify_canvas(
-                                        cdoc.id, agent.id, agent.name, applied
-                                    )
-                                except CanvasError as exc:
-                                    self._event(
-                                        invocation,
-                                        "CANVAS_CONFLICT",
-                                        {"agentId": agent.id, "error": str(exc)[:200]},
-                                    )
                     latency_ms = (time.monotonic() - started) * 1000
                     with self.session_factory() as ok_db:
                         sub_agent = ok_db.get(Agent, agent.id)
@@ -2833,16 +2632,6 @@ class ReliableOrchestrator:
                         invocation,
                         "DISPATCH_COMPLETED",
                         {"agentId": agent.id, "taskId": subtask_id, "callerId": effective_caller, "callChain": next_chain, "latencyMs": round(latency_ms, 2)},
-                    )
-                    asyncio.create_task(
-                        amp_service.record_access(
-                            caller_aic=invocation.selected_agent_id or f"local:{effective_caller}",
-                            callee_aic=agent.aic,
-                            task_id=subtask_id,
-                            duration_ms=int(latency_ms),
-                            status_code=200,
-                            session_id=invocation.session_id,
-                        )
                     )
                     await self._emit_event(
                         "subagent_complete",
@@ -2927,17 +2716,6 @@ class ReliableOrchestrator:
                         "DISPATCH_FAILED",
                         {"agentId": agent.id, "taskId": subtask_id, "callerId": effective_caller, "callChain": next_chain, "error": error_msg},
                     )
-                    asyncio.create_task(
-                        amp_service.record_access(
-                            caller_aic=invocation.selected_agent_id or f"local:{effective_caller}",
-                            callee_aic=agent.aic,
-                            task_id=subtask_id,
-                            duration_ms=int(latency_ms),
-                            status_code=500,
-                            session_id=invocation.session_id,
-                            error_message=error_msg,
-                        )
-                    )
 
                     await self._emit_event(
                         "subagent_error",
@@ -2985,7 +2763,9 @@ class ReliableOrchestrator:
                         "call_chain": next_chain,
                         "error": (
                             f"智能体「{agent.name}」调用失败（{error_msg}）。"
-                            f"【协同调度准则】：1. 请优先在候选池或全网中检索是否具备其他同类/相关能力的候选智能体进行替代调度；"
+                            + ("该目标为明确点名对象：如实报告失败，未经用户同意不要改派其他智能体。"
+                               if requested else "可以检索其他具备同类能力的候选智能体。")
+                            +
                             f"2. 若无其他可用候选，请如实向用户汇报「{agent.name}」不可用的具体原因；"
                             f"3. 严禁在未经用户允许前擅自直接自行虚构替代内容！请主动向用户询问：是否需要由平台协助生成模拟数据或测试方案。"
                         ),

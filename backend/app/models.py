@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -75,6 +75,53 @@ class AdminAccount(Base):
     )
 
 
+class OperationalLog(Base):
+    """Local, redacted read model. Never part of the official AMP forwarding path."""
+    __tablename__ = "operational_logs"
+    __table_args__ = (Index("ix_operational_logs_time_id", "occurred_at", "id"), {"sqlite_autoincrement": True})
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_key: Mapped[str] = mapped_column(String(128), unique=True)
+    origin: Mapped[str] = mapped_column(String(16), index=True)  # amp / admin
+    kind: Mapped[str] = mapped_column(String(24), index=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    indexed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    level: Mapped[str] = mapped_column(String(16), default="INFO")
+    outcome: Mapped[str] = mapped_column(String(16), default="unknown", index=True)
+    aic: Mapped[str] = mapped_column(String(255), default="", index=True)
+    caller_aic: Mapped[str] = mapped_column(String(255), default="", index=True)
+    callee_aic: Mapped[str] = mapped_column(String(255), default="", index=True)
+    task_id: Mapped[str] = mapped_column(String(255), default="", index=True)
+    trace_id: Mapped[str] = mapped_column(String(255), default="", index=True)
+    message_id: Mapped[str] = mapped_column(String(255), default="", index=True)
+    request_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    actor: Mapped[str] = mapped_column(String(120), default="", index=True)
+    action: Mapped[str] = mapped_column(String(120), default="")
+    target: Mapped[str] = mapped_column(String(512), default="")
+    summary: Mapped[str] = mapped_column(String(600), default="")
+    status_code: Mapped[int | None] = mapped_column(Integer)
+    duration_ms: Mapped[float | None] = mapped_column(Float)
+    source_file: Mapped[str] = mapped_column(String(120), default="")
+    detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class LogIngestCursor(Base):
+    __tablename__ = "log_ingest_cursors"
+
+    source_file: Mapped[str] = mapped_column(String(120), primary_key=True)
+    identity: Mapped[str] = mapped_column(String(80), default="")
+    byte_offset: Mapped[int] = mapped_column(Integer, default=0)
+    file_size: Mapped[int] = mapped_column(Integer, default=0)
+    checkpoint: Mapped[str] = mapped_column(String(64), default="")
+    skipping_line: Mapped[bool] = mapped_column(Boolean, default=False)
+    invalid_lines: Mapped[int] = mapped_column(Integer, default=0)
+    expired_lines: Mapped[int] = mapped_column(Integer, default=0)
+    rotations: Mapped[int] = mapped_column(Integer, default=0)
+    rotation_gaps: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str] = mapped_column(String(120), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class PlatformAccess(Base):
     __tablename__ = "platform_access"
 
@@ -111,6 +158,8 @@ class RoutingPolicy(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     name: Mapped[str] = mapped_column(String(80), default="balanced")
+    interop_compatibility: Mapped[bool] = mapped_column(Boolean, default=False)
+    external_delegation_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     weights: Mapped[dict[str, float]] = mapped_column(JSON)
     failure_threshold: Mapped[int] = mapped_column(Integer, default=2)
     circuit_cooldown_seconds: Mapped[int] = mapped_column(Integer, default=30)
@@ -270,7 +319,7 @@ class CanvasDoc(Base):
 
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     owner_id: Mapped[str] = mapped_column(String(128), default="", index=True)
-    title: Mapped[str] = mapped_column(String(160), default="协同画布")
+    title: Mapped[str] = mapped_column(String(160), default="未命名画布")
     content: Mapped[str] = mapped_column(Text, default="")
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

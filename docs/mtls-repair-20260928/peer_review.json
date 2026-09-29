@@ -1,0 +1,281 @@
+{
+  "agentId": "peer_review",
+  "registrationAgentId": "01a0c919-7b59-7639-a4a0-84dab0b09024",
+  "aic": "1.2.156.3088.1.BUPT.L2K8YU.9J8SQZ.G4PJHU.01U7",
+  "preserveApprovalStatus": "APPROVED",
+  "before": {
+    "aic": "1.2.156.3088.1.BUPT.L2K8YU.9J8SQZ.G4PJHU.01U7",
+    "name": "论文评审与学术写作智能体",
+    "active": true,
+    "skills": [
+      {
+        "id": "writing.peer_review",
+        "name": "同行评审与论文质量诊断",
+        "tags": [
+          "同行评审",
+          "论文评审",
+          "审稿意见",
+          "Peer Review",
+          "论文修改",
+          "质量诊断"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "对论文初稿出具结构化同行评审意见",
+          "检查研究方法、论证链和结论是否相互支持"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "从创新性、研究设计、证据质量、逻辑结构、可复现性和写作规范等维度生成结构化评审意见与修改清单。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      },
+      {
+        "id": "writing.academic_editing",
+        "name": "学术写作、结构优化与中英文润色",
+        "tags": [
+          "学术写作",
+          "论文润色",
+          "英文润色",
+          "中文润色",
+          "摘要修改",
+          "论文结构"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "润色论文摘要并改善论证结构",
+          "把研究笔记整理为规范的学术段落"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "优化论文标题、摘要、引言、相关工作、讨论与结论的结构、逻辑和语言表达，保留原意并标注实质性修改。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      },
+      {
+        "id": "writing.citation_integrity",
+        "name": "引文核验、参考文献规范与相似性初筛",
+        "tags": [
+          "参考文献",
+          "引文核验",
+          "引用格式",
+          "GB/T 7714",
+          "APA",
+          "IEEE",
+          "BibTeX",
+          "查重初筛",
+          "学术规范"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "核对正文引用和参考文献是否一一对应",
+          "把 BibTeX 转换为 GB/T 7714 并检查缺失字段"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "核对正文引文与参考文献对应关系，处理 GB/T 7714、APA、IEEE 与 BibTeX 格式，识别缺失字段和文本相似性风险。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      }
+    ],
+    "version": "1.0.0",
+    "provider": {},
+    "endPoints": [
+      {
+        "url": "https://aip.demmo.cc.cd:8443/aip/peer_review/rpc",
+        "security": [
+          {
+            "mtls": []
+          }
+        ],
+        "transport": "JSONRPC"
+      }
+    ],
+    "entityMeta": {
+      "role": "partner",
+      "model": "deepseek-chat",
+      "tools": [
+        "extract_file_content",
+        "citation_tool",
+        "text_similarity_check"
+      ],
+      "platform": "AegisMesh",
+      "modelProvider": "deepseek"
+    },
+    "description": "覆盖论文同行评审、结构与论证诊断、中英文学术润色、引文核验、参考文献格式转换及文本相似性风险初筛。",
+    "capabilities": {
+      "streaming": true,
+      "messageQueue": [],
+      "notification": true
+    },
+    "protocolVersion": "02.02",
+    "securitySchemes": {
+      "mtls": {
+        "type": "mutualTLS",
+        "description": "ACPs 双向身份认证"
+      }
+    },
+    "lastModifiedTime": "2026-09-22T20:46:41.427041+08:00",
+    "defaultInputModes": [
+      "text/plain",
+      "application/json"
+    ],
+    "defaultOutputModes": [
+      "application/json",
+      "text/markdown"
+    ]
+  },
+  "requestedAcs": {
+    "aic": "1.2.156.3088.1.BUPT.L2K8YU.9J8SQZ.G4PJHU.01U7",
+    "name": "论文评审与学术写作智能体",
+    "active": true,
+    "skills": [
+      {
+        "id": "writing.peer_review",
+        "name": "同行评审与论文质量诊断",
+        "tags": [
+          "同行评审",
+          "论文评审",
+          "审稿意见",
+          "Peer Review",
+          "论文修改",
+          "质量诊断"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "对论文初稿出具结构化同行评审意见",
+          "检查研究方法、论证链和结论是否相互支持"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "从创新性、研究设计、证据质量、逻辑结构、可复现性和写作规范等维度生成结构化评审意见与修改清单。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      },
+      {
+        "id": "writing.academic_editing",
+        "name": "学术写作、结构优化与中英文润色",
+        "tags": [
+          "学术写作",
+          "论文润色",
+          "英文润色",
+          "中文润色",
+          "摘要修改",
+          "论文结构"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "润色论文摘要并改善论证结构",
+          "把研究笔记整理为规范的学术段落"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "优化论文标题、摘要、引言、相关工作、讨论与结论的结构、逻辑和语言表达，保留原意并标注实质性修改。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      },
+      {
+        "id": "writing.citation_integrity",
+        "name": "引文核验、参考文献规范与相似性初筛",
+        "tags": [
+          "参考文献",
+          "引文核验",
+          "引用格式",
+          "GB/T 7714",
+          "APA",
+          "IEEE",
+          "BibTeX",
+          "查重初筛",
+          "学术规范"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "核对正文引用和参考文献是否一一对应",
+          "把 BibTeX 转换为 GB/T 7714 并检查缺失字段"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "核对正文引文与参考文献对应关系，处理 GB/T 7714、APA、IEEE 与 BibTeX 格式，识别缺失字段和文本相似性风险。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      }
+    ],
+    "version": "1.0.0",
+    "provider": {},
+    "endPoints": [
+      {
+        "url": "https://aip.demmo.cc.cd:8446/aip/peer_review/rpc",
+        "security": [
+          {
+            "mtls": []
+          }
+        ],
+        "transport": "JSONRPC"
+      }
+    ],
+    "entityMeta": {
+      "role": "partner",
+      "model": "deepseek-chat",
+      "tools": [
+        "extract_file_content",
+        "citation_tool",
+        "text_similarity_check"
+      ],
+      "platform": "AegisMesh",
+      "modelProvider": "deepseek"
+    },
+    "description": "覆盖论文同行评审、结构与论证诊断、中英文学术润色、引文核验、参考文献格式转换及文本相似性风险初筛。",
+    "capabilities": {
+      "streaming": true,
+      "messageQueue": [],
+      "notification": true
+    },
+    "protocolVersion": "02.02",
+    "securitySchemes": {
+      "mtls": {
+        "type": "mutualTLS",
+        "description": "ACPs 双向身份认证"
+      }
+    },
+    "lastModifiedTime": "2026-09-22T20:46:41.427041+08:00",
+    "defaultInputModes": [
+      "text/plain",
+      "application/json"
+    ],
+    "defaultOutputModes": [
+      "application/json",
+      "text/markdown"
+    ],
+    "certificate": {
+      "altNames": {
+        "dns": [
+          "aip.demmo.cc.cd"
+        ]
+      }
+    }
+  }
+}

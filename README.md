@@ -103,6 +103,8 @@ PYTHONPATH=backend .venv/bin/python -m app.cli admin set --username admin
 
 ## 测试
 
+管理后台「日志与审计」支持 AMP 日志查询、任务关联、管理操作审计和脱敏导出，且不改变直通上报链路。权限、保留策略和部署说明见 [日志与审计](docs/observability.md)。
+
 ```bash
 .venv/bin/pytest
 cd frontend && npm run build

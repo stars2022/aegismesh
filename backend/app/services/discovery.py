@@ -4,12 +4,16 @@ import httpx
 from acps_sdk.adp import (
     ADPError,
     DiscoveryContext,
+    DiscoveryFilter,
     DiscoveryRequest,
     DiscoveryResponse,
+    FilterCondition,
+    FilterOperator,
     validate_discovery_request,
 )
 
 from ..config import get_settings
+from .agent_search import search_constraints
 
 
 class DiscoveryError(RuntimeError):
@@ -25,6 +29,11 @@ class AdpDiscoveryClient:
         limit: int,
         session_id: str | None = None,
         recent_turns: list[str] | None = None,
+        *,
+        aic: str = "",
+        name: str = "",
+        endpoint_url: str = "",
+        exact_name: bool = False,
     ) -> dict:
         settings = get_settings()
         base_url = settings.adp_discovery_url.rstrip("/")
@@ -37,12 +46,33 @@ class AdpDiscoveryClient:
                 conversationId=session_id,
                 recentTurns=(recent_turns or [])[-8:],
             )
-        request = DiscoveryRequest(
-            type="explicit",
-            query=query,
-            limit=limit,
-            context=context,
-        )
+        constraints = search_constraints(dict(query=query, aic=aic, name=name,
+                                              endpoint_url=endpoint_url, exact_name=exact_name))
+        conditions = []
+        for field, value, operator in [
+            ("aic", constraints["aic"], FilterOperator.EQ),
+            ("name", constraints["name"], FilterOperator.EQ if exact_name else FilterOperator.CONTAINS),
+            ("endPoints.url", constraints["endpoint_url"], FilterOperator.EQ),
+        ]:
+            if value:
+                conditions.append(FilterCondition(field=field, op=operator, value=value))
+        if conditions:
+            request = DiscoveryRequest(
+                type="filtered",
+                filter=DiscoveryFilter(
+                    conditions=conditions,
+                    logic="and",
+                ),
+                limit=limit,
+                context=context,
+            )
+        else:
+            request = DiscoveryRequest(
+                type="explicit",
+                query=query,
+                limit=limit,
+                context=context,
+            )
         try:
             validate_discovery_request(request)
         except ADPError as exc:
@@ -76,6 +106,8 @@ class AdpDiscoveryClient:
             parsed = DiscoveryResponse.from_dict(response.json())
         except httpx.TimeoutException as exc:
             raise DiscoveryError("ADP 发现请求超时") from exc
+        except httpx.RequestError as exc:
+            raise DiscoveryError("ADP 发现服务连接失败") from exc
         except httpx.HTTPStatusError as exc:
             raise DiscoveryError(f"ADP 发现服务返回 {exc.response.status_code}") from exc
         except (ValueError, TypeError) as exc:

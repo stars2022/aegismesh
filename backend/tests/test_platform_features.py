@@ -181,7 +181,7 @@ def test_canvas_revision_returns_owner_scoped_snapshot() -> None:
         created = test_client.get(f"/api/canvas/session/{session}")
         assert created.status_code == 200
         canvas = created.json()
-        assert canvas["content"] == "# 协同画布\n"
+        assert canvas["content"] == ""
         saved = test_client.put(f"/api/canvas/session/{session}", json={
             "content": "# 协同画布\n\n新增正文\n", "base_version": canvas["version"],
         })

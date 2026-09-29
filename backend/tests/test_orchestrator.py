@@ -272,7 +272,7 @@ async def test_agent_id_runs_direct_partner(db: Session) -> None:
     assert invocation.attempt_count == 1
 
 
-async def test_agent_id_leader_coordinates_and_synthetizes(db: Session) -> None:
+async def test_agent_id_leader_coordinates_and_synthetizes(db: Session, registered_directory) -> None:
     db.add(RoutingPolicy(id=1, weights=DEFAULT_WEIGHTS, failure_threshold=2, circuit_cooldown_seconds=60, max_attempts=3, request_timeout_seconds=2))
     add_agent(db, "partner-one", 0)
     add_agent(db, "partner-two", 5)
@@ -343,7 +343,7 @@ class SlowFixtureTransport(FixtureTransport):
         return await super().execute(agent, query, timeout_seconds, session_id, history, harness)
 
 
-async def test_background_synthesis_replaces_preliminary_draft(db: Session) -> None:
+async def test_background_synthesis_replaces_preliminary_draft(db: Session, registered_directory) -> None:
     db.add(RoutingPolicy(
         id=1, weights=DEFAULT_WEIGHTS, failure_threshold=2,
         circuit_cooldown_seconds=60, max_attempts=2, request_timeout_seconds=2,
@@ -403,7 +403,7 @@ async def test_agent_id_rejects_external_only_agent(db: Session) -> None:
         ).run(ChatRequest(message="越权直接调用", agent_id="external-only"))
 
 
-async def test_dispatch_task_routes_to_best_partner(db: Session) -> None:
+async def test_dispatch_task_routes_to_best_partner(db: Session, registered_directory) -> None:
     db.add(RoutingPolicy(id=1, weights=DEFAULT_WEIGHTS, failure_threshold=2, circuit_cooldown_seconds=60, max_attempts=3, request_timeout_seconds=2))
     add_agent(db, "weak", 90)
     add_agent(db, "strong", 0)
@@ -606,7 +606,7 @@ async def test_fetch_session_history_tool(db: Session) -> None:
     assert "超出范围" in err_res["error"]
 
 
-async def test_list_agents_multi_token_and_dispatch_fuzzy_local(db: Session) -> None:
+async def test_directory_query_and_dispatch_exact_name(db: Session, registered_directory) -> None:
     db.add(RoutingPolicy(id=1, weights=DEFAULT_WEIGHTS, failure_threshold=2, circuit_cooldown_seconds=60, max_attempts=1, request_timeout_seconds=2))
     agent = Agent(
         id="empirical_design",
@@ -628,7 +628,7 @@ async def test_list_agents_multi_token_and_dispatch_fuzzy_local(db: Session) -> 
     agents = await orchestrator._list_agents({"scope": "local", "query": "文献检索 研究设计 论文评审 海洋 数据"})
     assert any(a["agent_id"] == "empirical_design" for a in agents)
 
-    # 2. Fuzzy name match in dispatch_task
+    # 2. Exact name from the directory, never fuzzy substitution during dispatch.
     inv = Invocation(id="inv-fuzzy", session_id="ses-f", query="测试", status="working")
     db.add(inv)
     db.commit()

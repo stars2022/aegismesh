@@ -53,7 +53,9 @@ export function Dropdown({ value, options, onChange, placeholder, className, ali
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setOpen(false)
     }
-    const closeOnScroll = () => setOpen(false)
+    const closeOnScroll = (event: Event) => {
+      if (!menu.current?.contains(event.target as Node)) setOpen(false)
+    }
     document.addEventListener('pointerdown', close)
     document.addEventListener('keydown', key)
     window.addEventListener('resize', closeOnScroll)
@@ -94,11 +96,11 @@ export function Dropdown({ value, options, onChange, placeholder, className, ali
   )
 }
 
-export function Switch({ checked, onChange, label }: { checked: boolean; onChange: (value: boolean) => void; label?: string }) {
+export function Switch({ checked, onChange, label, disabled = false }: { checked: boolean; onChange: (value: boolean) => void; label?: string; disabled?: boolean }) {
   return (
     <label className="switch-row">
       {label && <span>{label}</span>}
-      <button type="button" role="switch" aria-checked={checked} aria-label={label} className={`switch ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)}>
+      <button type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} className={`switch ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)}>
         <span className="knob" />
       </button>
     </label>

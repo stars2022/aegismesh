@@ -232,6 +232,8 @@ export type ChatResult = {
 
 export type Policy = {
   name: string
+  interop_compatibility: boolean
+  external_delegation_enabled: boolean
   weights: Record<string, number>
   failure_threshold: number
   circuit_cooldown_seconds: number

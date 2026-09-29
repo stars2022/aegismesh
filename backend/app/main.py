@@ -20,9 +20,11 @@ from .services.adaptive_lease import AdaptiveDeadlineController, TASK_PROFILES
 
 import httpx
 from pathlib import Path
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, Response, UploadFile, status
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import desc, func, inspect, select, text
 from sqlalchemy.engine import make_url
@@ -45,6 +47,7 @@ from .models import (
     HostedTask,
     Invocation,
     InvocationFeedback,
+    OperationalLog,
     PlatformAccess,
     ProbeResult,
     ProviderConfig,
@@ -91,9 +94,12 @@ from .services.probe import AgentProbe, probe_loop
 from .services.acs import LOCAL_AIC_PREFIX, build_acs, public_aic
 from .services.hosted_aip import HostedAipService
 from .services.certificates import CertificateError, issue_certificate
-from .services.registration import RegistryClient, RegistrationError
+from .services.aip_tls import public_aip_base
+from .services.registration import RegistryClient, RegistrationError, validate_registration_acs
 from .services.discovery import AdpDiscoveryClient, DiscoveryError, health_from_alive_map
+from .services.discovery_pool import discovery_candidates, rank_discovery
 from .services.amp_service import amp_service
+from .services.observability import AdminAuditMiddleware, LogQuery, index_loop, index_status, list_logs, log_read, query_conditions, safe_text
 from .services.admin_auth import (
     AttemptRateLimiter,
     COOKIE_NAME,
@@ -206,6 +212,11 @@ async def lifespan(_: FastAPI):
                         text("ALTER TABLE invocations ADD COLUMN owner_id VARCHAR(128) DEFAULT ''")
                     )
     with engine.begin() as connection:
+        if "routing_policies" in inspect(connection).get_table_names():
+            if "interop_compatibility" not in {c["name"] for c in inspect(connection).get_columns("routing_policies")}:
+                connection.execute(text("ALTER TABLE routing_policies ADD COLUMN interop_compatibility BOOLEAN DEFAULT 0"))
+            if "external_delegation_enabled" not in {c["name"] for c in inspect(connection).get_columns("routing_policies")}:
+                connection.execute(text("ALTER TABLE routing_policies ADD COLUMN external_delegation_enabled BOOLEAN DEFAULT 0"))
         if "canvas_docs" in inspect(connection).get_table_names():
             canvas_columns = {
                 item["name"] for item in inspect(connection).get_columns("canvas_docs")
@@ -215,25 +226,41 @@ async def lifespan(_: FastAPI):
                     "ALTER TABLE canvas_docs ADD COLUMN owner_id VARCHAR(128) DEFAULT ''"
                 ))
     with SessionLocal() as db:
-        seed_database(db)
-        recover_interrupted_runtime(db)
+        if settings.background_worker_enabled:
+            seed_database(db)
+            recover_interrupted_runtime(db)
         agents = db.scalars(select(Agent).where(Agent.active == True)).all()
         for ag in agents:
             if public_aic(ag):
                 amp_service.register_aic(ag.aic)
         leader_agent = db.scalar(select(Agent).where(Agent.role == "leader"))
-        if leader_agent and leader_agent.aic:
+        if settings.aip_tls_local_aic:
+            amp_service.update_aic(settings.aip_tls_local_aic)
+        elif leader_agent and leader_agent.aic:
             amp_service.update_aic(leader_agent.aic)
-    amp_task = asyncio.create_task(amp_service.start())
-    task = asyncio.create_task(probe_loop(SessionLocal, settings.probe_interval_seconds))
-    group_partner_task = await start_partner_listener()
+    if settings.background_worker_enabled:
+        await amp_service.start()
+    task = asyncio.create_task(probe_loop(SessionLocal, settings.probe_interval_seconds)) if settings.background_worker_enabled else None
+    group_partner_task = await start_partner_listener() if settings.background_worker_enabled else None
+    log_index_task = asyncio.create_task(index_loop(), name="local-log-index") if settings.background_worker_enabled and settings.log_indexer_enabled else None
     yield
-    await amp_service.stop()
-    task.cancel()
+    from .services.hosted_aip import stop_hosted_tasks
+    await stop_hosted_tasks()
+    if settings.background_worker_enabled:
+        await amp_service.stop()
+    if task:
+        task.cancel()
+    if log_index_task:
+        log_index_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await log_index_task
     if group_partner_task:
         group_partner_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
+        with suppress(asyncio.CancelledError):
+            await group_partner_task
+    if task:
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 app = FastAPI(
@@ -242,6 +269,7 @@ app = FastAPI(
     description="AIP-compatible quality-aware routing, failover and observability runtime.",
     lifespan=lifespan,
 )
+app.add_middleware(AdminAuditMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -251,6 +279,15 @@ app.add_middleware(
 )
 if settings.aip_identity_binding_enabled:
     app.add_middleware(AipPeerCertificateMiddleware)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def audited_http_exception(request: Request, exc: StarletteHTTPException):
+    # Keep the normal response contract; only retain a short server diagnostic.
+    # Structured validation errors can include submitted values and are not copied.
+    if getattr(request.state, "audit_request_id", None) and isinstance(exc.detail, str):
+        request.state.audit_note = safe_text(exc.detail)
+    return await http_exception_handler(request, exc)
 
 
 def require_inbound_identity(request: Request, sender_id: str | None) -> str:
@@ -280,9 +317,10 @@ def require_hosted_aip_runtime() -> None:
 
 def hosted_public_rpc_url(agent: Agent) -> str:
     require_hosted_aip_runtime()
-    base_url = settings.public_base_url.rstrip("/")
-    if not base_url.startswith("https://"):
-        raise HTTPException(status_code=503, detail="PUBLIC_BASE_URL 必须指向托管 AIP HTTPS 监听")
+    try:
+        base_url = public_aip_base(settings, agent.id)
+    except CertificateError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return f"{base_url}/aip/{agent.id}/rpc"
 
 
@@ -324,7 +362,10 @@ def authenticated_admin(request: Request, db: Session) -> AdminAccount | None:
         request.cookies.get(COOKIE_NAME, ""), settings.admin_session_secret
     )
     account = db.get(AdminAccount, username) if username else None
-    return account if account and account.active else None
+    if account and account.active:
+        request.state.audit_actor = account.username
+        return account
+    return None
 
 
 def require_admin(request: Request, db: Session = Depends(get_db)) -> None:
@@ -496,6 +537,7 @@ def admin_login(payload: AdminLogin, response: Response, request: Request, db: D
     login_source_attempts.reset(source_key)
     login_attempts.reset(attempt_key)
     max_age = max(1, settings.admin_session_hours) * 3600
+    request.state.audit_actor = account.username
     response.set_cookie(
         COOKIE_NAME,
         create_session_token(account.username, settings.admin_session_secret, max_age),
@@ -509,7 +551,8 @@ def admin_login(payload: AdminLogin, response: Response, request: Request, db: D
 
 
 @app.post("/api/admin/logout", tags=["admin-auth"])
-def admin_logout(response: Response) -> dict:
+def admin_logout(response: Response, request: Request, db: DbSession) -> dict:
+    authenticated_admin(request, db)
     response.delete_cookie(COOKIE_NAME, path="/")
     return {"authenticated": False}
 
@@ -781,6 +824,7 @@ async def register_agent(
         rpc_url = hosted_public_rpc_url(agent)
     acs = build_acs(agent, rpc_url)
     try:
+        validate_registration_acs(acs)
         if agent.registration_agent_id:
             await client.update_agent(agent.registration_agent_id, agent.name, "1.0.0", agent.description, acs)
         else:
@@ -790,8 +834,9 @@ async def register_agent(
         agent.registration_message = ""
     except RegistrationError as exc:
         agent.registration_message = str(exc)[:500]
+        request.state.audit_note = str(exc)
         db.commit()
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     agent.registration_synced_at = _now_utc()
     db.commit()
     return agent_to_read(agent)
@@ -809,7 +854,7 @@ async def sync_registration(agent_id: str, db: DbSession) -> AgentRead:
     try:
         detail = await client.detail(agent.registration_agent_id)
     except RegistrationError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     remote_status = str(
         detail.get("approval_status")
         or detail.get("approvalStatus")
@@ -869,20 +914,23 @@ async def fetch_eab_credential(agent_id: str, db: DbSession) -> dict:
 
 @app.post("/api/agents/{agent_id}/certificate", dependencies=[Depends(require_admin)], tags=["registration"])
 async def issue_agent_certificate(agent_id: str, db: DbSession, usage: str = "clientAuth") -> dict:
-    """基于 EAB 凭据通过 CA（ACME）签发客户端证书，落盘到数据目录。"""
+    """签发并校验指定用途的证书，校验失败时不替换正在使用的文件。"""
+    if usage not in {"clientAuth", "serverAuth"}:
+        raise HTTPException(status_code=422, detail="usage 必须为 clientAuth 或 serverAuth")
     agent = db.get(Agent, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     if not public_aic(agent):
         raise HTTPException(status_code=409, detail="智能体通过可信审核后才能签发证书")
+    from urllib.parse import urlsplit
+    hostname = urlsplit(hosted_public_rpc_url(agent)).hostname if usage == "serverAuth" else None
     client = RegistryClient()
     try:
         credential = await client.fetch_eab(agent.aic)
         agent.eab_key_id = credential.key_id
         agent.eab_expires_at = _parse_iso_datetime(credential.expires_at)
-        if usage not in {"clientAuth", "serverAuth"}:
-            raise HTTPException(status_code=422, detail="usage 必须为 clientAuth 或 serverAuth")
-        issued = await issue_certificate(agent.aic, {"keyId": credential.key_id, "macKey": credential.mac_key}, usage)
+        issued = await issue_certificate(agent.aic, {"keyId": credential.key_id, "macKey": credential.mac_key}, usage,
+                                         server_hostname=hostname)
     except RegistrationError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except CertificateError as exc:
@@ -1021,13 +1069,43 @@ def get_policy(db: DbSession) -> PolicyRead:
     return PolicyRead.model_validate(policy)
 
 
+@app.get("/api/interop/status", dependencies=[Depends(require_admin)], tags=["routing"])
+def interop_status(db: DbSession) -> dict:
+    from .services.interop import ready_partners
+    required = {a.aic for a in db.scalars(select(Agent)).all()
+                if a.active and a.transport != "aip-rpc" and a.registration_status == "approved"}
+    policy = db.get(RoutingPolicy, 1)
+    return {"enabled": settings.aip_group_partner_enabled,
+            "listener_worker": settings.aip_group_listener_worker,
+            "expected_partners": len(required), "ready_partners": len(required & ready_partners),
+            "ready": bool(required) and required.issubset(ready_partners),
+            "interop_compatibility": bool(policy and policy.interop_compatibility),
+            "external_delegation_enabled": bool(policy and policy.external_delegation_enabled)}
+
+
 @app.put("/api/policy", response_model=PolicyRead, dependencies=[Depends(require_admin)], tags=["routing"])
-def update_policy(payload: PolicyUpdate, db: DbSession) -> PolicyRead:
+def update_policy(payload: PolicyUpdate, db: DbSession, request: Request) -> PolicyRead:
+    if payload.interop_compatibility:
+        from .services.interop import compatibility_prerequisites, ready_partners
+        try:
+            compatibility_prerequisites()
+            required = {a.aic for a in db.scalars(select(Agent)).all()
+                        if a.active and a.transport != "aip-rpc" and a.registration_status == "approved"}
+            if not required or not required.issubset(ready_partners):
+                raise RuntimeError("已注册托管智能体的 MQ Partner 尚未全部连接成功")
+        except (RuntimeError, OSError) as exc:
+            raise HTTPException(status_code=422, detail=f"兼容模式未就绪：{exc}") from exc
     if abs(sum(payload.weights.values()) - 1) > 0.001:
         raise HTTPException(status_code=422, detail="Routing weights must sum to 1")
     policy = db.get(RoutingPolicy, 1)
     assert policy is not None
-    for key, value in payload.model_dump().items():
+    request.state.audit_policy_changes = {
+        key: {"before": getattr(policy, key), "after": value}
+        for key, value in payload.model_dump(exclude_unset=True).items()
+        if key in {"interop_compatibility", "external_delegation_enabled", "weights", "failure_threshold", "circuit_cooldown_seconds", "max_attempts", "request_timeout_seconds"}
+        and getattr(policy, key) != value
+    }
+    for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(policy, key, value)
     db.commit()
     return PolicyRead.model_validate(policy)
@@ -1363,6 +1441,15 @@ async def run_group_agent_reply(db: Session, agent: Agent, prompt: str, timeout:
     if provider:
         kwargs["provider"] = provider
     kwargs["tool_registry"] = ToolRegistry()
+    policy = db.get(RoutingPolicy, 1)
+    if policy and policy.interop_compatibility:
+        if agent.transport != "aip-rpc" and agent.aic != settings.leader_aic:
+            from .services.interop import invoke_hosted
+            result = await invoke_hosted(settings.leader_aic, agent, prompt, group_session_id, timeout,
+                                        lambda: transport.execute(agent, prompt, timeout, **kwargs))
+            return result.text
+        if agent.transport == "aip-rpc":
+            kwargs.update(caller_aic=settings.leader_aic, interop_compatibility=True)
     result = await transport.execute(agent, prompt, timeout, **kwargs)
     return result.text
 
@@ -1573,7 +1660,13 @@ async def post_group_chat_message(group_id: str, payload: GroupChatMessageIn, db
 
     reply_text = ""
     error_note = ""
-    if group.transport == "aip-mq":
+    policy = db.get(RoutingPolicy, 1)
+    if policy and policy.interop_compatibility:
+        try:
+            reply_text = await run_group_agent_reply(db, target_agent, prompt, 90.0, group_id)
+        except Exception as exc:
+            error_note = str(exc)
+    elif group.transport == "aip-mq" and target_agent.transport == "aip-rpc":
         if not settings.leader_aic:
             error_note = "未配置 LEADER_AIC，无法使用国标 MQ 群组"
         else:
@@ -1582,6 +1675,7 @@ async def post_group_chat_message(group_id: str, payload: GroupChatMessageIn, db
                 for m in group.members
                 if (agent := db.get(Agent, m)) is not None and agent.transport == "aip-rpc" and agent.endpoint_url
             ]
+            session = None
             try:
                 session = await get_mq_session(f"group:{group_id}", settings.leader_aic, partners)
                 reply_text = await session.send_and_collect(
@@ -1594,6 +1688,9 @@ async def post_group_chat_message(group_id: str, payload: GroupChatMessageIn, db
                 error_note = f"国标 MQ 群组异常：{exc}"
             except Exception as exc:
                 error_note = f"国标 MQ 群组异常：{exc}"
+            finally:
+                if session:
+                    await session.close()
     else:
         try:
             reply_text = await run_group_agent_reply(db, target_agent, prompt, 90.0, group_id)
@@ -1784,31 +1881,52 @@ async def get_uploaded_file(filename: str) -> FileResponse:
 
 
 @app.post("/api/discovery/search", dependencies=[Depends(require_demo_or_admin_or_api_key)], tags=["discovery"])
-async def discover_agents(payload: DiscoveryQuery) -> dict:
+async def discover_agents(payload: DiscoveryQuery, db: DbSession) -> dict:
     try:
-        return await AdpDiscoveryClient().discover(
+        result = await AdpDiscoveryClient().discover(
             query=payload.query,
             limit=payload.limit,
             session_id=payload.session_id,
             recent_turns=payload.recent_turns,
+            aic=payload.aic, name=payload.name, endpoint_url=payload.endpoint_url,
+            exact_name=payload.exact_name,
         )
+        from .services.agent_search import search_constraints
+        candidates = discovery_candidates(db, result, search_constraints(payload.model_dump()))
+        result["candidates"] = rank_discovery(db, candidates, payload.query)
+        return result
     except DiscoveryError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-_discovery_feed_cache: dict[str, Any] = {"timestamp": 0.0, "data": []}
+_discovery_feed_cache: dict[tuple[str, int], dict[str, Any]] = {}
 
 
 @app.get("/api/discovery/feed", dependencies=[Depends(require_demo_or_admin_or_api_key)], tags=["discovery"])
-async def get_discovery_feed(refresh: bool = False, limit: int = 30) -> list[dict[str, Any]]:
+async def get_discovery_feed(db: DbSession, refresh: bool = False, limit: int = 30, query: str = "") -> list[dict[str, Any]]:
     now = time.monotonic()
-    if not refresh and _discovery_feed_cache["data"] and (now - _discovery_feed_cache["timestamp"] < 60.0):
-        return _discovery_feed_cache["data"]
+    query = query.strip()[:2000] or "智能体"
+    limit = max(1, min(limit, 50))
+    key = (query, limit)
+    cached = _discovery_feed_cache.get(key)
+    fresh = False
+    if not refresh and cached and now - cached["timestamp"] < 60.0:
+        res = cached["response"]
+    else:
+        try:
+            res = await AdpDiscoveryClient().discover(query=query, limit=limit)
+        except DiscoveryError as exc:
+            # Never report a stale cache as a successful refreshed discovery.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if len(_discovery_feed_cache) >= 32 and key not in _discovery_feed_cache:
+            _discovery_feed_cache.pop(next(iter(_discovery_feed_cache)))
+        cached = {"timestamp": now, "response": res, "checked_at": datetime.now(timezone.utc).isoformat()}
+        _discovery_feed_cache[key] = cached
+        fresh = True
     try:
-        client = AdpDiscoveryClient()
-        res = await client.discover(query="智能体", limit=limit)
         acs_map = res.get("acsMap") or {}
         alive_map = res.get("aliveMap") or {}
+        scores = {item["aic"]: item for item in rank_discovery(db, discovery_candidates(db, res), query)}
         items = []
         for aic, data in acs_map.items():
             if not isinstance(data, dict):
@@ -1854,17 +1972,16 @@ async def get_discovery_feed(refresh: bool = False, limit: int = 30) -> list[dic
                 "alive": (alive_map.get(aic) or {}).get("alive") if isinstance(alive_map.get(aic), dict) else None,
                 "raw_acs": data,
                 "is_external": True,
+                "cache_state": "fresh" if fresh else "cached",
+                "discovered_at": cached["checked_at"],
+                "score": scores.get(aic),
             })
-        _discovery_feed_cache["timestamp"] = now
-        _discovery_feed_cache["data"] = items
+        items.sort(key=lambda item: (
+            not bool((item["score"] or {}).get("eligible")),
+            (item["score"] or {}).get("rank") or 9999, item["aic"],
+        ))
         return items
-    except DiscoveryError as exc:
-        if _discovery_feed_cache["data"]:
-            return _discovery_feed_cache["data"]
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        if _discovery_feed_cache["data"]:
-            return _discovery_feed_cache["data"]
         raise HTTPException(status_code=500, detail=f"获取全网发现智能体失败: {exc}") from exc
 
 
@@ -1904,6 +2021,45 @@ def import_discovered_agent(payload: DiscoveryImportRequest, db: DbSession) -> A
     db.add(agent)
     db.commit()
     return agent_to_read(agent)
+
+
+@app.get("/api/admin/logs/status", dependencies=[Depends(require_admin)], tags=["observability"])
+def logs_status(db: DbSession, response: Response) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    return index_status(db)
+
+
+@app.get("/api/admin/logs/export", dependencies=[Depends(require_admin)], tags=["observability"])
+def logs_export(db: DbSession, query: Annotated[LogQuery, Query()]) -> Response:
+    # Export is a bounded, redacted snapshot, not a download of the raw AMP file.
+    conditions = query_conditions(query)
+    total = db.scalar(select(func.count()).select_from(OperationalLog).where(*conditions)) or 0
+    rows = db.scalars(select(OperationalLog).where(*conditions).order_by(OperationalLog.occurred_at.desc(), OperationalLog.id.desc()).limit(2000)).all()
+    metadata = {"export_type": "aegismesh-redacted-logs", "total_matching": total, "exported": len(rows),
+                "truncated": total > len(rows), "platform_receipt": "not_observed"}
+    content = "\n".join(json.dumps(item, ensure_ascii=False) for item in [metadata, *[log_read(row, detail=True) for row in rows]]) + "\n"
+    return Response(content, media_type="application/x-ndjson", headers={
+        "Content-Disposition": 'attachment; filename="aegismesh-redacted-logs.jsonl"',
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+    })
+
+
+@app.get("/api/admin/logs", dependencies=[Depends(require_admin)], tags=["observability"])
+def logs_list(db: DbSession, response: Response, query: Annotated[LogQuery, Query()]) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return list_logs(db, query)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/admin/logs/{log_id}", dependencies=[Depends(require_admin)], tags=["observability"])
+def logs_detail(log_id: int, db: DbSession, response: Response) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    row = db.get(OperationalLog, log_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="记录不存在或已超出本地保留范围")
+    return log_read(row, detail=True)
 
 
 @app.get("/api/invocations", response_model=list[TraceRead], dependencies=[Depends(require_admin)], tags=["observability"])
@@ -1994,7 +2150,8 @@ def platform_acs(request: Request, db: DbSession) -> dict:
     leader = _platform_leader(db)
     if not leader:
         raise HTTPException(status_code=404, detail="Leader not configured")
-    rpc_url = settings.platform_rpc_url or f"{_public_base_url(request)}:8443/aip/platform/rpc"
+    rpc_url = (hosted_public_rpc_url(leader) if leader.id in settings.aip_agent_public_urls
+               else settings.platform_rpc_url or f"{_public_base_url(request)}:8443/aip/platform/rpc")
     return build_acs(leader, rpc_url)
 
 
@@ -2005,6 +2162,7 @@ async def platform_rpc(request: Request, db: DbSession):
     if not leader:
         raise HTTPException(status_code=404, detail="Platform leader not configured")
     require_hosted_aip_runtime()
+    require_listener_identity(leader)
     try:
         payload = await request.json()
     except (json.JSONDecodeError, Exception) as exc:
@@ -2030,7 +2188,7 @@ async def platform_rpc(request: Request, db: DbSession):
     except PydanticValidationError as exc:
         raise HTTPException(status_code=400, detail="AIP 请求格式无效") from exc
     peer_aic = require_inbound_identity(request, rpc_request.params.command.senderId)
-    service = HostedAipService(db, leader, owner_peer_aic=peer_aic)
+    service = HostedAipService(db, leader, owner_peer_aic=peer_aic, background=True)
     t0 = time.monotonic()
     status_code = 200
     task_id = rpc_request.params.command.taskId or f"task_{int(t0 * 1000)}"
@@ -2051,6 +2209,7 @@ async def platform_rpc(request: Request, db: DbSession):
             amp_service.record_access(
                 caller_aic=peer_aic,
                 callee_aic=leader.aic,
+                reporter_aic=leader.aic,
                 task_id=task_id,
                 route="/aip/platform/rpc",
                 url="/aip/platform/rpc",
@@ -2061,12 +2220,18 @@ async def platform_rpc(request: Request, db: DbSession):
         )
 
 
+def require_listener_identity(agent: Agent) -> None:
+    if settings.aip_tls_local_aic and settings.aip_tls_local_aic != agent.aic:
+        raise HTTPException(status_code=421, detail="目标智能体与当前 TLS 入口证书身份不一致")
+
+
 def _hosted_partner(agent_id: str, db: Session) -> Agent:
     agent = db.get(Agent, agent_id)
     if not agent:
         agent = db.scalar(select(Agent).where(Agent.aic == agent_id))
     if not agent or agent.transport == "aip-rpc" or agent.usage_mode == "internal" or not public_aic(agent):
         raise HTTPException(status_code=404, detail="Hosted Agent not found")
+    require_listener_identity(agent)
     return agent
 
 
@@ -2099,7 +2264,7 @@ async def hosted_partner_rpc(agent_id: str, request: Request, db: DbSession):
     except PydanticValidationError as exc:
         raise HTTPException(status_code=400, detail="AIP 请求格式无效") from exc
     peer_aic = require_inbound_identity(request, rpc_request.params.command.senderId)
-    service = HostedAipService(db, agent, owner_peer_aic=peer_aic)
+    service = HostedAipService(db, agent, owner_peer_aic=peer_aic, background=True)
     t0 = time.monotonic()
     status_code = 200
     task_id = rpc_request.params.command.taskId or f"task_{int(t0 * 1000)}"
@@ -2120,6 +2285,7 @@ async def hosted_partner_rpc(agent_id: str, request: Request, db: DbSession):
             amp_service.record_access(
                 caller_aic=peer_aic,
                 callee_aic=agent.aic,
+                reporter_aic=agent.aic,
                 task_id=task_id,
                 route=f"/aip/{agent_id}/rpc",
                 url=f"/aip/{agent_id}/rpc",

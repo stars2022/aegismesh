@@ -1,0 +1,229 @@
+{
+  "agentId": "docs_overview",
+  "registrationAgentId": "01a0c919-7244-73c6-adaf-5fd2cfbfc794",
+  "aic": "1.2.156.3088.1.BUPT.L2K8YU.GVNLWG.B3FPY7.15VB",
+  "preserveApprovalStatus": "APPROVED",
+  "before": {
+    "aic": "1.2.156.3088.1.BUPT.L2K8YU.GVNLWG.B3FPY7.15VB",
+    "name": "文献检索与知识综述智能体",
+    "active": true,
+    "skills": [
+      {
+        "id": "literature.search_and_evidence",
+        "name": "多源文献检索与证据追踪",
+        "tags": [
+          "文献检索",
+          "学术搜索",
+          "资料检索",
+          "网络检索",
+          "中英文文献",
+          "技术调研",
+          "行业调研",
+          "DOI"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "检索近五年多智能体通信协议的中英文文献",
+          "收集一个技术领域的代表论文、标准与公开报告"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "按主题、关键词、时间、语种和来源类型检索学术论文、技术资料与公开行业信息，输出去重、可追溯的证据清单。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      },
+      {
+        "id": "literature.systematic_review",
+        "name": "系统性文献综述与研究空白识别",
+        "tags": [
+          "文献综述",
+          "系统综述",
+          "相关工作",
+          "研究现状",
+          "前沿趋势",
+          "研究空白",
+          "Research Gap"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "梳理 RAG 与知识图谱融合的技术路线和研究空白",
+          "生成可用于论文相关工作章节的综述提纲"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "对检索结果进行主题聚类、研究脉络梳理、方法比较、证据强弱评估和研究空白识别，形成综述框架与相关工作提纲。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      }
+    ],
+    "version": "1.0.0",
+    "provider": {},
+    "endPoints": [
+      {
+        "url": "https://aip.demmo.cc.cd:8443/aip/docs_overview/rpc",
+        "security": [
+          {
+            "mtls": []
+          }
+        ],
+        "transport": "JSONRPC"
+      }
+    ],
+    "entityMeta": {
+      "role": "partner",
+      "model": "deepseek-chat",
+      "tools": [
+        "web_search",
+        "extract_file_content",
+        "citation_tool"
+      ],
+      "platform": "AegisMesh",
+      "modelProvider": "deepseek"
+    },
+    "description": "面向学术研究、技术调研与行业分析的多源资料检索和证据综述，提供可追溯文献清单、研究脉络、观点比较、前沿趋势与研究空白。",
+    "capabilities": {
+      "streaming": true,
+      "messageQueue": [],
+      "notification": true
+    },
+    "protocolVersion": "02.02",
+    "securitySchemes": {
+      "mtls": {
+        "type": "mutualTLS",
+        "description": "ACPs 双向身份认证"
+      }
+    },
+    "lastModifiedTime": "2026-09-22T20:46:46.151416+08:00",
+    "defaultInputModes": [
+      "text/plain",
+      "application/json"
+    ],
+    "defaultOutputModes": [
+      "application/json",
+      "text/markdown"
+    ]
+  },
+  "requestedAcs": {
+    "aic": "1.2.156.3088.1.BUPT.L2K8YU.GVNLWG.B3FPY7.15VB",
+    "name": "文献检索与知识综述智能体",
+    "active": true,
+    "skills": [
+      {
+        "id": "literature.search_and_evidence",
+        "name": "多源文献检索与证据追踪",
+        "tags": [
+          "文献检索",
+          "学术搜索",
+          "资料检索",
+          "网络检索",
+          "中英文文献",
+          "技术调研",
+          "行业调研",
+          "DOI"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "检索近五年多智能体通信协议的中英文文献",
+          "收集一个技术领域的代表论文、标准与公开报告"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "按主题、关键词、时间、语种和来源类型检索学术论文、技术资料与公开行业信息，输出去重、可追溯的证据清单。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      },
+      {
+        "id": "literature.systematic_review",
+        "name": "系统性文献综述与研究空白识别",
+        "tags": [
+          "文献综述",
+          "系统综述",
+          "相关工作",
+          "研究现状",
+          "前沿趋势",
+          "研究空白",
+          "Research Gap"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "梳理 RAG 与知识图谱融合的技术路线和研究空白",
+          "生成可用于论文相关工作章节的综述提纲"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "对检索结果进行主题聚类、研究脉络梳理、方法比较、证据强弱评估和研究空白识别，形成综述框架与相关工作提纲。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      }
+    ],
+    "version": "1.0.0",
+    "provider": {},
+    "endPoints": [
+      {
+        "url": "https://aip.demmo.cc.cd:8444/aip/docs_overview/rpc",
+        "security": [
+          {
+            "mtls": []
+          }
+        ],
+        "transport": "JSONRPC"
+      }
+    ],
+    "entityMeta": {
+      "role": "partner",
+      "model": "deepseek-chat",
+      "tools": [
+        "web_search",
+        "extract_file_content",
+        "citation_tool"
+      ],
+      "platform": "AegisMesh",
+      "modelProvider": "deepseek"
+    },
+    "description": "面向学术研究、技术调研与行业分析的多源资料检索和证据综述，提供可追溯文献清单、研究脉络、观点比较、前沿趋势与研究空白。",
+    "capabilities": {
+      "streaming": true,
+      "messageQueue": [],
+      "notification": true
+    },
+    "protocolVersion": "02.02",
+    "securitySchemes": {
+      "mtls": {
+        "type": "mutualTLS",
+        "description": "ACPs 双向身份认证"
+      }
+    },
+    "lastModifiedTime": "2026-09-22T20:46:46.151416+08:00",
+    "defaultInputModes": [
+      "text/plain",
+      "application/json"
+    ],
+    "defaultOutputModes": [
+      "application/json",
+      "text/markdown"
+    ],
+    "certificate": {
+      "altNames": {
+        "dns": [
+          "aip.demmo.cc.cd"
+        ]
+      }
+    }
+  }
+}

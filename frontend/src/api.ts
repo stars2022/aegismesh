@@ -1,4 +1,5 @@
 import type { Agent, Attachment, ChatResult, DashboardData, Policy, ProbeResult, Provider, Trace, UploadResponse } from './types'
+import type { LogPage, LogRecord, LogStatus } from './logs'
 
 const jsonHeaders = { 'Content-Type': 'application/json' }
 
@@ -166,6 +167,14 @@ async function streamChat(
 }
 
 export const api = {
+  logs: (query: string, signal?: AbortSignal) => request<LogPage>(`/api/admin/logs?${query}`, { signal }),
+  logStatus: (signal?: AbortSignal) => request<LogStatus>('/api/admin/logs/status', { signal }),
+  logDetail: (id: number, signal?: AbortSignal) => request<LogRecord>(`/api/admin/logs/${id}`, { signal }),
+  exportLogs: async (query: string) => {
+    const response = await fetch(`/api/admin/logs/export?${query}`, { credentials: 'same-origin' })
+    if (!response.ok) throw new Error(`导出失败 (${response.status})，请确认登录状态后重试`)
+    return response.blob()
+  },
   adminSession: () => request<{ enabled: boolean; authenticated: boolean; username: string | null }>('/api/admin/session'),
   adminLogin: (username: string, password: string) =>
     request<{ enabled: boolean; authenticated: boolean; username: string | null }>('/api/admin/login', {
@@ -204,10 +213,10 @@ export const api = {
       `/api/invocations/${encodeURIComponent(invocationId)}/feedback`,
       { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ rating }) },
     ),
-  discoveryFeed: (refresh?: boolean) =>
-    request<any[]>(`/api/discovery/feed${refresh ? '?refresh=true' : ''}`),
+  discoveryFeed: (refresh = false, query = '') =>
+    request<any[]>(`/api/discovery/feed?${new URLSearchParams({ refresh: String(refresh), query })}`),
   discoverySearch: (query: string, limit?: number) =>
-    request<{ result?: any; acsMap?: Record<string, any>; raw?: any; aliveMap?: Record<string, any> }>('/api/discovery/search', {
+    request<{ result?: any; acsMap?: Record<string, any>; raw?: any; aliveMap?: Record<string, any>; candidates?: any[] }>('/api/discovery/search', {
       method: 'POST',
       headers: jsonHeaders,
       body: JSON.stringify({ query, limit: limit || 10 }),

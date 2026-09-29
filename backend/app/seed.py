@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 
 from .models import Agent, PlatformAccess, ProviderConfig, RoutingPolicy
 from .research_catalog import apply_research_catalog
+from .service_catalog import apply_service_catalog
 
 
 DEFAULT_WEIGHTS = {
@@ -25,17 +26,17 @@ PLATFORM_AGENT_CATALOG: dict[str, dict] = {
         "name": "智能体发现助手",
         "role": "leader",
         "description": (
-            "方式三「发现智能体」：用自然语言描述需求，即可在本地注册表与全网发现（ADP）中"
-            "检索候选智能体，按质量评分输出推荐名单，并给出智能体与技能的组合建议。"
+            "方式三「发现智能体」：用自然语言描述需求，通过官方全网发现（ADP）检索候选，"
+            "按 AIC 关联本地调用历史与质量评分，输出推荐名单和智能体与技能的组合建议。"
         ),
         "system_prompt": (
             "你是智能体发现助手（方式三：发现智能体）。用户用自然语言描述需求时：\n"
-            "1. 先提炼能力关键词并调用 list_agents 检索候选（默认 scope=all，兼顾本地注册表与全网 ADP 发现；"
-            "用户只关心本平台调度池时用 scope=local，只关心外部接入时用 scope=network）；\n"
+            "1. 先提炼能力关键词并调用 list_agents 查询官方 ADP（默认 scope=all；scope=local 仅保留发现结果中的本机托管成员）。"
+            "指定 AIC、名称、AIP 地址时传对应搜索参数，不用排名替换指定目标；本地列表只提供历史评分，不能代替发现服务；\n"
             "2. 依据返回的质量评分与资格说明筛选，严禁虚构不存在的候选；\n"
             "3. 输出固定三段：【需求解析】提取的能力关键词；【推荐名单】各候选的名称、质量评分、来源"
             "（本地/全网）、健康状态与推荐理由；【组合建议】首选的智能体与技能组合及其覆盖的需求项、"
-            "备选组合、未覆盖的需求项与接入建议（外部候选可先导入本平台调度池再派发任务）；\n"
+            "备选组合、未覆盖的需求项与接入建议（外部候选可以按返回的 agent_id/AIC 派发，不要求先导入）；\n"
             "4. 全网发现不可用或检索为空时如实说明，并给出改写查询的关键词建议。"
         ),
         "skills": [
@@ -43,8 +44,8 @@ PLATFORM_AGENT_CATALOG: dict[str, dict] = {
                 "id": "discovery.nl_agent_discovery",
                 "name": "自然语言智能体发现与组队建议",
                 "description": (
-                    "以自然语言接收任务需求，检索本地注册表与全网发现（ADP）中的智能体，"
-                    "输出带质量评分的推荐名单与智能体/技能组合建议。"
+                    "以自然语言接收任务需求，通过官方 ADP 检索智能体并关联本地历史评分，"
+                    "输出推荐名单与智能体/技能组合建议。"
                 ),
                 "version": "1.0.0",
                 "tags": ["智能体发现", "自然语言检索", "能力匹配", "组队建议", "ADP发现", "智能体推荐"],
@@ -103,6 +104,7 @@ def _apply_seed(db: Session) -> None:
         )
 
     apply_research_catalog(db)
+    apply_service_catalog(db)
 
     for agent_id, definition in PLATFORM_AGENT_CATALOG.items():
         agent = db.get(Agent, agent_id)

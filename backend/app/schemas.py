@@ -145,6 +145,8 @@ class PolicyRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     name: str
+    interop_compatibility: bool = False
+    external_delegation_enabled: bool = False
     weights: dict[str, float]
     failure_threshold: int
     circuit_cooldown_seconds: int
@@ -248,10 +250,22 @@ class GroupChatMessageIn(BaseModel):
 
 
 class DiscoveryQuery(BaseModel):
-    query: str = Field(min_length=1, max_length=2_000)
+    query: str = Field(default="", max_length=2_000)
+    aic: str = Field(default="", max_length=255)
+    name: str = Field(default="", max_length=255)
+    endpoint_url: str = Field(default="", max_length=2_000)
+    exact_name: bool = False
     limit: int = Field(default=5, ge=1, le=50)
     session_id: str | None = Field(default=None, max_length=128)
     recent_turns: list[str] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def require_search_target(self) -> DiscoveryQuery:
+        if not any(v.strip() for v in [self.query, self.aic, self.name, self.endpoint_url]):
+            raise ValueError("至少提供关键词、AIC、名称或 AIP 地址")
+        if self.endpoint_url and (not self.endpoint_url.startswith("https://") or not _valid_http_url(self.endpoint_url)):
+            raise ValueError("AIP 地址必须为有效 HTTPS URL")
+        return self
 
 
 class DiscoveryImportRequest(BaseModel):

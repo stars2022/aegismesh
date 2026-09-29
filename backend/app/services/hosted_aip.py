@@ -16,9 +16,11 @@ from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 _tracked_notification_tasks: set[asyncio.Task] = set()
+_background_rpc_tasks: dict[str, asyncio.Task] = {}
+_active_runtime_tasks: dict[str, asyncio.Task] = {}
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from acps_sdk.aip import (
     Product,
@@ -48,7 +50,7 @@ from acps_sdk.aip.aip_stream_model import (
 
 from ..config import get_settings
 from ..models import Agent, AipNotification, HostedTask, ProviderConfig
-from .transport import PartnerTransport, TransportRegistry
+from .transport import PartnerTransport
 from .runtime_recovery import runtime_marker
 
 
@@ -69,13 +71,18 @@ class HostedAipService:
         agent: Agent,
         runtime: PartnerTransport | None = None,
         owner_peer_aic: str = "",
+        record_metrics: bool = True,
+        background: bool = False,
     ) -> None:
         self.db = db
         self.agent = agent
         self.owner_peer_aic = owner_peer_aic
+        self.record_metrics = record_metrics
+        self.background = background
+        self._provided_runtime = runtime is not None
         provider = db.get(ProviderConfig, agent.model_provider) if agent.transport == "provider" else None
         self.provider = provider
-        self.runtime = runtime or TransportRegistry().get(provider.kind if provider else agent.transport)
+        self.runtime = runtime
 
     async def handle(self, payload: dict) -> dict:
         request = RpcRequest.model_validate(payload)
@@ -337,7 +344,11 @@ class HostedAipService:
                     result_data={"_runtime": runtime_marker()},
                 )
                 self.db.add(task)
-                await self._run(task)
+                if self.background:
+                    self.db.commit()
+                    self._start_background(task)
+                else:
+                    await self._run(task)
         else:
             if not task:
                 return RpcResponse(
@@ -358,6 +369,9 @@ class HostedAipService:
                 if task.state not in self._terminal_states():
                     self._append_history(task, command)
                     self._set_state(task, TaskState.Canceled)
+                    running = _active_runtime_tasks.get(task.task_id) or _background_rpc_tasks.get(task.task_id)
+                    if running and not running.done():
+                        running.cancel()
             elif command.command == TaskCommandType.Continue:
                 self._append_history(task, command)
                 extra = self._text(command.dataItems)
@@ -366,7 +380,11 @@ class HostedAipService:
                     TaskState.AwaitingCompletion.value,
                 } and extra.strip():
                     task.query = f"{task.query}\n{extra}".strip()
-                    await self._run(task)
+                    if self.background:
+                        self.db.commit()
+                        self._start_background(task)
+                    else:
+                        await self._run(task)
             else:
                 return RpcResponse(
                     id=request.id,
@@ -390,9 +408,48 @@ class HostedAipService:
         scope = f"{self.agent.id}\0{self.owner_peer_aic}\0{external_task_id}".encode()
         return f"scope-{hashlib.sha256(scope).hexdigest()}"
 
+    def _start_background(self, task: HostedTask) -> None:
+        """Return Accepted before SDK RPC's 30-second request timeout.
+
+        The worker owns its DB session; it never uses the short-lived HTTP
+        dependency session. Duplicate Starts cannot rerun it. MQ delivery
+        bindings stay synchronous so the group handler sends their final result.
+        """
+        task_key, agent_id, peer = task.task_id, self.agent.id, self.owner_peer_aic
+        running = _background_rpc_tasks.get(task_key)
+        if running and not running.done():
+            return
+        factory = sessionmaker(bind=self.db.get_bind())
+
+        async def work():
+            with factory() as db:
+                row = db.get(HostedTask, task_key)
+                agent = db.get(Agent, agent_id)
+                if not row or not agent or row.state in self._terminal_states():
+                    return
+                service = HostedAipService(db, agent, owner_peer_aic=peer)
+                try:
+                    await service._run(row)
+                finally:
+                    db.commit()
+
+        job = asyncio.create_task(work(), name=f"aip-rpc:{task_key}")
+        _background_rpc_tasks[task_key] = job
+
+        def done(finished):
+            if _background_rpc_tasks.get(task_key) is finished:
+                _background_rpc_tasks.pop(task_key, None)
+            if not finished.cancelled() and finished.exception():
+                logger.error("AIP background execution failed for %s", task_key,
+                             exc_info=finished.exception())
+
+        job.add_done_callback(done)
+
     async def _run(self, task: HostedTask, on_text=None) -> None:
         started = time.monotonic()
         self._set_state(task, TaskState.Working)
+        self.db.commit()
+        job = None
         try:
             kwargs = {"session_id": task.session_id}
             if self.provider:
@@ -400,24 +457,41 @@ class HostedAipService:
             if (
                 on_text
                 and self.agent.streaming_enabled
+                and self.runtime is not None
                 and "on_text" in inspect.signature(self.runtime.execute).parameters
             ):
                 kwargs["on_text"] = on_text
-            result = await self.runtime.execute(self.agent, task.query, timeout_seconds=30, **kwargs)
+            if self._provided_runtime:
+                execution = self.runtime.execute(self.agent, task.query, timeout_seconds=30, **kwargs)
+            else:
+                from .aip_execution import execute_inbound_task
+                execution = execute_inbound_task(self.db, self.agent, task, on_text=on_text)
+            job = asyncio.create_task(execution)
+            _active_runtime_tasks[task.task_id] = job
+            result = await job
             latency_ms = (time.monotonic() - started) * 1000
             task.result_text = result.text
             task.result_data = result.data
             task.prompt_tokens = result.prompt_tokens
             task.completion_tokens = result.completion_tokens
             task.llm_calls = result.llm_calls
-            self._record_success(latency_ms)
+            if self.record_metrics and self._provided_runtime:
+                self._record_success(latency_ms)
             self._set_state(task, TaskState.AwaitingCompletion)
+        except asyncio.CancelledError:
+            self._set_state(task, TaskState.Canceled)
+            raise
         except Exception as exc:
             latency_ms = (time.monotonic() - started) * 1000
             task.result_text = ""
             task.result_data = {"error": str(exc)[:500]}
-            self._record_failure(latency_ms)
+            if self.record_metrics and self._provided_runtime:
+                self._record_failure(latency_ms)
             self._set_state(task, TaskState.Failed)
+        finally:
+            if _active_runtime_tasks.get(task.task_id) is job:
+                _active_runtime_tasks.pop(task.task_id, None)
+            self.db.commit()
 
     def _status(self, task: HostedTask, state: TaskState | None = None) -> TaskStatus:
         resolved = state or TaskState(task.state)
@@ -501,6 +575,16 @@ class HostedAipService:
         return "\n".join(
             item.text for item in (items or []) if getattr(item, "type", "") == "text"
         )
+
+
+async def stop_hosted_tasks() -> None:
+    jobs = {*_background_rpc_tasks.values(), *_active_runtime_tasks.values(),
+            *_tracked_notification_tasks}
+    for job in jobs:
+        if not job.done():
+            job.cancel()
+    if jobs:
+        await asyncio.gather(*jobs, return_exceptions=True)
 
 
 async def run_notification_task(agent_id: str, task_id: str, config: dict) -> None:

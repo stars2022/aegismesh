@@ -136,6 +136,7 @@ class AmpService:
         duration_ms: int = 0,
         session_id: str | None = None,
         error_message: str | None = None,
+        reporter_aic: str | None = None,
     ) -> None:
         """
         Record AMP access log.
@@ -155,7 +156,8 @@ class AmpService:
             error=err_info,
         )
         try:
-            await self._access_emitter.emit(
+            emitter = AccessEmitter(self.log_dir / "amp_access_aegismesh.jsonl", aic=reporter_aic) if reporter_aic else self._access_emitter
+            await emitter.emit(
                 body,
                 correlation_id=task_id,
                 trace_id=session_id or task_id,

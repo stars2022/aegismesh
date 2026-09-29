@@ -1,0 +1,283 @@
+{
+  "agentId": "research_leader",
+  "registrationAgentId": "01a0c919-7e20-71b5-8a1c-0e17466c4403",
+  "aic": "1.2.156.3088.1.BUPT.L2K8YU.9FTJ5K.FUG31M.0VW4",
+  "preserveApprovalStatus": "APPROVED",
+  "before": {
+    "aic": "1.2.156.3088.1.BUPT.L2K8YU.9FTJ5K.FUG31M.0VW4",
+    "name": "科研智能体协作工作台",
+    "active": true,
+    "skills": [
+      {
+        "id": "research_workspace.comprehensive_research",
+        "name": "综合科研调研与证据报告",
+        "tags": [
+          "科研",
+          "学术研究",
+          "课题调研",
+          "技术调研",
+          "行业研究",
+          "研究报告",
+          "开题报告",
+          "证据报告"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "调研近五年大语言模型多智能体协作研究并形成带来源的报告",
+          "围绕一个技术主题梳理现状、争议、研究空白与可行方案"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "围绕研究主题完成资料检索、证据归纳、观点比较、研究设计与结构化报告交付，适用于课题调研、技术研究、行业研究、开题准备和专题报告。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      },
+      {
+        "id": "research_workspace.multi_agent_collaboration",
+        "name": "多智能体科研协作与成果整合",
+        "tags": [
+          "多智能体协作",
+          "科研协作",
+          "任务分解",
+          "智能体调度",
+          "研究流程",
+          "成果整合"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "协作文献、方法与评审智能体完成一份研究方案",
+          "组织多个专业智能体完成资料检索、分析和报告复核"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "将复杂研究目标拆分为检索、方法、分析和评审任务，调用合适的专业智能体，维护共享上下文并汇总各阶段产出。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      },
+      {
+        "id": "research_workspace.research_planning",
+        "name": "课题规划与研究方案设计",
+        "tags": [
+          "研究计划",
+          "课题规划",
+          "研究方案",
+          "研究问题",
+          "论文选题",
+          "项目研究"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "为 RAG 与知识图谱方向制定研究计划",
+          "把一个行业问题转化为可验证的研究方案"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "把宽泛问题转化为可执行的研究问题、检索计划、方法路线、验证步骤与成果大纲。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      }
+    ],
+    "version": "1.0.0",
+    "provider": {},
+    "endPoints": [
+      {
+        "url": "https://aip.demmo.cc.cd:8443/aip/research_leader/rpc",
+        "security": [
+          {
+            "mtls": []
+          }
+        ],
+        "transport": "JSONRPC"
+      }
+    ],
+    "entityMeta": {
+      "role": "leader",
+      "model": "deepseek-chat",
+      "tools": [
+        "web_search",
+        "extract_file_content",
+        "citation_tool",
+        "text_similarity_check",
+        "calculator"
+      ],
+      "platform": "AegisMesh",
+      "modelProvider": "deepseek"
+    },
+    "description": "面向学术研究、技术调研与专业报告的多智能体协作入口，组织资料检索、证据综述、研究设计、数据分析、论文评审与结构化报告生成。",
+    "capabilities": {
+      "streaming": true,
+      "messageQueue": [],
+      "notification": true
+    },
+    "protocolVersion": "02.02",
+    "securitySchemes": {
+      "mtls": {
+        "type": "mutualTLS",
+        "description": "ACPs 双向身份认证"
+      }
+    },
+    "lastModifiedTime": "2026-09-22T20:46:38.325781+08:00",
+    "defaultInputModes": [
+      "text/plain",
+      "application/json"
+    ],
+    "defaultOutputModes": [
+      "application/json",
+      "text/markdown"
+    ]
+  },
+  "requestedAcs": {
+    "aic": "1.2.156.3088.1.BUPT.L2K8YU.9FTJ5K.FUG31M.0VW4",
+    "name": "科研智能体协作工作台",
+    "active": true,
+    "skills": [
+      {
+        "id": "research_workspace.comprehensive_research",
+        "name": "综合科研调研与证据报告",
+        "tags": [
+          "科研",
+          "学术研究",
+          "课题调研",
+          "技术调研",
+          "行业研究",
+          "研究报告",
+          "开题报告",
+          "证据报告"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "调研近五年大语言模型多智能体协作研究并形成带来源的报告",
+          "围绕一个技术主题梳理现状、争议、研究空白与可行方案"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "围绕研究主题完成资料检索、证据归纳、观点比较、研究设计与结构化报告交付，适用于课题调研、技术研究、行业研究、开题准备和专题报告。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      },
+      {
+        "id": "research_workspace.multi_agent_collaboration",
+        "name": "多智能体科研协作与成果整合",
+        "tags": [
+          "多智能体协作",
+          "科研协作",
+          "任务分解",
+          "智能体调度",
+          "研究流程",
+          "成果整合"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "协作文献、方法与评审智能体完成一份研究方案",
+          "组织多个专业智能体完成资料检索、分析和报告复核"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "将复杂研究目标拆分为检索、方法、分析和评审任务，调用合适的专业智能体，维护共享上下文并汇总各阶段产出。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      },
+      {
+        "id": "research_workspace.research_planning",
+        "name": "课题规划与研究方案设计",
+        "tags": [
+          "研究计划",
+          "课题规划",
+          "研究方案",
+          "研究问题",
+          "论文选题",
+          "项目研究"
+        ],
+        "version": "1.0.0",
+        "examples": [
+          "为 RAG 与知识图谱方向制定研究计划",
+          "把一个行业问题转化为可验证的研究方案"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "description": "把宽泛问题转化为可执行的研究问题、检索计划、方法路线、验证步骤与成果大纲。",
+        "outputModes": [
+          "text/markdown",
+          "application/json"
+        ]
+      }
+    ],
+    "version": "1.0.0",
+    "provider": {},
+    "endPoints": [
+      {
+        "url": "https://aip.demmo.cc.cd:8443/aip/research_leader/rpc",
+        "security": [
+          {
+            "mtls": []
+          }
+        ],
+        "transport": "JSONRPC"
+      }
+    ],
+    "entityMeta": {
+      "role": "leader",
+      "model": "deepseek-chat",
+      "tools": [
+        "web_search",
+        "extract_file_content",
+        "citation_tool",
+        "text_similarity_check",
+        "calculator"
+      ],
+      "platform": "AegisMesh",
+      "modelProvider": "deepseek"
+    },
+    "description": "面向学术研究、技术调研与专业报告的多智能体协作入口，组织资料检索、证据综述、研究设计、数据分析、论文评审与结构化报告生成。",
+    "capabilities": {
+      "streaming": true,
+      "messageQueue": [],
+      "notification": true
+    },
+    "protocolVersion": "02.02",
+    "securitySchemes": {
+      "mtls": {
+        "type": "mutualTLS",
+        "description": "ACPs 双向身份认证"
+      }
+    },
+    "lastModifiedTime": "2026-09-22T20:46:38.325781+08:00",
+    "defaultInputModes": [
+      "text/plain",
+      "application/json"
+    ],
+    "defaultOutputModes": [
+      "application/json",
+      "text/markdown"
+    ],
+    "certificate": {
+      "altNames": {
+        "dns": [
+          "aip.demmo.cc.cd"
+        ]
+      }
+    }
+  }
+}

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import ipaddress
+from urllib.parse import urlsplit
+
 from ..config import get_settings
 from ..models import Agent
 
@@ -25,16 +28,18 @@ def public_aic(agent: Agent) -> str:
 
 
 def build_acs(agent: Agent, rpc_url: str | None) -> dict:
+    hosted = agent.transport != "aip-rpc"
     security_schemes: dict = {}
     endpoint_security: list[dict[str, list[str]]] = []
-    if "mtls" in (agent.security_schemes or []):
+    # Hosted endpoints share the verified mTLS listener. A local agent's empty
+    # outbound security preferences must not erase the real inbound requirement.
+    if (hosted and inbound_notification_ready()) or "mtls" in (agent.security_schemes or []):
         security_schemes["mtls"] = {
             "type": "mutualTLS",
             "description": "ACPs 双向身份认证",
         }
         endpoint_security.append({"mtls": []})
 
-    hosted = agent.transport != "aip-rpc"
     payload = {
         "aic": public_aic(agent),
         "active": agent.active,
@@ -93,6 +98,31 @@ def build_acs(agent: Agent, rpc_url: str | None) -> dict:
     }
     from acps_sdk.acs import AgentCapabilitySpec
 
-    return AgentCapabilitySpec.model_validate(payload).model_dump(
+    settings = get_settings()
+    if hosted and settings.aip_group_partner_enabled:
+        from .aip_group import inbox_acs, mq_settings
+        if mq_settings() and (not settings.aip_group_partner_agent_id or settings.aip_group_partner_agent_id == agent.id):
+            inbox = None
+            if public_aic(agent) and agent.registration_status == "approved":
+                inbox = inbox_acs(agent.aic)
+            elif agent.group_enabled and not public_aic(agent):
+                inbox = inbox_acs("{AIC}", registration_template=True)
+            if inbox:
+                payload["endPoints"].extend({**endpoint, "security": endpoint_security or None} for endpoint in inbox["endPoints"])
+                payload["capabilities"]["messageQueue"] = ["amqp:0.9.1"]
+
+    result = AgentCapabilitySpec.model_validate(payload).model_dump(
         by_alias=True, exclude_none=True, mode="json"
     )
+    # The pinned SDK model does not expose the optional certificate field yet;
+    # the official CA reads it from ACS, NOT from endPoints or CSR extensions.
+    if hosted and rpc_url and urlsplit(rpc_url).scheme == "https":
+        hostname = urlsplit(rpc_url).hostname
+        if hostname:
+            try:
+                ipaddress.ip_address(hostname)
+                alt_names = {"ip": [hostname]}
+            except ValueError:
+                alt_names = {"dns": [hostname]}
+            result["certificate"] = {"altNames": alt_names}
+    return result

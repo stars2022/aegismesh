@@ -98,12 +98,33 @@ async def test_bridge_runs_group_and_reports_speeches(monkeypatch) -> None:
         async def close(self) -> None:
             return None
 
-    monkeypatch.setattr(
-        "acps_sdk.aip.aip_group_leader.GroupLeaderMqClient", FakeClient
-    )
-    monkeypatch.setattr(
-        aip_group, "mq_settings", lambda: {"rabbitmq_host": "localhost"}
-    )
+    # GroupLeader (not the low-level client) must perform ACL registration.
+    import asyncio
+    from types import SimpleNamespace
+    class FakeLeader:
+        def __init__(self, aic, config, **kwargs):
+            assert config["auth_service_url"] == "https://mq-auth.test"
+            self.state = {}
+        async def create_group_session(self, session_id, partners):
+            self.session = SimpleNamespace(group_id="group-test", leader_mq_client=self,
+                state_update_event=asyncio.Event(),
+                get_partner_task_snapshot=lambda task_id, aic: self.state.get((task_id, aic)))
+            return self.session
+        async def invite_partner(self, *args, **kwargs):
+            pass
+        async def start_task(self, session_id, *, text_content, task_id, mentions):
+            assert session_id == task_id  # Official Message correlationId contract.
+            self.target = mentions[0]
+            self.state[(task_id, self.target)] = {"state": "awaiting-completion", "product_text": "发言一" if self.target == "aic-1" else "发言二"}
+        async def complete_task(self, task_id, session_id, mentions):
+            self.state[(task_id, mentions[0])]["state"] = "completed"
+        async def close(self):
+            pass
+    monkeypatch.setattr("acps_sdk.aip.aip_group_leader.GroupLeader", FakeLeader)
+    monkeypatch.setattr(aip_group, "identity_context", lambda aic: None)
+    monkeypatch.setattr(aip_group, "message_emitter", lambda aic: None)
+    monkeypatch.setattr(aip_group, "get_settings", lambda: SimpleNamespace(aip_group_auth_url="https://mq-auth.test"))
+    monkeypatch.setattr(aip_group, "mq_settings", lambda: {"rabbitmq_host": "localhost", "rabbitmq_port": 5671, "rabbitmq_vhost": "acps"})
 
     result = await aip_group.run_aip_group_discussion(
         leader_aic="1.2.156.3088.0.1.2.3.4.ABCD",

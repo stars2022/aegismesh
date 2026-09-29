@@ -225,6 +225,27 @@ def _agent(*, streaming: bool) -> Agent:
 
 
 @pytest.mark.asyncio
+async def test_rpc_timeout_cancels_remote_task_before_closing(monkeypatch):
+    _install_sdk(monkeypatch)
+    calls = []
+
+    async def fail(self, command):
+        self.commands.append(command)
+        raise TimeoutError("bounded request timeout")
+
+    async def cancel(self, task_id, session_id):
+        calls.append((task_id, session_id))
+
+    monkeypatch.setattr(_FakeRpc, "_send_request", fail)
+    monkeypatch.setattr(_FakeRpc, "cancel_task", cancel, raising=False)
+    with pytest.raises(TimeoutError):
+        await AipSdkTransport().execute(_agent(streaming=False), "q", 1, session_id="cancel-me")
+    client = _FakeRpc.instances[-1]
+    assert calls == [(client.commands[0].taskId, "cancel-me")]
+    assert client.closed
+
+
+@pytest.mark.asyncio
 async def test_streaming_partner_forwards_chunks_and_completes(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_sdk(monkeypatch)
     seen: list[str] = []

@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# This installer predates release directories and the independent mTLS worker.
+# Never overwrite an existing production installation by merely running it.
+if [[ "${1:---check}" == "--check" ]]; then
+    exec bash "$(dirname "${BASH_SOURCE[0]}")/deploy-check.sh"
+fi
+if [[ "${1:-}" != "--bootstrap" ]]; then
+    echo "Usage: $0 --check | --bootstrap (new host only)" >&2
+    exit 2
+fi
+if systemctl cat aegismesh.service >/dev/null 2>&1; then
+    echo "已有 AegisMesh 服务：禁止旧安装流程覆盖现网。请使用分版本发布并保留现有 Nginx/mTLS/日志配置。" >&2
+    exit 1
+fi
+
 echo "=== [1/6] 检查与安装系统基础依赖 ==="
 sudo apt-get update -y
 sudo apt-get install -y python3-pip python3-venv git curl nginx build-essential
@@ -77,7 +91,7 @@ fi
 
 echo "=== [3/6] 编译前端静态资源 ==="
 cd "$APP_DIR/frontend"
-npm install
+npm ci
 npm run build
 
 echo "=== [4/6] 配置 Systemd 后端常驻服务 ==="
