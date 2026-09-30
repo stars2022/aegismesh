@@ -48,10 +48,6 @@ import {
   MessageSquare,
   MessageSquareText,
   Network,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
   Pencil,
   Play,
   Pin,
@@ -100,18 +96,21 @@ import {
   Switch,
 } from "./components";
 import { AgentPicker } from "./AgentPicker";
+import { SidebarToggle, useCompactSidebar } from "./SidebarToggle";
 import { WebSearchSettings } from "./WebSearchSettings";
+import { AccountAdministration, QuotaAdministration } from "./AccountAdministration";
+import { SidebarAccount } from "./SidebarAccount";
+import { SettingsDialog, type SettingsSection } from "./SettingsDialog";
+import { requestedSettings, workbenchAfterSettings } from "./accountNavigation";
+import { conversationStorage } from "./conversationStorage";
+import { mergeConversationMeta, type ConversationMeta } from "./conversationHistory";
 import { defaultCoordinatorId } from "./agentMenu";
 import { collaborationKey, mergeCollaborations, mergeSessionResults, mergeTools } from "./collaborationActivity";
 import {
-  COMPRESSION_STRATEGIES,
-  CONTEXT_WINDOWS,
   applyTheme,
   estimateTokens,
   loadSettings,
   saveSettings,
-  type CompressionStrategy,
-  type ThemeChoice,
   type UserSettings,
 } from "./settings";
 import type {
@@ -148,6 +147,8 @@ type View =
   | "probes"
   | "traces"
   | "logs"
+  | "accounts"
+  | "quotas"
   | "access";
 
 const navigation: { id: View; label: string; icon: typeof LayoutDashboard }[] =
@@ -159,6 +160,8 @@ const navigation: { id: View; label: string; icon: typeof LayoutDashboard }[] =
     { id: "probes", label: "智能体探针", icon: ScanSearch },
     { id: "traces", label: "运行记录", icon: Activity },
     { id: "logs", label: "日志与审计", icon: FileText },
+    { id: "accounts", label: "账号管理", icon: Users },
+    { id: "quotas", label: "配额管理", icon: Gauge },
     { id: "access", label: "访问与数据", icon: ShieldCheck },
   ];
 
@@ -170,6 +173,8 @@ const titles: Record<View, string> = {
   probes: "智能体探针",
   traces: "运行记录",
   logs: "日志与审计",
+  accounts: "账号管理",
+  quotas: "配额管理",
   access: "访问与数据",
 };
 
@@ -310,10 +315,23 @@ function formatRelative(timestamp?: number): string {
 }
 
 function App({ onLogout }: { onLogout?: () => void }) {
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>(() => {
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    return navigation.find(item => item.id === tab)?.id || "overview";
+  });
   const [logsRefresh, setLogsRefresh] = useState(0);
+  const [accountsRefresh, setAccountsRefresh] = useState(0);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", view);
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+  }, [view]);
   const [mobileNav, setMobileNav] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const adminNav = useRef<HTMLElement>(null);
+  useEffect(() => {
+    adminNav.current?.querySelector("button.active")?.scrollIntoView({ block: "nearest" });
+  }, [view, mobileNav, sidebarCollapsed]);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -369,18 +387,13 @@ function App({ onLogout }: { onLogout?: () => void }) {
           <div className="brand-copy">
             <strong>AegisMesh</strong>
           </div>
-          <button
+          <SidebarToggle
             className="sidebar-collapse"
+            side="left"
+            expanded={!sidebarCollapsed}
+            label={sidebarCollapsed ? "展开侧栏" : "折叠侧栏"}
             onClick={() => setSidebarCollapsed((value) => !value)}
-            title={sidebarCollapsed ? "展开侧栏" : "折叠侧栏"}
-            aria-label={sidebarCollapsed ? "展开侧栏" : "折叠侧栏"}
-          >
-            {sidebarCollapsed ? (
-              <PanelLeftOpen size={16} />
-            ) : (
-              <PanelLeftClose size={16} />
-            )}
-          </button>
+          />
         </div>
         <button
           className="new-agent-button"
@@ -391,7 +404,7 @@ function App({ onLogout }: { onLogout?: () => void }) {
         >
           <CirclePlus size={17} /> 新建智能体 <span>⌘ N</span>
         </button>
-        <nav>
+        <nav ref={adminNav}>
           <div className="nav-label">工作区</div>
           {navigation.map((item) => {
             const Icon = item.icon;
@@ -454,14 +467,14 @@ function App({ onLogout }: { onLogout?: () => void }) {
           <div className="topbar-actions">
             <button
               className="icon-button"
-              onClick={() => view === "logs" ? setLogsRefresh(value => value + 1) : void load()}
+              onClick={() => view === "logs" ? setLogsRefresh(value => value + 1) : ["accounts", "quotas"].includes(view) ? setAccountsRefresh(value => value + 1) : void load()}
               title="刷新"
             >
               {loading ? <FlowMark className="flow-mark-compact" /> : <RefreshCw size={17} />}
             </button>
-            <a className="primary-small" href="/">
+            <a className="primary-small" href="/" aria-label="打开聊天" title="打开聊天">
               <Play size={15} fill="currentColor" />
-              打开聊天
+              <span>打开聊天</span>
             </a>
           </div>
         </header>
@@ -495,6 +508,8 @@ function App({ onLogout }: { onLogout?: () => void }) {
           )}
           {view === "traces" && <Traces traces={traces} />}
           {view === "logs" && <LogCenter refreshKey={logsRefresh} />}
+          {view === "accounts" && <AccountAdministration refreshKey={accountsRefresh} />}
+          {view === "quotas" && <QuotaAdministration refreshKey={accountsRefresh} />}
           {view === "access" && <AccessControl />}
         </div>
       </main>
@@ -4228,27 +4243,15 @@ type Conversation = {
   isCanvas?: boolean;
 };
 
-type ConversationMeta = {
-  id: string;
-  title: string;
-  session?: string;
-  agentId?: string;
-  messageCount?: number;
-  isGroup?: boolean;
-  groupMemberCount?: number;
-  isCanvas?: boolean;
-  updatedAt?: number; // 最近一次有新消息的时间（纯点击浏览不更新）
-};
-
 function loadConversationIndex(): ConversationMeta[] {
   try {
-    const raw = localStorage.getItem("aegismesh-conversations-index");
+    const raw = conversationStorage.getItem("aegismesh-conversations-index");
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) return parsed;
     }
     // Migration from old monolithic localStorage blob
-    const oldBlob = localStorage.getItem("aegismesh-conversations");
+    const oldBlob = conversationStorage.getItem("aegismesh-conversations");
     if (oldBlob) {
       const oldList = JSON.parse(oldBlob);
       if (Array.isArray(oldList)) {
@@ -4256,7 +4259,7 @@ function loadConversationIndex(): ConversationMeta[] {
         for (const item of oldList) {
           if (item && item.id) {
             try {
-              localStorage.setItem(`aegismesh-conv-${item.id}`, JSON.stringify(item));
+              conversationStorage.setItem(`aegismesh-conv-${item.id}`, JSON.stringify(item));
             } catch {}
             index.push({
               id: item.id,
@@ -4271,7 +4274,7 @@ function loadConversationIndex(): ConversationMeta[] {
           }
         }
         try {
-          localStorage.setItem("aegismesh-conversations-index", JSON.stringify(index));
+          conversationStorage.setItem("aegismesh-conversations-index", JSON.stringify(index));
         } catch {}
         return index;
       }
@@ -4282,18 +4285,18 @@ function loadConversationIndex(): ConversationMeta[] {
 
 function saveConversationIndex(metas: ConversationMeta[]): void {
   try {
-    localStorage.setItem("aegismesh-conversations-index", JSON.stringify(metas));
+    conversationStorage.setItem("aegismesh-conversations-index", JSON.stringify(metas));
   } catch {}
 }
 
 function loadConversationData(id: string): Conversation | null {
   try {
-    const raw = localStorage.getItem(`aegismesh-conv-${id}`);
+    const raw = conversationStorage.getItem(`aegismesh-conv-${id}`);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object") return parsed;
     }
-    const oldBlob = localStorage.getItem("aegismesh-conversations");
+    const oldBlob = conversationStorage.getItem("aegismesh-conversations");
     if (oldBlob) {
       const oldList = JSON.parse(oldBlob);
       if (Array.isArray(oldList)) {
@@ -4307,7 +4310,7 @@ function loadConversationData(id: string): Conversation | null {
 
 function saveConversationData(conv: Conversation): void {
   try {
-    localStorage.setItem(`aegismesh-conv-${conv.id}`, JSON.stringify(conv));
+    conversationStorage.setItem(`aegismesh-conv-${conv.id}`, JSON.stringify(conv));
   } catch {}
 }
 
@@ -6522,7 +6525,12 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const [queue, setQueueState] = useState<QueuedTask[]>(initialActive?.queue || []);
   const [queueExpanded, setQueueExpanded] = useState(false);
   const [settings, setSettings] = useState<UserSettings>(loadSettings);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [initialSettingsSection] = useState(() => requestedSettings(window.location));
+  const [settingsOpen, setSettingsOpen] = useState(Boolean(initialSettingsSection));
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>(initialSettingsSection || 'general');
+  useEffect(() => {
+    if (initialSettingsSection) window.history.replaceState(null, '', workbenchAfterSettings(window.location));
+  }, [initialSettingsSection]);
   const [newChatDropdownOpen, setNewChatDropdownOpen] = useState(false);
   const [groupModalOpen, setGroupModalOpen] = useState(false);
   const [groupModalMode, setGroupModalMode] = useState<"create" | "edit">("create");
@@ -6750,6 +6758,19 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
+  const compactSidebar = useCompactSidebar();
+  const historyVisible = compactSidebar ? mobileHistoryOpen : !historyCollapsed;
+  const inspectorVisible = compactSidebar ? mobileInspectorOpen : !inspectorCollapsed;
+  useEffect(() => {
+    if (!compactSidebar || (!mobileHistoryOpen && !mobileInspectorOpen)) return;
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      setMobileHistoryOpen(false);
+      setMobileInspectorOpen(false);
+    };
+    window.addEventListener("keydown", dismiss);
+    return () => window.removeEventListener("keydown", dismiss);
+  }, [compactSidebar, mobileHistoryOpen, mobileInspectorOpen]);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
@@ -6845,9 +6866,14 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
       groupConfig: existing?.groupConfig,
       isCanvas: !existing?.isGroup && isCanvasConv,
     };
+    const lastMessage = messages.at(-1);
+    const previousMessage = existing?.messages.at(-1);
+    const hasNewActivity = existing?.messages.length !== messages.length ||
+      previousMessage?.text !== lastMessage?.text ||
+      previousMessage?.result?.invocation_id !== lastMessage?.result?.invocation_id;
     saveConversationData(conversation);
     setConversations((items) => {
-      const meta: ConversationMeta = {
+      const meta = mergeConversationMeta(items.find(item => item.id === activeId), {
         id: activeId,
         title,
         session,
@@ -6856,7 +6882,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
         isGroup: existing?.isGroup,
         groupMemberCount: existing?.groupConfig?.members?.length,
         isCanvas: !existing?.isGroup && isCanvasConv,
-      };
+      }, hasNewActivity ? Date.now() : undefined);
       const next = [meta, ...items.filter((item) => item.id !== activeId)].slice(0, 50);
       saveConversationIndex(next);
       return next;
@@ -7099,7 +7125,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   };
   const deleteConversation = (id: string) => {
     try {
-      localStorage.removeItem(`aegismesh-conv-${id}`);
+      conversationStorage.removeItem(`aegismesh-conv-${id}`);
     } catch {}
     const next = conversations.filter((item) => item.id !== id);
     setConversations(next);
@@ -8092,9 +8118,9 @@ void runMessage(next.text, next.agentId, next.attachments);
   const clearConversations = () => {
     try {
       const metas = loadConversationIndex();
-      metas.forEach((m) => localStorage.removeItem(`aegismesh-conv-${m.id}`));
-      localStorage.removeItem("aegismesh-conversations-index");
-      localStorage.removeItem("aegismesh-conversations");
+      metas.forEach((m) => conversationStorage.removeItem(`aegismesh-conv-${m.id}`));
+      conversationStorage.removeItem("aegismesh-conversations-index");
+      conversationStorage.removeItem("aegismesh-conversations");
     } catch {}
     window.location.reload();
   };
@@ -8113,51 +8139,40 @@ void runMessage(next.text, next.agentId, next.attachments);
     <div
       className={`chat-layout ${historyCollapsed ? "history-collapsed" : ""} ${inspectorCollapsed ? "inspector-collapsed" : ""} ${mobileHistoryOpen ? "mobile-history-open" : ""} ${mobileInspectorOpen ? "mobile-inspector-open" : ""} ${isCanvasConv && content === "chat" ? "canvas-mode" : ""} ${canvasMobileView === "chat" ? "canvas-chat-view" : ""}`}
     >
-      {(mobileHistoryOpen || mobileInspectorOpen) && (
         <button
-          className="chat-drawer-backdrop"
+          className={`chat-drawer-backdrop ${mobileHistoryOpen || mobileInspectorOpen ? "is-open" : ""}`}
           onClick={() => {
             setMobileHistoryOpen(false);
             setMobileInspectorOpen(false);
           }}
           aria-label="关闭抽屉"
+          aria-hidden={!(compactSidebar && (mobileHistoryOpen || mobileInspectorOpen))}
+          tabIndex={compactSidebar && (mobileHistoryOpen || mobileInspectorOpen) ? 0 : -1}
+        />
+        <SidebarToggle
+          className="chat-side-toggle left"
+          side="left"
+          expanded={!historyCollapsed}
+          label={historyCollapsed ? "展开会话" : "折叠会话"}
+          aria-controls="chat-history-sidebar"
+          onClick={() => setHistoryCollapsed(value => !value)}
+        />
+      {!isCanvasConv && (
+        <SidebarToggle
+          className="chat-side-toggle right"
+          side="right"
+          expanded={!inspectorCollapsed}
+          label={inspectorCollapsed ? "展开详情" : "折叠详情"}
+          aria-controls="chat-route-inspector"
+          onClick={() => setInspectorCollapsed(value => !value)}
         />
       )}
-      {historyCollapsed && (!isCanvasConv || !canvasData) && (
-        <button
-          className="chat-side-toggle left"
-          onClick={() => setHistoryCollapsed(false)}
-          title="展开会话"
-          aria-label="展开会话"
-        >
-          <PanelLeftOpen size={16} />
-        </button>
-      )}
-      {inspectorCollapsed && (
-        <button
-          type="button"
-          className="chat-side-toggle right inspector-collapsed-toggle"
-          onClick={() => setInspectorCollapsed(false)}
-          title="展开详情"
-          aria-label="展开详情"
-        >
-          <PanelRightOpen size={16} />
-        </button>
-      )}
-      <aside className="history-sidebar">
+      <aside id="chat-history-sidebar" className="history-sidebar" inert={!historyVisible} aria-hidden={!historyVisible}>
         <div className="chat-brand">
           <span>
             <Network size={17} />
           </span>
           <strong>AegisMesh</strong>
-          <button
-            className="history-collapse-btn"
-            onClick={() => setHistoryCollapsed(true)}
-            title="折叠会话"
-            aria-label="折叠会话"
-          >
-            <PanelLeftClose size={16} />
-          </button>
           <button
             className="mobile-drawer-close"
             onClick={() => setMobileHistoryOpen(false)}
@@ -8190,6 +8205,7 @@ void runMessage(next.text, next.agentId, next.attachments);
           </button>
           {newChatDropdownOpen && (
             <div className="new-chat-dropdown-menu">
+              <button type="button" onClick={() => window.location.assign('/digital-human')}><Bot size={15}/><div><strong>数字人服务厅</strong><span className="subtext">和虚拟助手直接聊聊</span></div></button>
               <button
                 type="button"
                 onClick={() => {
@@ -8263,27 +8279,25 @@ void runMessage(next.text, next.agentId, next.attachments);
                 <div className="history-group-label">{g.label}</div>
                 {g.items.map((conversation) => (
             <div
-              className={`history-item ${conversation.id === activeId ? "active" : ""} ${conversation.isGroup ? "is-group" : ""}`}
+              className={`history-item ${conversation.id === activeId ? "active" : ""} ${conversation.isGroup ? "is-group" : ""} ${sending && taskConvRef.current === conversation.id ? "is-running" : ""}`}
               key={conversation.id}
             >
-              <button onClick={() => openConversation(conversation)}>
-                {sending && taskConvRef.current === conversation.id && (
-                  <span className="running-dot" title="任务运行中" />
-                )}
+              <button onClick={() => openConversation(conversation)} title={conversation.title} aria-current={conversation.id === activeId ? "page" : undefined}>
                 {conversation.isGroup ? (
                   <Users size={14} className="group-item-icon" />
                 ) : conversation.isCanvas ? (
                   <FileText size={14} />
-                ) : (
-                  <MessageSquareText size={14} />
-                )}
-                <span>{conversation.title}</span>
+                ) : null}
+                <span className="history-title">{conversation.title}</span>
                 {conversation.isGroup && (
                   <span className="group-count-badge">
                     {conversation.groupMemberCount || 0}人
                   </span>
                 )}
               </button>
+              {sending && taskConvRef.current === conversation.id && (
+                <span className="history-running" role="status" aria-label="任务运行中" title="任务运行中"><span className="history-spinner" aria-hidden="true" /></span>
+              )}
               <div className="history-actions-col">
                 {conversation.isGroup && (
                   <button
@@ -8328,16 +8342,11 @@ void runMessage(next.text, next.agentId, next.attachments);
           <Braces size={15} />
           开放 API
         </button>
-        <button
-          className="api-entry"
-          onClick={() => {
+        <SidebarAccount onSettings={section => {
+            setSettingsSection(section);
             setSettingsOpen(true);
             setMobileHistoryOpen(false);
-          }}
-        >
-          <Settings2 size={15} />
-          用户设置
-        </button>
+          }} />
       </aside>
       {content === "api" ? (
         <section className="chat-stage api-stage">
@@ -8375,7 +8384,7 @@ void runMessage(next.text, next.agentId, next.attachments);
             document={canvasData}
             agentBusy={sending}
             sessionTitle={activeMeta?.title || "协同画布"}
-            showHistoryToggle={historyCollapsed}
+            showHistoryToggle={false}
             onOpenHistory={() => {
               if (window.matchMedia("(max-width: 820px)").matches) {
                 setMobileHistoryOpen(true);
@@ -9031,7 +9040,7 @@ void runMessage(next.text, next.agentId, next.attachments);
         </section>
       )}
       {!isCanvasConv && (
-        <aside className="route-inspector">
+        <aside id="chat-route-inspector" className="route-inspector" inert={!inspectorVisible} aria-hidden={!inspectorVisible}>
           <div className="inspector-mobile-bar">
             <div className="inspector-mobile-title">
               <SlidersHorizontal size={14} />
@@ -9100,15 +9109,6 @@ void runMessage(next.text, next.agentId, next.attachments);
                 </>
               )}
             </div>
-          <button
-            type="button"
-            className="inspector-toggle-btn"
-            onClick={() => setInspectorCollapsed(true)}
-            title="折叠详情"
-            aria-label="折叠详情"
-          >
-            <PanelRightClose size={16} />
-          </button>
         </div>
         {activeMeta?.isGroup && detail === "members" && (
           <GroupMembersPanel
@@ -9278,7 +9278,8 @@ void runMessage(next.text, next.agentId, next.attachments);
       </aside>
       )}
       {settingsOpen && (
-        <SettingsDrawer
+        <SettingsDialog
+          initialSection={settingsSection}
           settings={settings}
           onChange={updateSettings}
           onClose={() => setSettingsOpen(false)}
@@ -9826,102 +9827,6 @@ function LiveSubagentRow({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function SettingsDrawer({
-  settings,
-  onChange,
-  onClose,
-  onClear,
-}: {
-  settings: UserSettings;
-  onChange: (patch: Partial<UserSettings>) => void;
-  onClose: () => void;
-  onClear: () => void;
-}) {
-  return (
-    <div className="drawer-layer">
-      <button className="drawer-backdrop" onClick={onClose} aria-label="关闭用户设置遮罩" />
-      <aside className="builder-drawer settings-drawer">
-        <div className="drawer-header">
-          <h2>用户设置</h2>
-          <button className="icon-button" onClick={onClose} aria-label="关闭用户设置">
-            <X size={18} />
-          </button>
-        </div>
-        <div className="drawer-body">
-          <div className="settings-section">
-            <h3>外观</h3>
-            <label className="settings-row">
-              <span>主题</span>
-              <Dropdown
-                value={settings.theme}
-                onChange={(value) => onChange({ theme: value as ThemeChoice })}
-                options={[
-                  { value: "system", label: "跟随系统" },
-                  { value: "light", label: "浅色" },
-                  { value: "dark", label: "深色" },
-                ]}
-              />
-            </label>
-          </div>
-          <div className="settings-section">
-            <h3>上下文与压缩阈值</h3>
-            <label className="settings-row">
-              <span>上下文窗口</span>
-              <Dropdown
-                value={String(settings.contextWindow)}
-                onChange={(value) => onChange({ contextWindow: Number(value) })}
-                options={CONTEXT_WINDOWS}
-              />
-            </label>
-            <label className="settings-row">
-              <span>压缩阈值</span>
-              <Dropdown
-                value={settings.compressionStrategy || "auto"}
-                onChange={(value) =>
-                  onChange({
-                    compressionStrategy: value as CompressionStrategy,
-                    autoCompress: value !== "off",
-                  })
-                }
-                options={COMPRESSION_STRATEGIES}
-              />
-            </label>
-            <label className="settings-row">
-              <span>保留最近轮次</span>
-              <Dropdown
-                value={String(settings.keepRecentTurns ?? 4)}
-                onChange={(value) =>
-                  onChange({ keepRecentTurns: Number(value) })
-                }
-                options={[
-                  { value: "0", label: "不限制" },
-                  { value: "2", label: "2 轮" },
-                  { value: "4", label: "4 轮" },
-                  { value: "8", label: "8 轮" },
-                ]}
-              />
-            </label>
-            <Switch
-              label="显示上下文圆环指示器"
-              checked={settings.showContextMeter}
-              onChange={(value) => onChange({ showContextMeter: value })}
-            />
-          </div>
-          <div className="settings-section">
-            <h3>会话</h3>
-            <button className="secondary-button danger" onClick={onClear}>
-              清空本地会话记录
-            </button>
-          </div>
-        </div>
-        <div className="drawer-footer">
-          <span className="settings-note">AegisMesh · ACPs/AIP v2.2.0</span>
-        </div>
-      </aside>
     </div>
   );
 }

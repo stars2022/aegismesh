@@ -86,6 +86,19 @@ def test_upload_path_traversal_prevention():
         assert response.status_code in {400, 404}
 
 
+def test_active_upload_is_downloaded_without_same_origin_script_execution():
+    with TestClient(app) as client:
+        uploaded = client.post("/api/upload", files={"file": ("untrusted.html", b"<script>alert(1)</script>", "text/html")},
+                               headers={"X-API-Key": "test-public-api-key-123456"})
+        assert uploaded.status_code == 200
+        response = client.get(uploaded.json()["url"])
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/octet-stream"
+        assert response.headers["content-disposition"].startswith("attachment;")
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert "sandbox" in response.headers["content-security-policy"]
+
+
 def test_orchestrator_enrich_message_with_attachments():
     att1 = Attachment(
         file_id="123",

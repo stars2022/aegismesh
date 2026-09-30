@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..models import ProviderConfig, WebSearchConfig
 from .provider_secrets import decrypt_api_key, resolve_api_key
+from .model_budget import metered_post
 
 
 WEB_SEARCH_SCHEMA: dict[str, Any] = {
@@ -110,7 +111,7 @@ class DeepSeekWebSearch:
                 timeout=self.timeout_seconds or settings.web_search_timeout_seconds,
                 follow_redirects=False,
             ) as client:
-                response = await client.post(endpoint, headers=headers, json=body)
+                response = await metered_post(client, endpoint, headers=headers, json=body, provider_id=self.provider.id)
             response.raise_for_status()
             payload = response.json()
         except httpx.HTTPStatusError as exc:

@@ -261,8 +261,30 @@ class ReliableOrchestrator:
         request: ChatRequest,
         owner_id: str = "",
     ) -> tuple[Invocation, list[ScoredCandidate], Agent | None]:
+        from .identity import bind_conversation
+        from . import quotas
+        session_id = request.session_id or f"ses-{uuid.uuid4().hex}"
+        request = request.model_copy(update={"session_id": session_id})
+        bind_conversation(self.db, session_id, owner_id)
+        invocation_id = f"inv-{uuid.uuid4().hex[:12]}"
+        request = request.model_copy(update={"root_invocation_id": invocation_id})
+        if owner_id:
+            quotas.reserve(self.db, owner=owner_id, entry_id=invocation_id, session_id=session_id)
+        try:
+            result = await self._run_owned(request, owner_id, invocation_id)
+            inv = result[0]
+            quotas.settle(self.db, invocation_id, success=inv.status == "completed",
+                          prompt_tokens=inv.prompt_tokens, completion_tokens=inv.completion_tokens,
+                          child_calls=len((inv.result_data or {}).get("collaborations") or []))
+            return result
+        except BaseException:
+            self.db.rollback()
+            quotas.settle(self.db, invocation_id, success=False)
+            raise
+
+    async def _run_owned(self, request: ChatRequest, owner_id: str, invocation_id: str):
         invocation = Invocation(
-            id=f"inv-{uuid.uuid4().hex[:12]}",
+            id=invocation_id,
             session_id=request.session_id or f"ses-{uuid.uuid4().hex}",
             owner_id=owner_id,
             query=request.message,
@@ -298,7 +320,14 @@ class ReliableOrchestrator:
                 "CONTEXT_LOADED",
                 {"messages": len(history), "turns": len(history) // 2},
             )
-
+        if request.presentation == "assistant":
+            history = [*history, {"role": "system", "content": (
+                "当前界面是数字人助手咨询窗口，你的显示名称是麦溪，英文名 Mesh。你是虚拟助手，不是真实人工客服，也不代表任何政府或企业。"
+                "对用户用简明、自然的对话回答，先给结果或询问必要信息。"
+                "不要向用户逐项播报内部路由、工具名、请求参数、任务 ID、子智能体调度等实现细节；"
+                "底层的检索与协作规则保持不变。保留有用的资料来源、必要的不确定性、真实的失败和权限限制，"
+                "不得为简化显示而虚构完成、隐瞒失败或声称未发生的操作。"
+            )}]
         policy = self._routing_policy()
 
         driver = self._driver(request.agent_id)
@@ -811,7 +840,7 @@ class ReliableOrchestrator:
                 tool_registry = self._runtime_registry(provider, search_scope=f"{invocation.id}:{agent.id}")
         if request.canvas and tool_registry is not None:
             for name, schema, executor in self._canvas_tools(
-                canvas_id_for(invocation.session_id), agent.id, agent.name
+                canvas_id_for(invocation.session_id), agent.id, agent.name, invocation.owner_id
             ):
                 tool_registry.register(name, schema, executor)
             kwargs["extra_tool_names"] = CANVAS_TOOL_NAMES
@@ -853,12 +882,13 @@ class ReliableOrchestrator:
         }
         invoke_started = time.monotonic()
         try:
-            res = await asyncio.wait_for(
-                # AIP's timeout covers the complete task/handshake, unlike a
-                # provider's per-request read timeout. Share the task budget.
-                transport.execute(agent, query, hard_deadline if agent.transport == "aip-rpc" else timeout, **safe_kwargs),
-                timeout=hard_deadline,
-            )
+            from .model_budget import usage_scope
+            with usage_scope(invocation.owner_id, invocation.session_id, invocation.id, self.session_factory):
+                res = await asyncio.wait_for(
+                    # Each model request and its tool calls inherit the trusted billing owner.
+                    transport.execute(agent, query, hard_deadline if agent.transport == "aip-rpc" else timeout, **safe_kwargs),
+                    timeout=hard_deadline,
+                )
             if target_controller and getattr(res, "completion_tokens", 0):
                 target_controller.calibrate_tokens(res.completion_tokens)
             if canvas_snapshot:
@@ -1093,7 +1123,7 @@ class ReliableOrchestrator:
             if request.canvas:
                 with self.session_factory() as cdb:
                     cdoc = get_or_create_canvas(
-                        cdb, canvas_id_for(invocation.session_id)
+                        cdb, canvas_id_for(invocation.session_id), owner_id=invocation.owner_id
                     )
                     canvas_snapshot = {
                         "id": cdoc.id,
@@ -1175,18 +1205,18 @@ class ReliableOrchestrator:
             leader_lease.release(self.db)
             self._persist_collaborations(invocation, collaborations)
 
-    def _canvas_tools(self, canvas_id: str, editor_id: str, editor_name: str) -> list[tuple[str, dict[str, Any], Any]]:
+    def _canvas_tools(self, canvas_id: str, editor_id: str, editor_name: str, owner_id: str = "") -> list[tuple[str, dict[str, Any], Any]]:
         """画布协作工具组：托管智能体直接调用；外部 Partner 通过提示词协议使用同语义。"""
 
         async def _read(args: dict[str, Any]) -> dict[str, Any]:
             with self.session_factory() as db:
-                doc = get_or_create_canvas(db, canvas_id)
+                doc = get_or_create_canvas(db, canvas_id, owner_id=owner_id)
                 body = canvas_read_section(doc.content, args.get("section"))
                 return {"ok": True, "version": doc.version, "content": body}
 
         async def _write(args: dict[str, Any]) -> dict[str, Any]:
             with self.session_factory() as db:
-                doc = get_or_create_canvas(db, canvas_id)
+                doc = get_or_create_canvas(db, canvas_id, owner_id=owner_id)
                 try:
                     applied = apply_op(
                         db, doc,
@@ -1203,7 +1233,7 @@ class ReliableOrchestrator:
 
         async def _append(args: dict[str, Any]) -> dict[str, Any]:
             with self.session_factory() as db:
-                doc = get_or_create_canvas(db, canvas_id)
+                doc = get_or_create_canvas(db, canvas_id, owner_id=owner_id)
                 try:
                     applied = apply_op(
                         db, doc,
@@ -1219,7 +1249,7 @@ class ReliableOrchestrator:
 
         async def _delete(args: dict[str, Any]) -> dict[str, Any]:
             with self.session_factory() as db:
-                doc = get_or_create_canvas(db, canvas_id)
+                doc = get_or_create_canvas(db, canvas_id, owner_id=owner_id)
                 try:
                     applied = apply_op(
                         db, doc,
@@ -1236,7 +1266,7 @@ class ReliableOrchestrator:
 
         async def _replace_all(args: dict[str, Any]) -> dict[str, Any]:
             with self.session_factory() as db:
-                doc = get_or_create_canvas(db, canvas_id)
+                doc = get_or_create_canvas(db, canvas_id, owner_id=owner_id)
                 try:
                     applied = apply_op(
                         db, doc,
@@ -1253,7 +1283,7 @@ class ReliableOrchestrator:
 
         async def _replace_selection(args: dict[str, Any]) -> dict[str, Any]:
             with self.session_factory() as db:
-                doc = get_or_create_canvas(db, canvas_id)
+                doc = get_or_create_canvas(db, canvas_id, owner_id=owner_id)
                 try:
                     applied = apply_op(
                         db, doc, editor_id=editor_id, editor_name=editor_name,
@@ -1500,6 +1530,7 @@ class ReliableOrchestrator:
                 canvas_id=canvas_id_for(invocation.session_id),
                 editor_id=leader.id,
                 editor_name=leader.name,
+                owner_id=invocation.owner_id,
             ):
                 registry.register(*item)
         registry.register(
@@ -1632,6 +1663,7 @@ class ReliableOrchestrator:
                 canvas_id=canvas_id_for(invocation.session_id),
                 editor_id=agent.id,
                 editor_name=agent.name,
+                owner_id=invocation.owner_id,
             ):
                 wrapped.register(*item)
 
@@ -2375,6 +2407,10 @@ class ReliableOrchestrator:
             ]
             collab_entry: dict[str, Any] = {
                 "task_id": subtask_id,
+                "invocation_id": invocation.id,
+                "root_invocation_id": request.root_invocation_id or invocation.id,
+                "session_id": invocation.session_id,
+                "owner_id": invocation.owner_id,
                 "agent_id": agent.id,
                 "agent_name": agent.name,
                 "caller_id": effective_caller,

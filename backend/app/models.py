@@ -187,7 +187,7 @@ class Invocation(Base):
     __tablename__ = "invocations"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    session_id: Mapped[str] = mapped_column(String(128), index=True)
     owner_id: Mapped[str] = mapped_column(String(128), default="", index=True)
     query: Mapped[str] = mapped_column(Text)
     requested_skill: Mapped[str | None] = mapped_column(String(120))
@@ -306,6 +306,7 @@ class GroupChat(Base):
     __tablename__ = "group_chats"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(128), default="", index=True)
     name: Mapped[str] = mapped_column(String(120))
     host_agent_id: Mapped[str] = mapped_column(String(64), default="")
     members: Mapped[list[str]] = mapped_column(JSON, default=list)

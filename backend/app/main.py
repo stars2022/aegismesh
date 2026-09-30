@@ -89,6 +89,9 @@ from .schemas import (
 )
 from .seed import seed_database
 from .services.tools import ToolRegistry
+from .account_api import account_router
+from .services.identity import IdentityMiddleware, ConversationOwnershipError, bind_conversation
+from .services import quotas
 from .services.web_search import configured_search, supports_deepseek_search
 from .services.transport import TransportRegistry
 from .services.orchestrator import NoEligibleAgentError, ReliableOrchestrator
@@ -131,8 +134,8 @@ login_source_attempts = AttemptRateLimiter(limit=5, window_seconds=60)
 api_key_attempts = AttemptRateLimiter(limit=30, window_seconds=60)
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
+def initialize_schema() -> None:
+    """Run additive migrations once before starting a multi-worker release."""
     Base.metadata.create_all(engine)
     if engine.dialect.name == "sqlite":
         with engine.begin() as connection:
@@ -216,6 +219,15 @@ async def lifespan(_: FastAPI):
                         text("ALTER TABLE invocations ADD COLUMN owner_id VARCHAR(128) DEFAULT ''")
                     )
     with engine.begin() as connection:
+        if "user_accounts" in inspect(connection).get_table_names():
+            if "role" not in {c["name"] for c in inspect(connection).get_columns("user_accounts")}:
+                connection.execute(text("ALTER TABLE user_accounts ADD COLUMN role VARCHAR(24) DEFAULT 'member'"))
+        if "model_usage" in inspect(connection).get_table_names():
+            if "provider_id" not in {c["name"] for c in inspect(connection).get_columns("model_usage")}:
+                connection.execute(text("ALTER TABLE model_usage ADD COLUMN provider_id VARCHAR(64) DEFAULT 'default'"))
+        if "group_chats" in inspect(connection).get_table_names():
+            if "owner_id" not in {c["name"] for c in inspect(connection).get_columns("group_chats")}:
+                connection.execute(text("ALTER TABLE group_chats ADD COLUMN owner_id VARCHAR(128) DEFAULT ''"))
         if "routing_policies" in inspect(connection).get_table_names():
             if "interop_compatibility" not in {c["name"] for c in inspect(connection).get_columns("routing_policies")}:
                 connection.execute(text("ALTER TABLE routing_policies ADD COLUMN interop_compatibility BOOLEAN DEFAULT 0"))
@@ -229,6 +241,9 @@ async def lifespan(_: FastAPI):
                 connection.execute(text(
                     "ALTER TABLE canvas_docs ADD COLUMN owner_id VARCHAR(128) DEFAULT ''"
                 ))
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    initialize_schema()
     with SessionLocal() as db:
         if settings.background_worker_enabled:
             seed_database(db)
@@ -274,6 +289,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.add_middleware(AdminAuditMiddleware)
+app.add_middleware(IdentityMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -292,6 +308,16 @@ async def audited_http_exception(request: Request, exc: StarletteHTTPException):
     if getattr(request.state, "audit_request_id", None) and isinstance(exc.detail, str):
         request.state.audit_note = safe_text(exc.detail)
     return await http_exception_handler(request, exc)
+
+
+@app.exception_handler(ConversationOwnershipError)
+async def ownership_error(request: Request, exc: ConversationOwnershipError):
+    return JSONResponse({"detail": str(exc)}, status_code=404)
+
+
+@app.exception_handler(quotas.QuotaExceeded)
+async def quota_error(request: Request, exc: quotas.QuotaExceeded):
+    return JSONResponse({"detail": str(exc)}, status_code=429)
 
 
 def require_inbound_identity(request: Request, sender_id: str | None) -> str:
@@ -357,6 +383,7 @@ def require_api_key(
     if not valid:
         raise HTTPException(status_code=401, detail="API Key 无效")
     api_key_attempts.reset(attempt_key)
+    request.state.owner_id = f"api_{hashlib.sha256(x_api_key.encode()).hexdigest()[:24]}"
 
 
 def authenticated_admin(request: Request, db: Session) -> AdminAccount | None:
@@ -416,14 +443,17 @@ def require_demo_or_admin_or_api_key(
     db: Session = Depends(get_db),
     x_api_key: Annotated[str | None, Header()] = None,
 ) -> None:
+    if x_api_key:
+        require_api_key(request, db, x_api_key=x_api_key)
+        return
     if authenticated_admin(request, db) is not None:
         return
     if demo_is_authenticated(request, db):
         return
-    if x_api_key:
-        require_api_key(request, db, x_api_key=x_api_key)
-        return
     raise HTTPException(status_code=401, detail="请登录管理后台或输入访问密码")
+
+
+app.include_router(account_router(require_admin))
 
 
 def agent_to_read(agent: Agent) -> AgentRead:
@@ -630,10 +660,12 @@ def database_import(payload: DatabaseImportPayload, db: DbSession) -> dict:
 
 
 @app.get("/api/demo/session", tags=["demo-auth"])
-def demo_session(request: Request, db: DbSession) -> dict:
+def demo_session(request: Request, response: Response, db: DbSession) -> dict:
     access = db.get(PlatformAccess, 1)
     enabled = bool(access and access.demo_password_hash)
-    return {"enabled": enabled, "authenticated": demo_is_authenticated(request, db)}
+    response.headers["Cache-Control"] = "no-store"
+    return {"enabled": enabled, "authenticated": demo_is_authenticated(request, db),
+            "owner_id": request.state.browser_owner_id}
 
 
 @app.post("/api/demo/login", tags=["demo-auth"])
@@ -1242,23 +1274,15 @@ def _chat_response(invocation, ranked, selected, db: Session) -> ChatResponse:
 
 
 def extract_user_id(request: Request) -> str:
-    api_key = request.headers.get("X-API-Key", "").strip()
-    if api_key:
-        return f"api_{hashlib.sha256(api_key.encode()).hexdigest()[:24]}"
-    cookie = request.cookies.get(DEMO_COOKIE_NAME, "")
-    if cookie:
-        return f"demo_{hashlib.sha256(cookie.encode()).hexdigest()[:24]}"
-    ip = request.client.host if request.client else "127.0.0.1"
-    return f"anon_{hashlib.sha256(ip.encode()).hexdigest()[:24]}"
+    owner = getattr(request.state, "owner_id", None)
+    if not owner:
+        raise HTTPException(401, "身份尚未初始化，请刷新页面")
+    return owner
 
 
 def extract_canvas_user_id(request: Request) -> str:
     """Canvas browser ownership must not be selected by an unverified API header."""
-    cookie = request.cookies.get(DEMO_COOKIE_NAME, "")
-    if cookie:
-        return f"demo_{hashlib.sha256(cookie.encode()).hexdigest()[:24]}"
-    ip = request.client.host if request.client else "127.0.0.1"
-    return f"anon_{hashlib.sha256(ip.encode()).hexdigest()[:24]}"
+    return request.state.browser_owner_id
 
 
 @app.get("/api/chat/sessions/{session_id}/activity", dependencies=[Depends(require_demo_or_admin_or_api_key)], tags=["runtime"])
@@ -1348,6 +1372,8 @@ def submit_invocation_feedback(
 async def _launch_chat_task(payload: ChatRequest, user_id: str, is_admin: bool = False) -> BackgroundTaskRecord:
     session_id = payload.session_id or f"ses-{uuid.uuid4().hex}"
     payload.session_id = session_id
+    with SessionLocal() as db:
+        bind_conversation(db, session_id, user_id)
     task_id = f"task_{uuid.uuid4().hex[:12]}"
     controller = AdaptiveDeadlineController(
         task_id=task_id,
@@ -1404,7 +1430,7 @@ async def _launch_chat_task(payload: ChatRequest, user_id: str, is_admin: bool =
                 with SessionLocal() as db:
                     inv = db.scalars(
                         select(Invocation)
-                        .where(Invocation.session_id == session_id, Invocation.status == "working")
+                        .where(Invocation.session_id == session_id, Invocation.owner_id == user_id, Invocation.status == "working")
                         .order_by(Invocation.created_at.desc())
                     ).first()
                     if inv:
@@ -1660,14 +1686,15 @@ def update_session_canvas(
 
 
 @app.post("/api/group-chat", dependencies=[Depends(require_demo)], tags=["group-chat"])
-def create_group_chat(payload: GroupChatCreate, db: DbSession) -> dict:
-    members = [m for m in payload.members if db.get(Agent, m)]
+def create_group_chat(payload: GroupChatCreate, request: Request, db: DbSession) -> dict:
+    members = list(dict.fromkeys(m for m in payload.members if (a := db.get(Agent, m)) and a.active))
     if not members:
         raise HTTPException(status_code=422, detail="群成员中没有任何有效智能体")
     transport = _group_transport_for(members, db)
     group_id = f"group-{uuid.uuid4().hex[:10]}"
     group = GroupChat(
         id=group_id,
+        owner_id=extract_canvas_user_id(request),
         name=payload.name.strip()[:120] or "群聊",
         host_agent_id=payload.host_agent_id if payload.host_agent_id in members else "",
         members=members,
@@ -1679,9 +1706,9 @@ def create_group_chat(payload: GroupChatCreate, db: DbSession) -> dict:
 
 
 @app.get("/api/group-chat/{group_id}", dependencies=[Depends(require_demo)], tags=["group-chat"])
-def get_group_chat(group_id: str, db: DbSession) -> dict:
+def get_group_chat(group_id: str, request: Request, db: DbSession) -> dict:
     group = db.get(GroupChat, group_id)
-    if not group:
+    if not group or not group.owner_id or group.owner_id != extract_canvas_user_id(request):
         raise HTTPException(status_code=404, detail="群聊不存在")
     messages = list(
         db.scalars(
@@ -1712,13 +1739,35 @@ def get_group_chat(group_id: str, db: DbSession) -> dict:
 
 
 @app.post("/api/group-chat/{group_id}/messages", dependencies=[Depends(require_demo)], tags=["group-chat"])
-async def post_group_chat_message(group_id: str, payload: GroupChatMessageIn, db: DbSession) -> dict:
+async def post_group_chat_message(group_id: str, payload: GroupChatMessageIn, request: Request, db: DbSession) -> dict:
     group = db.get(GroupChat, group_id)
-    if not group:
+    owner = extract_canvas_user_id(request)
+    if not group or not group.owner_id or group.owner_id != owner:
+        raise HTTPException(404, "群聊不存在")
+    quota_id = f"group:{uuid.uuid4().hex}"
+    quotas.reserve(db, owner=owner, entry_id=quota_id, session_id=group_id)
+    try:
+        result = await _post_group_chat_message(group_id, payload, request, db)
+        quotas.settle(db, quota_id, success=not result.get("error"))
+        return result
+    except BaseException:
+        db.rollback()
+        quotas.settle(db, quota_id, success=False)
+        raise
+
+
+async def _post_group_chat_message(group_id: str, payload: GroupChatMessageIn, request: Request, db: DbSession) -> dict:
+    group = db.get(GroupChat, group_id)
+    if not group or not group.owner_id or group.owner_id != extract_canvas_user_id(request):
         raise HTTPException(status_code=404, detail="群聊不存在")
     text = payload.text.strip()
     if not text:
         raise HTTPException(status_code=422, detail="消息不能为空")
+
+    target_id = payload.mentioned or group.host_agent_id or (group.members[0] if group.members else "")
+    target_agent = db.get(Agent, target_id) if target_id else None
+    if not target_agent or not target_agent.active or target_id not in group.members:
+        raise HTTPException(422, "只能派发给本群已启用的智能体成员")
 
     user_nick = "群主 (用户)" if not group.host_agent_id else "我 (群成员)"
     db.add(
@@ -1729,8 +1778,6 @@ async def post_group_chat_message(group_id: str, payload: GroupChatMessageIn, db
     )
     db.commit()
 
-    target_id = payload.mentioned or group.host_agent_id or (group.members[0] if group.members else "")
-    target_agent = db.get(Agent, target_id) if target_id else None
     if target_agent is None:
         db.commit()
         return {"reply": None, "agent_id": None, "agent_name": None, "transport": group.transport}
@@ -1773,7 +1820,7 @@ async def post_group_chat_message(group_id: str, payload: GroupChatMessageIn, db
             partners = [
                 ExternalPartner(aic=agent.aic, name=agent.name, rpc_url=agent.endpoint_url)
                 for m in group.members
-                if (agent := db.get(Agent, m)) is not None and agent.transport == "aip-rpc" and agent.endpoint_url
+                if (agent := db.get(Agent, m)) is not None and agent.active and agent.transport == "aip-rpc" and agent.endpoint_url
             ]
             session = None
             try:
@@ -1905,7 +1952,7 @@ def get_uploads_dir() -> Path:
     dependencies=[Depends(require_demo_or_admin_or_api_key)],
     tags=["runtime"],
 )
-async def upload_file(file: UploadFile = File(...)) -> UploadResponse:
+async def upload_file(request: Request, db: DbSession, file: UploadFile = File(...)) -> UploadResponse:
     if not file.filename:
         raise HTTPException(status_code=400, detail="未提供有效文件名")
 
@@ -1915,11 +1962,18 @@ async def upload_file(file: UploadFile = File(...)) -> UploadResponse:
     safe_name = f"{file_id}_{clean_name}"
     dest_path = uploads_dir / safe_name
 
-    content = await file.read()
+    content = await file.read(30 * 1024 * 1024 + 1)
     if len(content) > 30 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="文件大小超出 30MB 限制")
 
-    dest_path.write_bytes(content)
+    quota_id = f"upload:{file_id}"
+    quotas.reserve(db, owner=extract_user_id(request), entry_id=quota_id, resource="upload_bytes", amount=max(1, len(content)))
+    try:
+        dest_path.write_bytes(content)
+    except BaseException:
+        quotas.settle(db, quota_id, success=False)
+        raise
+    quotas.settle(db, quota_id, success=True)
 
     content_type = file.content_type or "application/octet-stream"
     ext = dest_path.suffix.lower()
@@ -1972,11 +2026,18 @@ async def upload_file(file: UploadFile = File(...)) -> UploadResponse:
 async def get_uploaded_file(filename: str) -> FileResponse:
     uploads_dir = get_uploads_dir().resolve()
     safe_path = (uploads_dir / filename).resolve()
-    if not str(safe_path).startswith(str(uploads_dir)):
+    if not safe_path.is_relative_to(uploads_dir):
         raise HTTPException(status_code=400, detail="非法文件路径")
     if not safe_path.exists() or not safe_path.is_file():
         raise HTTPException(status_code=404, detail="文件不存在")
-    return FileResponse(safe_path)
+    # Uploaded HTML/SVG must not become scripts running under the account origin.
+    image_types = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                   ".webp": "image/webp", ".gif": "image/gif", ".bmp": "image/bmp"}
+    image_type = image_types.get(safe_path.suffix.lower())
+    return FileResponse(safe_path, media_type=image_type or "application/octet-stream",
+                        filename=None if image_type else safe_path.name,
+                        headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox; default-src 'none'",
+                                 "Cache-Control": "private, no-store"})
 
 
 

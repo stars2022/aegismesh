@@ -187,7 +187,7 @@ export const api = {
     request<{ api_key_configured: boolean; api_key_from_environment: boolean; demo_password_enabled: boolean }>('/api/admin/access', {
       method: 'PUT', headers: jsonHeaders, body: JSON.stringify(payload),
     }),
-  demoSession: () => request<{ enabled: boolean; authenticated: boolean }>('/api/demo/session'),
+  demoSession: () => request<{ enabled: boolean; authenticated: boolean; owner_id?: string }>('/api/demo/session'),
   demoLogin: (password: string) => request<{ enabled: boolean; authenticated: boolean }>('/api/demo/login', {
     method: 'POST', headers: jsonHeaders, body: JSON.stringify({ password }),
   }),
@@ -323,6 +323,8 @@ export const api = {
     request<{ active: boolean; interrupted?: { invocation_id: string; message: string; partial_result?: string }; task?: { task_id: string; agent_id?: string; status: string; event_count: number; has_result: boolean; error?: string; created_at?: number } }>(
       `/api/demo/tasks/active?session_id=${encodeURIComponent(sessionId)}`,
     ),
+  assistantChatStream: (message: string, sessionId: string, signal: AbortSignal, onTaskId: (taskId: string) => void) =>
+    streamChat('/api/demo/chat/stream', { message, session_id: sessionId, interface: 'harness', presentation: 'assistant', mode: 'collaborate', collab_style: 'auto' }, () => undefined, undefined, 'POST', signal, onTaskId),
   sessionActivity: (sessionId: string, before?: string) =>
     request<{ session_id: string; items: ChatResult[]; next_before: string | null }>(
       `/api/chat/sessions/${encodeURIComponent(sessionId)}/activity${before ? `?before=${encodeURIComponent(before)}` : ''}`,

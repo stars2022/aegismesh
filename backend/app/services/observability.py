@@ -56,7 +56,7 @@ def safe_text(value: object, limit: int = 500) -> str:
     text = re.sub(r"-----BEGIN [^-]*PRIVATE KEY-----.*?(?:-----END [^-]*PRIVATE KEY-----|$)", "[已隐藏私钥]", text, flags=re.S)
     text = re.sub(r"\b(?:Bearer|Basic)\s+[^\s,;]+", "[已隐藏认证信息]", text, flags=re.I)
     text = re.sub(r"(?i)(password|passwd|api[_-]?key|(?:access[_-]?|refresh[_-]?)?token|secret|authorization|cookie)[\"']?\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;&]+)", r"\1=[已隐藏]", text)
-    text = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "[已隐藏密钥]", text)
+    text = re.sub(r"\b(?:sk-|re_)[A-Za-z0-9_-]{8,}\b", "[已隐藏密钥]", text)
     text = re.sub(r"https?://[^\s<>\"]+", lambda m: safe_url(m.group(0)), text)
     return re.sub(r"[\x00-\x1f\x7f]", " ", text)[:limit]
 
@@ -387,8 +387,24 @@ def index_status(db: Session) -> dict:
 
 
 def audit_action(method: str, path: str) -> str:
+    account_actions = {
+        "/api/account/register": "请求邮箱注册验证",
+        "/api/account/verify-email": "验证注册邮箱",
+        "/api/account/login": "账号登录",
+        "/api/account/logout": "账号退出",
+        "/api/account/password/request-reset": "请求密码重置验证",
+        "/api/account/password/reset": "重置账号密码",
+    }
+    if path in account_actions: return account_actions[path]
+    if path.startswith("/api/account/sessions/"): return "撤销登录设备"
+    if path.startswith("/api/account/identities/"): return "解绑登录方式"
+    if path.startswith("/api/account/oauth/"):
+        return "第三方登录回调" if path.endswith("/callback") else "请求第三方登录"
     if path == "/api/admin/login": return "管理员登录"
     if path == "/api/admin/logout": return "管理员退出"
+    if path == "/api/admin/accounts/policy": return "修改账号与配额策略"
+    if path.startswith("/api/admin/accounts/"):
+        return "撤销用户登录会话" if path.endswith("/sessions/revoke") else "修改用户角色与额度"
     if path.endswith("/registration/sync"): return "同步审核状态"
     if path.endswith("/registration"): return "提交智能体审核"
     if path.endswith("/certificate"): return "签发智能体证书"
@@ -435,10 +451,11 @@ class AdminAuditMiddleware:
 
     async def __call__(self, scope, receive, send):
         path, method = scope.get("path", ""), scope.get("method", "")
-        watched = (scope["type"] == "http" and bool(re.match(r"^/api/(admin(?:/|$)|agents(?:/|$)|providers(?:/|$)|policy$|probes(?:/|$)|discovery/import$)", path)))
+        watched = (scope["type"] == "http" and bool(re.match(r"^/api/(account(?:/|$)|admin(?:/|$)|agents(?:/|$)|providers(?:/|$)|policy$|probes(?:/|$)|discovery/import$)", path)))
         mutation = method in {"POST", "PUT", "PATCH", "DELETE"}
         exported = method == "GET" and path in {"/api/admin/database/export", "/api/admin/logs/export"}
-        if not watched or not (mutation or exported):
+        callback = method == "GET" and bool(re.fullmatch(r"/api/account/oauth/[^/]+/callback", path))
+        if not watched or not (mutation or exported or callback):
             return await self.app(scope, receive, send)
         started, status_code, completed = time.monotonic(), 500, False
         request_id = uuid.uuid4().hex
@@ -456,7 +473,15 @@ class AdminAuditMiddleware:
             await self.app(scope, receive, observe)
         finally:
             state = scope.get("state", {})
-            await asyncio.to_thread(record_admin_event, actor=state.get("audit_actor", ""), method=method, path=path,
-                                    request_id=request_id, status_code=status_code if completed else 500,
-                                    duration_ms=(time.monotonic() - started) * 1000,
-                                    note=state.get("audit_note", ""), changes=state.get("audit_policy_changes"))
+            account_event = path.startswith("/api/account/")
+            # Device hashes / untrusted path segments are not needed in the audit.
+            audit_path = re.sub(r"(/api/account/(?:sessions|identities))/[^/]+$", r"\1/{id}", path)
+            if account_event:
+                audit_path = re.sub(r"(/api/account/oauth)/[^/]+/", r"\1/{provider}/", audit_path)
+            actor = state.get("audit_actor", "") or (state.get("browser_owner_id", "") if account_event else "")
+            if not state.get("audit_persisted"):
+                await asyncio.to_thread(record_admin_event, actor=actor, method=method, path=audit_path,
+                                        request_id=request_id, status_code=status_code if completed else 500,
+                                        duration_ms=(time.monotonic() - started) * 1000,
+                                        note="" if account_event else state.get("audit_note", ""),
+                                        changes=None if account_event else state.get("audit_policy_changes"))

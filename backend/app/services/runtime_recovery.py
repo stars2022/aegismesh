@@ -117,4 +117,6 @@ def recover_interrupted_runtime(db: Session) -> tuple[int, int]:
                 agent.active_tasks = 0
                 agent.queued_tasks = 0
     db.commit()
+    from .quotas import recover_reservations
+    recover_reservations(db)
     return recovered_invocations, recovered_hosted

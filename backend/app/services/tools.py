@@ -13,6 +13,8 @@ from typing import Any, Callable
 import zipfile
 import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from sqlalchemy.engine import make_url
+from ..config import get_settings
 
 try:
     import pypdf
@@ -61,13 +63,13 @@ class ToolRegistry:
                     "type": "function",
                     "function": {
                         "name": "extract_file_content",
-                        "description": "读取并解析本地或已上传的研究文献与数据文件（支持 PDF、DOCX、TXT、MD、CSV、JSON 格式），提取正文文本、标题大纲与统计信息。",
+                        "description": "读取并解析已上传的研究文献与数据文件（支持 PDF、DOCX、TXT、MD、CSV、JSON 格式），提取正文文本、标题大纲与统计信息。不能读取服务器配置或其他系统文件。",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "file_path": {
                                     "type": "string",
-                                    "description": "文件相对路径、绝对路径或文件名（如 'data/uploads/paper.pdf' 或 'paper.pdf'）",
+                                    "description": "已上传文件的路径或文件名（必须位于上传目录）",
                                 },
                                 "max_chars": {
                                     "type": "integer",
@@ -234,33 +236,25 @@ class ToolRegistry:
         file_path_str = str(arguments.get("file_path") or "").strip()
         if not file_path_str:
             raise ValueError("file_path 不能为空")
-        max_chars = min(int(arguments.get("max_chars") or 20000), 100000)
+        max_chars = max(1, min(int(arguments.get("max_chars") or 20000), 100000))
         page_start = max(1, int(arguments.get("page_start") or 1))
         page_end = int(arguments.get("page_end")) if arguments.get("page_end") else None
 
-        path = Path(file_path_str)
-        if not path.is_absolute():
-            candidates = [
-                path,
-                Path("data/uploads") / path,
-                Path("backend/data/uploads") / path,
-                Path("backend") / path,
-            ]
-            for cand in candidates:
-                if cand.exists() and cand.is_file():
-                    path = cand
-                    break
-            else:
-                found = list(Path("data/uploads").glob(f"**/{path.name}")) or list(
-                    Path("backend/data/uploads").glob(f"**/{path.name}")
-                )
-                if found:
-                    path = found[0]
-                elif not path.exists():
-                    raise FileNotFoundError(f"文件不存在: {file_path_str}")
-
-        if not path.is_file():
-            raise ValueError(f"指定路径不是文件: {path}")
+        cfg = get_settings()
+        database = make_url(cfg.database_url).database if cfg.database_url.startswith("sqlite:") else None
+        base = (Path(database).parent if database and database != ":memory:" else Path("data")) if cfg.database_url.startswith("sqlite:") else (Path("backend/data") if Path("backend/data").exists() else Path("data"))
+        root = (base / "uploads").resolve()
+        supplied = Path(file_path_str)
+        candidates = [supplied] if supplied.is_absolute() else [root / supplied, supplied]
+        # Legacy display paths may refer to the same opaque uploaded filename.
+        if not supplied.is_absolute() and supplied.parent.as_posix() in {"data/uploads", "backend/data/uploads", "/api/uploads", "api/uploads"}:
+            candidates.append(root / supplied.name)
+        path = next((candidate.resolve() for candidate in candidates
+                     if candidate.resolve().is_relative_to(root) and candidate.is_file()), None)
+        if path is None:
+            raise ValueError("只允许读取上传目录中的文件")
+        if path.stat().st_size > 30 * 1024 * 1024:
+            raise ValueError("文件超过解析大小限制")
 
         suffix = path.suffix.lower()
         extracted_text = ""
@@ -272,12 +266,14 @@ class ToolRegistry:
                 raise RuntimeError("未安装 pypdf，无法解析 PDF 文件")
             reader = pypdf.PdfReader(str(path))
             total_pages = len(reader.pages)
-            end_page = min(page_end, total_pages) if page_end else total_pages
+            end_page = min(page_end or total_pages, total_pages, page_start + 99)
             page_texts = []
             for i in range(page_start - 1, end_page):
                 if i < total_pages:
                     text = reader.pages[i].extract_text() or ""
                     page_texts.append(f"--- [第 {i + 1} 页] ---\n{text.strip()}")
+                    if sum(map(len, page_texts)) >= max_chars:
+                        break
             extracted_text = "\n\n".join(page_texts)
             if getattr(reader, "outline", None):
                 for item in reader.outline:
@@ -287,6 +283,8 @@ class ToolRegistry:
         elif suffix in {".docx", ".doc"}:
             try:
                 with zipfile.ZipFile(str(path)) as docx_zip:
+                    if docx_zip.getinfo("word/document.xml").file_size > 8 * 1024 * 1024:
+                        raise ValueError("DOCX 正文解压后超过大小限制")
                     xml_content = docx_zip.read("word/document.xml")
                     tree = ET.fromstring(xml_content)
                     ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
@@ -321,10 +319,7 @@ class ToolRegistry:
             extracted_text = json.dumps(data, ensure_ascii=False, indent=2)
 
         else:
-            try:
-                extracted_text = path.read_text(encoding="utf-8")
-            except Exception:
-                raise ValueError(f"不支持解析的文件类型: {suffix}")
+            raise ValueError(f"不支持解析的文件类型: {suffix}")
 
         char_count = len(extracted_text)
         truncated = char_count > max_chars

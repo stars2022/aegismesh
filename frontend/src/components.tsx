@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, ChevronDown } from 'lucide-react'
 import { createPortal } from 'react-dom'
 
@@ -27,11 +27,16 @@ export function ScoreBar({ value, max = 100 }: { value: number; max?: number }) 
 
 export type DropdownOption = { value: string; label: string }
 
-export function Dropdown({ value, options, onChange, placeholder, className, align, title, leadingIcon }: { value: string; options: DropdownOption[]; onChange: (value: string) => void; placeholder?: string; className?: string; align?: 'left' | 'right'; title?: string; leadingIcon?: ReactNode }) {
+// Dialogs keep their menus inside the same focus/inert boundary.
+export const DropdownPortalContext = createContext<HTMLElement | null>(null)
+
+export function Dropdown({ value, options, onChange, placeholder, className, align, title, leadingIcon, disabled = false }: { value: string; options: DropdownOption[]; onChange: (value: string) => void; placeholder?: string; className?: string; align?: 'left' | 'right'; title?: string; leadingIcon?: ReactNode; disabled?: boolean }) {
+  const portal = useContext(DropdownPortalContext)
   const [open, setOpen] = useState(false)
   const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0, bottom: 0, width: 0, upward: false })
   const root = useRef<HTMLDivElement>(null)
   const menu = useRef<HTMLDivElement>(null)
+  useEffect(() => { if (disabled) setOpen(false) }, [disabled])
   const positionMenu = () => {
     const rect = root.current?.getBoundingClientRect()
     if (!rect) return
@@ -71,12 +76,12 @@ export function Dropdown({ value, options, onChange, placeholder, className, ali
   const emptyText = placeholder || (options.length === 0 ? '暂无可用选项' : '请选择')
   return (
     <div className={`dropdown ${className || ''}`} ref={root}>
-      <button type="button" className="dropdown-trigger" onClick={() => { if (!open) positionMenu(); setOpen((state) => !state) }} aria-haspopup="listbox" aria-expanded={open} aria-label={title || current?.label || emptyText} title={title}>
+      <button type="button" className="dropdown-trigger" disabled={disabled} onClick={() => { if (!open) positionMenu(); setOpen((state) => !state) }} aria-haspopup="listbox" aria-expanded={open && !disabled} aria-label={title || current?.label || emptyText} title={title}>
         {leadingIcon && <span className="dropdown-leading-icon">{leadingIcon}</span>}
         <span>{current?.label || emptyText}</span>
         <ChevronDown size={13} className={`chev ${open ? 'open' : ''}`} />
       </button>
-      {open && createPortal(
+      {open && !disabled && createPortal(
         <div ref={menu} className="dropdown-menu dropdown-menu-portal" style={{ left: menuPosition.left, top: menuPosition.upward ? 'auto' : menuPosition.top, bottom: menuPosition.upward ? menuPosition.bottom : 'auto', minWidth: menuPosition.width }} role="listbox">
           {options.length === 0 ? (
             <div className="dropdown-empty" style={{ padding: '8px 12px', color: 'var(--c777771)', fontSize: '11px', whiteSpace: 'nowrap' }}>
@@ -90,7 +95,7 @@ export function Dropdown({ value, options, onChange, placeholder, className, ali
               </button>
             ))
           )}
-        </div>, document.body
+        </div>, portal || document.body
       )}
     </div>
   )

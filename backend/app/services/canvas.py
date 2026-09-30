@@ -76,30 +76,18 @@ def _claim_canvas(db: Session, doc: CanvasDoc, session_id: str, owner_id: str | 
     if doc.owner_id and doc.owner_id != owner_id:
         raise CanvasError("画布不存在或无权访问")
     if not doc.owner_id:
-        prior_owner = (
-            db.query(Invocation.owner_id)
-            .filter(Invocation.session_id == session_id, Invocation.owner_id != "")
-            .order_by(Invocation.created_at.desc())
-            .limit(1)
-            .scalar()
-        )
-        if prior_owner and prior_owner != owner_id:
-            raise CanvasError("画布不存在或无权访问")
-        db.execute(
-            update(CanvasDoc)
-            .where(CanvasDoc.id == doc.id, CanvasDoc.owner_id == "")
-            .values(owner_id=owner_id)
-        )
-        db.commit()
-        db.refresh(doc)
-        if doc.owner_id != owner_id:
-            raise CanvasError("画布不存在或无权访问")
+        raise CanvasError("旧画布归属不明，已保留原文，请联系管理员迁移")
     return _retire_untouched_default_heading(db, _retire_untouched_demo_template(db, doc))
 
 
 def get_or_create_session_canvas(
     db: Session, session_id: str, owner_id: str | None = None
 ) -> CanvasDoc:
+    from .identity import bind_conversation, ConversationOwnershipError
+    try:
+        bind_conversation(db, session_id, owner_id or "")
+    except ConversationOwnershipError as exc:
+        raise CanvasError(str(exc)) from exc
     canvas_id = canvas_id_for(session_id)
     existing = db.get(CanvasDoc, canvas_id)
     if existing is not None:

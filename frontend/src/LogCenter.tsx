@@ -35,7 +35,7 @@ function LogEvent({ record, client, onRelated }: { record: LogRecord; client: Lo
     <summary>
       <time dateTime={record.occurred_at}>{timeLabel(record.occurred_at)}</time>
       <span className={`log-result ${record.outcome}`}>{logOutcomeNames[record.outcome] || record.outcome}</span>
-      <span className="log-kind">{record.origin === 'admin' ? '管理' : logKindNames[record.kind]}</span>
+      <span className="log-kind">{record.origin === 'admin' ? record.target.startsWith('/api/account/') ? '账号' : '管理' : logKindNames[record.kind]}</span>
       <span className="log-event-copy"><strong>{record.summary}</strong><small>{record.origin === 'admin' ? `${record.actor} · ${record.target}` : `${record.aic || '未标识 AIC'}${record.task_id ? ` · ${record.task_id}` : ''}`}</small></span>
       <ChevronDown size={16} className="log-chevron" />
     </summary>
@@ -46,7 +46,7 @@ function LogEvent({ record, client, onRelated }: { record: LogRecord; client: Lo
         {record.callee_aic && <><dt>被调用方</dt><dd>{record.callee_aic}</dd></>}
         {record.duration_ms != null && <><dt>耗时</dt><dd>{Math.round(record.duration_ms)} ms</dd></>}
         {record.source_file && <><dt>来源</dt><dd>{record.source_file}</dd></>}
-        <dt>记录状态</dt><dd>{record.delivery === 'local_only' ? '仅本地管理审计，不参与 AMP 上报' : '本地已记录；平台接收 / 计榜未确认'}</dd>
+        <dt>记录状态</dt><dd>{record.delivery === 'local_only' ? '仅本地操作审计，不参与 AMP 上报' : '本地已记录；平台接收 / 计榜未确认'}</dd>
         {typeof diagnostic === 'string' && diagnostic && <><dt>诊断信息</dt><dd>{diagnostic}</dd></>}
       </dl>
       {identifiers.length > 0 && <div className="log-related">{identifiers.map(([label, id]) => <button type="button" key={label} onClick={() => onRelated(id)} title={`查看关联${label}：${id}`}><span>{label}：{id}</span><ArrowRight size={14} /></button>)}</div>}

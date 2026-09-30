@@ -5,7 +5,11 @@ from pathlib import Path
 from app.services.tools import ToolRegistry
 
 
-def test_extract_file_content_txt_and_json(tmp_path: Path) -> None:
+def test_extract_file_content_txt_and_json(tmp_path: Path, monkeypatch) -> None:
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "database_url", f"sqlite:///{tmp_path / 'test.db'}")
+    tmp_path = tmp_path / "uploads"
+    tmp_path.mkdir()
     registry = ToolRegistry()
     # Test TXT
     txt_file = tmp_path / "test_paper.txt"
@@ -24,6 +28,23 @@ def test_extract_file_content_txt_and_json(tmp_path: Path) -> None:
     res_json = registry.execute("extract_file_content", {"file_path": str(json_file)})
     assert res_json["ok"] is True
     assert "MMLU" in res_json["result"]["content"]
+
+
+def test_file_tool_rejects_configuration_sibling_traversal_and_symlinks(tmp_path, monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "database_url", f"sqlite:///{tmp_path / 'test.db'}")
+    root = tmp_path / "uploads"
+    root.mkdir()
+    secret = tmp_path / "private.txt"
+    secret.write_text("private-server-value")
+    sibling = tmp_path / "uploads-other"
+    sibling.mkdir()
+    (sibling / "private.txt").write_text("private-server-value")
+    (root / "escape.txt").symlink_to(secret)
+    for path in (secret, "../private.txt", sibling / "private.txt", root / "escape.txt"):
+        response = ToolRegistry().execute("extract_file_content", {"file_path": str(path)})
+        assert response["ok"] is False
+        assert "private-server-value" not in json.dumps(response)
 
 
 def test_citation_tool() -> None:

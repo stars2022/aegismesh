@@ -202,7 +202,7 @@ class CanvasUpdate(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=50_000)
     attachments: list[Attachment] = Field(default_factory=list)
-    session_id: str | None = None
+    session_id: str | None = Field(default=None, min_length=1, max_length=128)
     agent_id: str | None = Field(default=None, max_length=64)
     requested_skill: str | None = None
     input_mode: str = "text/plain"
@@ -213,6 +213,7 @@ class ChatRequest(BaseModel):
     collab_style: Literal["auto", "workflow", "swarm", "parallel"] = "auto"
     max_partners: int = Field(default=2, ge=2, le=5)
     interface: Literal["api", "harness"] = "api"
+    presentation: Literal["workspace", "assistant"] = "workspace"
     canvas: bool = False
     delegation_depth: int = Field(default=0, ge=0)
     delegation_path: list[str] = Field(default_factory=list)

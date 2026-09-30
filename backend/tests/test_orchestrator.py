@@ -124,12 +124,39 @@ async def test_same_session_id_is_isolated_by_authenticated_owner(db: Session) -
         ChatRequest(message="owner-a secret", session_id="shared-session"),
         owner_id="owner-a",
     )
-    await orchestrator.run(
-        ChatRequest(message="owner-b question", session_id="shared-session"),
-        owner_id="owner-b",
-    )
+    from app.services.identity import ConversationOwnershipError
+    with pytest.raises(ConversationOwnershipError):
+        await orchestrator.run(
+            ChatRequest(message="owner-b question", session_id="shared-session"),
+            owner_id="owner-b",
+        )
 
-    assert transport.histories == [[], []]
+    assert transport.histories == [[]]
+
+
+async def test_assistant_presentation_preserves_history_and_audit(db: Session) -> None:
+    db.add(RoutingPolicy(id=1, weights=DEFAULT_WEIGHTS, failure_threshold=2, circuit_cooldown_seconds=60, max_attempts=1, request_timeout_seconds=2))
+    add_agent(db, "partner", 0)
+    db.commit()
+    transport = FixtureTransport()
+    orchestrator = ReliableOrchestrator(db, TransportRegistry({"test": transport}))
+    first, _, _ = await orchestrator.run(ChatRequest(
+        message="周末去哪里玩", session_id="human-one", agent_id="partner", presentation="assistant",
+    ), owner_id="guest-human")
+    assert transport.histories[0][0]["role"] == "system"
+    assert "数字人助手" in transport.histories[0][0]["content"]
+    assert "隐瞒失败" in transport.histories[0][0]["content"]
+    assert not any(event.event_type == "CONTEXT_LOADED" for event in first.events)
+    assert any(event.event_type == "REQUEST_ACCEPTED" for event in first.events)
+    await orchestrator.run(ChatRequest(
+        message="带父母去", session_id="human-one", agent_id="partner", presentation="assistant",
+    ), owner_id="guest-human")
+    assert transport.histories[1][:2] == [
+        {"role": "user", "content": "周末去哪里玩"},
+        {"role": "assistant", "content": "real transport fixture result"},
+    ]
+    assert len([m for m in transport.histories[1] if m["role"] == "system"]) == 1
+    assert ChatRequest(message="普通工作台").presentation == "workspace"
 
 
 async def test_collaboration_runs_multiple_partners(db: Session) -> None:
@@ -178,6 +205,7 @@ class CoordinatorTransport:
     def __init__(self) -> None:
         self.dispatched: list[str] = []
         self.styles: list[str] = []
+        self.histories: list[list[dict[str, str]]] = []
 
     async def execute(
         self,
@@ -194,6 +222,7 @@ class CoordinatorTransport:
     ) -> PartnerResult:
         assert harness is True
         self.styles.append(collab_style)
+        self.histories.append(history or [])
         advanced = tool_registry.schemas(["execute_workflow", "run_swarm_discussion"])
         assert [item["function"]["name"] for item in advanced] == [
             "execute_workflow", "run_swarm_discussion",
@@ -290,6 +319,7 @@ async def test_agent_id_leader_coordinates_and_synthetizes(db: Session, register
     assert invocation.result_text == "协调汇总：real transport fixture result"
     assert coordinator.dispatched == ["partner-one"]
     assert coordinator.styles == ["workflow"]
+    assert all("显示名称是麦溪" not in m["content"] for m in coordinator.histories[0])
     assert invocation.attempt_count == 1
     dispatches = [event for event in invocation.events if event.event_type == "DISPATCH_COMPLETED"]
     assert len(dispatches) == 1
@@ -299,6 +329,28 @@ async def test_agent_id_leader_coordinates_and_synthetizes(db: Session, register
     assert len(invocation.result_data.get("collaborations", [])) == 1
     assert invocation.result_data["collaborations"][0]["agent_id"] == "partner-one"
     assert db.query(RouteAttempt).filter(RouteAttempt.agent_id == "partner-one").count() == 1
+
+
+async def test_digital_human_keeps_coordination_and_audit_available(db: Session, registered_directory) -> None:
+    db.add(RoutingPolicy(id=1, weights=DEFAULT_WEIGHTS, failure_threshold=2, circuit_cooldown_seconds=60, max_attempts=3, request_timeout_seconds=2))
+    add_agent(db, "partner-one", 0)
+    add_leader(db, "lead", "openai-compatible")
+    db.commit()
+    coordinator = CoordinatorTransport()
+    invocation, _, selected = await ReliableOrchestrator(
+        db, TransportRegistry({"test": FixtureTransport(), "openai-compatible": coordinator})
+    ).run(ChatRequest(
+        message="规划一次调研", session_id="human-coordination", presentation="assistant",
+        mode="collaborate", interface="harness", collab_style="auto",
+    ), owner_id="guest-human")
+    assert invocation.status == "completed"
+    assert selected.id == "lead"
+    assert coordinator.dispatched == ["partner-one"]
+    assert any("显示名称是麦溪，英文名 Mesh" in m["content"] for m in coordinator.histories[0])
+    assert all("小美" not in m["content"] for m in coordinator.histories[0])
+    assert any(e.event_type == "DISPATCH_COMPLETED" for e in invocation.events)
+    assert invocation.owner_id == "guest-human"
+    assert invocation.session_id == "human-coordination"
 
 
 class BackgroundCoordinatorTransport:

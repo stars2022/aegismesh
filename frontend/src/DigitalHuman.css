@@ -1,0 +1,141 @@
+/* A 2000s university service portal, with contemporary readability and focus states. */
+.digital-human {
+  --dh-blue: #1e5b96; --dh-body-size: 18px;
+  height: 100dvh; overflow-y: auto; overflow-x: hidden; padding: 0 24px 16px;
+  color: #213c57; color-scheme: light; font: 17px/1.65 "Microsoft YaHei", "PingFang SC", sans-serif;
+  background: linear-gradient(#cfdfef 0, #f3f7fb 185px, #e8f0f7 100%);
+}
+.digital-human.dh-large-text { --dh-body-size: 22px; }
+.digital-human * { box-sizing: border-box; }
+.digital-human a { color: inherit; text-decoration: none; }
+.digital-human :is(button,select,textarea) { font: inherit; }
+.digital-human :is(button,a,select) { -webkit-tap-highlight-color: transparent; }
+.digital-human button { cursor: pointer; }
+.digital-human button:disabled { cursor: not-allowed; opacity: .55; }
+.digital-human :is(button,a,select,textarea,summary):focus-visible { outline: 3px solid #b77900; outline-offset: 3px; }
+.dh-masthead { max-width: 1240px; margin: auto; min-height: 116px; display: flex; align-items: center; gap: 20px; position: relative; }
+.dh-masthead::after { content: ''; position: absolute; inset: 8px 0; pointer-events: none; background: repeating-linear-gradient(0deg, transparent 0 3px, #ffffff22 3px 4px); }
+.dh-emblem { position: relative; z-index: 1; width: 68px; height: 68px; flex: none; display: grid; place-items: center; color: #fff; border: 4px double #e7f2ff; border-radius: 50%; background: linear-gradient(#6199cb, #174d80); box-shadow: 0 2px 3px #29507555; }
+.dh-masthead h1 { position: relative; z-index: 1; font: bold clamp(27px, 3.1vw, 40px)/1.3 "SimSun", "Songti SC", serif; letter-spacing: .12em; color: #174d80; text-shadow: 1px 2px #fff; margin: 0; }
+.dh-brand { margin-left: auto; font: bold 18px Georgia, serif; color: #456484; }
+.dh-navigation { max-width: 1240px; margin: 0 auto 20px; min-height: 52px; display: flex; align-items: stretch; justify-content: space-between; color: #fff; border: 1px solid #174d80; border-radius: 3px 3px 0 0; background: linear-gradient(#4085bc 0%, #286ba5 48%, #1c5489 49%, #27639b 100%); box-shadow: inset 0 1px #b9d7f3, 0 2px 0 #b8cddd; }
+.dh-current { display: flex; align-items: center; gap: 10px; padding: 10px 22px; font-weight: 700; border-right: 1px solid #a3c8e94d; background: #06396930; }
+.dh-navigation > div { display: flex; }
+.dh-navigation :is(a,button) { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 50px; padding: 8px 20px; border: 0; border-left: 1px solid #ffffff24; background: transparent; color: #fff; }
+.dh-navigation :is(a,button):hover { background: #072e5655; }
+.dh-layout { max-width: 1240px; margin: auto; display: grid; grid-template-columns: 300px minmax(0,1fr); gap: 20px; align-items: start; }
+.dh-service-column { min-width: 0; display: grid; gap: 18px; }
+.dh-host, .dh-guide, .dh-consultation { background: white; border: 1px solid #9fb8cf; box-shadow: 2px 3px 0 #cfdeeb; }
+.dh-host { overflow: hidden; }
+.dh-host-caption { display: flex; align-items: center; justify-content: space-between; min-height: 54px; padding: 10px 16px; color: #174d80; border-bottom: 1px solid #acc5dc; background: linear-gradient(#fff, #dceafa); }
+.dh-host-caption strong { font-size: 20px; font-family: "SimSun", "Songti SC", serif; }
+.dh-voice-level { display: flex; align-items: center; gap: 3px; height: 24px; }
+.dh-voice-level i { width: 3px; height: 4px; background: #5284b2; }
+.is-speaking .dh-voice-level i { animation: dh-level .8s ease-in-out infinite alternate; }
+.is-speaking .dh-voice-level i:nth-child(2n) { animation-delay: -.3s; }
+.is-speaking .dh-voice-level i:nth-child(3n) { animation-delay: -.6s; }
+.dh-host-stage { aspect-ratio: 2 / 3; position: relative; overflow: hidden; background: #d4e1ec; }
+.dh-host-stage img { width: 100%; height: 100%; object-fit: contain; object-position: center; display: block; position: relative; }
+.dh-avatar-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: center; opacity: 0; transition: opacity 180ms ease-out; pointer-events: none; }
+.dh-host-stage.has-motion .dh-avatar-video { opacity: 1; }
+.dh-motion-toggle { position: absolute; right: 8px; bottom: 8px; z-index: 1; display: inline-flex; align-items: center; gap: 4px; min-height: 36px; padding: 5px 8px; font-size: 13px !important; color: #fff; background: #193e60df; border: 1px solid #a9c5dc; border-radius: 3px; }
+.dh-host-stage::after { content: ''; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 16px #7895b055; border: 5px solid #ffffff45; }
+.dh-host-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; padding: 12px; border-top: 1px solid #aec5db; background: #edf4fa; }
+.dh-host-controls button, .dh-chat-heading button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 46px; padding: 8px 14px; color: #244f77; background: linear-gradient(#fff 0%, #edf5fc 49%, #dae8f4 50%, #eff6fc 100%); border: 1px solid #92afc8; border-radius: 4px; box-shadow: inset 0 1px #fff; }
+.digital-human button:hover:not(:disabled) { filter: brightness(.97); }
+.digital-human button[aria-pressed="true"] { color: #fff; background: linear-gradient(#3b76a9, #1d5484); border-color: #1d5484; }
+.dh-voice-settings { padding: 0 14px; background: #f5f9fc; border-top: 1px solid #c4d5e5; }
+.dh-voice-settings summary { cursor: pointer; min-height: 46px; display: flex; align-items: center; color: #325976; font-size: 16px; }
+.dh-voice-settings summary::after { content: '+'; margin-left: auto; }
+.dh-voice-settings[open] summary::after { content: '−'; }
+.dh-voice-settings summary::-webkit-details-marker { display: none; }
+.dh-voice-settings label { display: flex; align-items: center; gap: 10px; font-size: 16px; margin-bottom: 12px; }
+.dh-voice-settings select { min-width: 0; flex: 1; width: 100%; min-height: 44px; color: #244f77; background: white; border: 1px solid #adc3d6; border-radius: 3px; padding: 6px; }
+.dh-guide h2 { margin: 0; padding: 11px 16px; font: bold 20px/1.5 "SimSun", "Songti SC", serif; color: #225885; background: linear-gradient(#fff, #dfebf5); border-bottom: 1px solid #afc6db; }
+.dh-guide button { display: flex; align-items: center; width: 100%; min-height: 62px; padding: 12px 16px; gap: 12px; border: 0; border-bottom: 1px dotted #b7ccdd; background: white; color: #24557f; text-align: left; }
+.dh-guide button:last-child { border-bottom: 0; }
+.dh-guide button strong { flex: 1; font-weight: 500; }
+.dh-guide button:hover { background: #edf5fc; }
+.dh-consultation { display: flex; flex-direction: column; min-width: 0; height: max(660px, calc(100dvh - 232px)); max-height: 1050px; }
+.dh-chat-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 64px; padding: 8px 16px; border-bottom: 1px solid #b0c8dd; background: linear-gradient(#fff, #dfeaf4); }
+.dh-chat-heading h2 { margin: 0; font: bold 21px/1.5 "SimSun", "Songti SC", serif; color: #225885; }
+.dh-chat-heading > div { display: flex; gap: 8px; }
+.dh-history { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid #d5e2ed; font-size: 16px; background: #f7fafc; }
+.dh-history label { flex: none; }
+.dh-history select { flex: 1; min-width: 0; width: 100%; min-height: 44px; color: #305777; background: white; border: 1px solid #bdcddd; border-radius: 3px; padding: 5px 8px; }
+.dh-messages { flex: 1; min-height: 180px; min-width: 0; overflow: auto; padding: 24px 18px; overscroll-behavior: contain; background: #f9fcff; }
+.dh-message { display: flex; align-items: flex-start; gap: 10px; min-width: 0; margin-bottom: 22px; }
+.dh-message.user { flex-direction: row-reverse; }
+.dh-message-avatar { width: 38px; height: 40px; display: grid; place-items: center; flex: none; color: #fff; border: 1px solid #527fa7; border-radius: 4px; background: linear-gradient(#6a9ac5, #3c6c9a); }
+.dh-message.user .dh-message-avatar { border-color: #627e69; background: linear-gradient(#94ae99, #56765d); }
+.dh-bubble { min-width: 0; max-width: calc(100% - 50px); padding: 14px 16px; color: #263d52; background: white; border: 1px solid #c6d7e6; border-radius: 2px 7px 7px 7px; font-size: var(--dh-body-size); line-height: 1.9; overflow-wrap: anywhere; }
+.dh-message.user .dh-bubble { background: #e5effa; border-color: #b6cde1; border-radius: 7px 2px 7px 7px; }
+.dh-speaker { display: block; margin-bottom: 6px; font-size: 15px; font-weight: 500; color: #426580; }
+.dh-bubble > p { margin: 0 0 12px; white-space: pre-wrap; }
+.dh-bubble > p:last-child { margin-bottom: 0; }
+.dh-bubble :is(h1,h2,h3,h4) { font-size: 1.1em; line-height: 1.5; margin: 14px 0 10px; }
+.dh-bubble :is(ul,ol) { padding-left: 24px; margin-block: 10px; }
+.dh-bubble pre { max-width: 100%; overflow-x: auto; padding: 10px; font-size: .9em; background: #edf3f8; }
+.dh-bubble table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.dh-bubble :is(td,th) { padding: 6px 10px; border: 1px solid #c5d7e6; }
+.dh-bubble a { color: #155d9d; text-decoration: underline; }
+.dh-bubble.failed { border-color: #c9a87a; background: #fff8ea; }
+.dh-read-reply { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 6px 0; font-size: 16px; color: #245d8c; background: transparent; border: 0; text-decoration: underline; text-underline-offset: 4px; }
+.dh-waiting { color: #426580; }
+.dh-waiting > span { display: inline-block; width: 8px; height: 8px; margin-right: 8px; background: #497caa; border-radius: 50%; animation: dh-pulse 1s ease-in-out infinite alternate; }
+.dh-composer { flex: none; padding: 14px 16px 12px; border-top: 1px solid #b8cde0; background: #edf4fa; }
+.dh-composer textarea { display: block; width: 100%; min-height: 102px; max-height: 220px; resize: vertical; padding: 12px 14px; color: #213c57; background: #fff; border: 1px solid #9eb7ce; border-radius: 3px; box-shadow: inset 1px 2px 3px #365b7b10; font-size: var(--dh-body-size); }
+.dh-composer textarea::placeholder { color: #5e778e; opacity: 1; }
+.dh-composer-footer { display: flex; justify-content: flex-end; margin-top: 10px; }
+.dh-send { display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 128px; min-height: 48px; padding: 8px 24px; color: #fff; background: linear-gradient(#528cc0 0%, #3c79ae 48%, #215d93 49%, #2e6b9f 100%); border: 1px solid #174c7b; border-radius: 4px; box-shadow: inset 0 1px #d0e8ff; font-weight: 600; }
+.dh-inline-notice { margin: 0 0 10px; font-size: 16px; color: #874f13; }
+.dh-footer { max-width: 1240px; margin: 20px auto 0; padding-top: 10px; border-top: 1px solid #bacdde; color: #4d6b85; text-align: center; font-size: 14px; }
+@keyframes dh-pulse { to { opacity: .35; } }
+@keyframes dh-level { to { height: 20px; } }
+@media (max-width: 60rem) {
+  .digital-human { padding-inline: 16px; }
+  .dh-layout { grid-template-columns: 250px minmax(0,1fr); gap: 14px; }
+  .dh-brand { display: none; }
+  .dh-chat-heading { padding-inline: 12px; }
+  .dh-chat-heading h2 { font-size: 19px; }
+}
+@media (max-width: 46rem) {
+  .digital-human { padding-inline: 12px; }
+  .dh-masthead { min-height: 92px; gap: 12px; }
+  .dh-emblem { width: 52px; height: 52px; border-width: 3px; }
+  .dh-emblem svg { width: 28px; }
+  .dh-masthead h1 { font-size: clamp(23px, 5vw, 32px); letter-spacing: .05em; }
+  .dh-navigation { margin-bottom: 14px; font-size: 16px; }
+  .dh-current { padding: 8px 12px; gap: 7px; }
+  .dh-navigation :is(a,button) { padding: 8px 12px; gap: 6px; }
+  .dh-layout { grid-template-columns: minmax(0,1fr); gap: 14px; }
+  .dh-service-column { grid-template-columns: minmax(0,1fr); gap: 12px; }
+  .dh-host { display: grid; grid-template-columns: 108px minmax(0,1fr); grid-template-rows: auto auto auto; align-items: stretch; }
+  .dh-host-stage { grid-column: 1; grid-row: 1 / 4; aspect-ratio: auto; min-height: 162px; }
+  .dh-host-stage img { position: absolute; inset: 0; }
+  .dh-motion-toggle { right: 2px; bottom: 2px; padding: 4px 5px; min-height: 40px; }
+  .dh-host-caption { grid-column: 2; font-size: 18px; min-height: 46px; padding: 8px 12px; border-bottom: 0; }
+  .dh-host-caption strong { font-size: 18px; }
+  .dh-host-controls { grid-column: 2; padding: 6px 10px 10px; border-top: 0; justify-content: flex-start; }
+  .dh-host-controls button { padding: 7px 10px; font-size: 16px; }
+  .dh-voice-settings { grid-column: 2; }
+  .dh-guide { display: flex; flex-wrap: wrap; }
+  .dh-guide h2 { width: 100%; font-size: 18px; padding: 6px 12px; }
+  .dh-guide button { width: auto; flex: 1 1 100px; min-height: 50px; padding: 8px; justify-content: center; gap: 7px; border: 0; border-right: 1px dotted #b7ccdd; font-size: 16px; }
+  .dh-guide button > svg:first-child { width: 18px; }
+  .dh-guide button > svg:last-child { display: none; }
+  .dh-guide button strong { flex: none; }
+  .dh-consultation { height: max(580px, 80dvh); max-height: none; }
+  .dh-chat-heading { gap: 7px; padding: 7px 10px; }
+  .dh-chat-heading button { font-size: 16px; padding: 7px 10px; }
+  .dh-history { padding: 7px 10px; font-size: 16px; gap: 8px; }
+  .dh-messages { padding: 18px 10px; }
+  .dh-message { gap: 7px; }
+  .dh-message-avatar { width: 28px; height: 34px; font-size: 15px; }
+  .dh-bubble { max-width: calc(100% - 35px); padding: 11px 12px; }
+  .dh-composer { padding: 12px; }
+  .dh-footer { margin-top: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .digital-human *, .digital-human *::before, .digital-human *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

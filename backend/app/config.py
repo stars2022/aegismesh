@@ -15,6 +15,34 @@ class Settings(BaseSettings):
     admin_session_secret: str = ""
     admin_session_hours: int = 12
     admin_cookie_secure: bool = False
+    # Staged modules: the public demo never requires a user account.
+    accounts_enabled: bool = False
+    account_email_enabled: bool = False
+    account_session_days: int = Field(default=30, ge=1, le=90)
+    guest_session_days: int = Field(default=180, ge=1, le=365)
+    account_public_origin: str = ""
+    account_smtp_host: str = ""
+    account_smtp_port: int = 465
+    account_smtp_username: str = ""
+    account_smtp_password: str = ""
+    account_mail_from: str = ""
+    turnstile_enabled: bool = False
+    turnstile_site_key: str = ""
+    turnstile_secret: str = ""
+    turnstile_hostnames: str = ""
+    # Only a verified email account can receive this operator exemption.
+    account_owner_email: str = ""
+    # Provider credentials stay server-side. Nothing is enabled just by adding a key.
+    account_oauth: dict[str, dict[str, str | bool]] = {}
+    quota_mode: str = Field(default="off", pattern="^(off|observe|enforce)$")
+    quota_daily_tasks: int = Field(default=100, ge=1)
+    quota_concurrent_tasks: int = Field(default=3, ge=1)
+    quota_daily_upload_bytes: int = Field(default=104857600, ge=1)
+    quota_guest_turns: int = Field(default=3, ge=1, le=100)
+    # Application budget units: input tokens + 4 * output tokens (cached input discounted).
+    quota_member_monthly_units: int = Field(default=1600000, ge=1000)
+    quota_public_monthly_units: int = Field(default=160000000, ge=1000)
+    quota_model_output_tokens: int = Field(default=4096, ge=512, le=16384)
     provider_encryption_key: str = ""
     provider_secret_env_bindings: dict[str, str] = {}
     llm_api_base: str = "https://api.deepseek.com"

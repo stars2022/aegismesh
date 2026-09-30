@@ -21,6 +21,7 @@ from ..models import Agent, ProviderConfig
 from .prompt import build_system_prompt, effective_tool_names
 from .provider_secrets import resolve_api_key
 from .tools import ToolRegistry
+from .model_budget import metered_post, metered_stream
 
 
 @dataclass(slots=True)
@@ -268,7 +269,7 @@ class OpenAICompatibleTransport:
                             content_parts: list[str] = []
                             reasoning_parts: list[str] = []
                             streamed_calls: dict[int, dict[str, Any]] = {}
-                            async with client.stream("POST", endpoint, headers=headers, json=body) as response:
+                            async with metered_stream(client, endpoint, headers=headers, json=body, provider_id=provider.id if provider else "default") as response:
                                 response.raise_for_status()
                                 async for line in response.aiter_lines():
                                     event = sse_payload(line)
@@ -330,7 +331,7 @@ class OpenAICompatibleTransport:
                         else:
                             if controller and hasattr(controller, "touch_progress"):
                                 controller.touch_progress()
-                            response = await client.post(endpoint, headers=headers, json=body)
+                            response = await metered_post(client, endpoint, headers=headers, json=body, provider_id=provider.id if provider else "default")
                             response.raise_for_status()
                             if controller and hasattr(controller, "touch_progress"):
                                 controller.touch_progress()
@@ -397,7 +398,7 @@ class OpenAICompatibleTransport:
                         }
                         for s_attempt in range(max_retries + 1):
                             try:
-                                synth_resp = await client.post(endpoint, headers=headers, json=synth_body)
+                                synth_resp = await metered_post(client, endpoint, headers=headers, json=synth_body, provider_id=provider.id if provider else "default")
                                 synth_resp.raise_for_status()
                                 synth_payload = synth_resp.json()
                                 synth_usage = synth_payload.get("usage") or {}
@@ -1080,7 +1081,7 @@ class OpenAIResponsesTransport:
                     streamed_text: list[str] = []
                     output: list[dict[str, Any]] = []
                     usage: dict[str, Any] = {}
-                    async with client.stream("POST", endpoint, headers=headers, json=body) as response:
+                    async with metered_stream(client, endpoint, headers=headers, json=body, output_key="max_output_tokens", provider_id=provider.id if provider else "default") as response:
                         response.raise_for_status()
                         async for line in response.aiter_lines():
                             event = sse_payload(line)
@@ -1112,7 +1113,7 @@ class OpenAIResponsesTransport:
                 else:
                     if controller and hasattr(controller, "touch_progress"):
                         controller.touch_progress()
-                    response = await client.post(endpoint, headers=headers, json=body)
+                    response = await metered_post(client, endpoint, headers=headers, json=body, output_key="max_output_tokens", provider_id=provider.id if provider else "default")
                     response.raise_for_status()
                     if controller and hasattr(controller, "touch_progress"):
                         controller.touch_progress()
@@ -1248,7 +1249,7 @@ class AnthropicTransport:
                     body["stream"] = True
                     blocks: dict[int, dict[str, Any]] = {}
                     usage: dict[str, Any] = {}
-                    async with client.stream("POST", endpoint, headers=headers, json=body) as response:
+                    async with metered_stream(client, endpoint, headers=headers, json=body, provider_id=provider.id if provider else "default") as response:
                         response.raise_for_status()
                         async for line in response.aiter_lines():
                             event = sse_payload(line)
@@ -1296,7 +1297,7 @@ class AnthropicTransport:
                         content.append(block)
                     payload = {"content": content, "usage": usage}
                 else:
-                    response = await client.post(endpoint, headers=headers, json=body)
+                    response = await metered_post(client, endpoint, headers=headers, json=body, provider_id=provider.id if provider else "default")
                     response.raise_for_status()
                     payload = response.json()
                 llm_calls += 1

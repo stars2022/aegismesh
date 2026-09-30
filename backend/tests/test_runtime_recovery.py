@@ -75,7 +75,7 @@ def test_runtime_marker_detects_dead_or_reused_process(monkeypatch: pytest.Monke
 
 @pytest.mark.asyncio
 async def test_active_task_endpoint_reports_only_owners_interruption(db: Session) -> None:
-    owner = "anon_" + hashlib.sha256(b"127.0.0.1").hexdigest()[:24]
+    owner = "guest-first-browser"
     db.add(Invocation(
         id="interrupted", session_id="session-one", owner_id=owner, query="write",
         status="failed", result_text="服务重启中断，任务已终止。",
@@ -83,7 +83,10 @@ async def test_active_task_endpoint_reports_only_owners_interruption(db: Session
     ))
     db.commit()
     request = Request({"type": "http", "client": ("127.0.0.1", 1234), "headers": []})
-    other = Request({"type": "http", "client": ("127.0.0.2", 1234), "headers": []})
+    other = Request({"type": "http", "client": ("127.0.0.1", 5678), "headers": []})
+    # Middleware validates independent browser credentials even behind one IP.
+    request.state.owner_id = owner
+    other.state.owner_id = "guest-second-browser"
 
     own_result = await demo_get_active_task("session-one", request, db)
     other_result = await demo_get_active_task("session-one", other, db)

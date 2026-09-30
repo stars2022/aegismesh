@@ -120,3 +120,29 @@ test('user abort prevents reconnect after a partial reply', async (t) => {
   )
   assert.equal(fetchCalls, 1)
 })
+
+test('digital-human requests preserve the normal task pipeline and return only the terminal answer', async t => {
+  const originalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = originalFetch })
+  let sent
+  globalThis.fetch = async (path, init) => {
+    sent = { path, body: JSON.parse(init.body), credentials: init.credentials }
+    return sseResponse([
+      { type: 'status', data: { task_id: 'task-human' } },
+      { type: 'event', data: { event_type: 'DISPATCH_STARTED', detail: { agent: 'hidden agent' } } },
+      { type: 'delta', text: '调用工具的过程，不应成为气泡' },
+      { type: 'result', data: { session_id: 'human-one', status: 'completed', answer: '您的行程建议。' } },
+    ].map((frame, i) => `id: ${i}\ndata: ${JSON.stringify(frame)}\n\n`).join(''), 'task-human')
+  }
+  const ids = []
+  const result = await api.assistantChatStream('请规划旅行', 'human-one', new AbortController().signal, id => ids.push(id))
+  assert.equal(sent.path, '/api/demo/chat/stream')
+  assert.equal(sent.credentials, 'same-origin')
+  assert.equal(sent.body.presentation, 'assistant')
+  assert.equal(sent.body.interface, 'harness')
+  assert.equal(sent.body.mode, 'collaborate')
+  assert.equal(sent.body.session_id, 'human-one')
+  assert.equal(sent.body.agent_id, undefined)
+  assert.equal(result.answer, '您的行程建议。')
+  assert.ok(ids.every(id => id === 'task-human'))
+})
