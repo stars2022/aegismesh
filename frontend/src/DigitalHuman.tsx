@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, BookOpen, ChevronRight, MessageCircle, Newspaper, Plus, Send, Settings2, Square, Volume2, VolumeX, MapPin, Network } from 'lucide-react'
+import { ArrowDown, ArrowLeft, BookOpen, ChevronRight, MessageCircle, Newspaper, Plus, Send, Settings2, Square, Volume2, VolumeX, MapPin, Network } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from './api'
@@ -9,6 +9,7 @@ import { assistantFailure, assistantWasCancelled, finishAssistantReply, newAssis
 import { createAssistantSpeech } from './assistantSpeech'
 import { SettingsDialog } from './SettingsDialog'
 import { DigitalHumanAvatar } from './DigitalHumanAvatar'
+import { isNearConversationEnd, readDigitalHumanPreferences } from './digitalHumanPreferences'
 import { applyTheme, loadSettings, saveSettings, type UserSettings } from './settings'
 import './DigitalHuman.css'
 
@@ -18,6 +19,16 @@ const topics = [
   { icon: Newspaper, name: '新闻查询', question: '帮我了解最近一周人工智能领域的主要新闻，标明日期和可核验的来源。' },
   { icon: MapPin, name: '出行咨询', question: '我想安排一次轻松的周末旅行，请先问我出发地、预算和偏好，再帮我规划。' },
 ]
+
+// Fixed-size corners stay crisp as the console reflows; chrome never intercepts input.
+function ConsoleFrame() {
+  return <span className="dh-panel-chrome" aria-hidden="true">{[0, 1, 2, 3].map(corner => <svg key={corner} viewBox="0 0 36 36" fill="none" focusable="false">
+    <path d="M2 35V13L13 2H35" stroke="currentColor" strokeWidth="2"/>
+    <path d="M7 35V16L16 7H35" stroke="currentColor" opacity=".45"/>
+    <path d="M2 26V13L13 2H26" stroke="currentColor" strokeWidth="4"/>
+    <path d="M0 33H4M33 0V4" stroke="currentColor" opacity=".5"/>
+  </svg>)}</span>
+}
 
 export default function DigitalHuman({ ownerId }: { ownerId: string }) {
   const storage = useMemo(() => conversationStorageForOwner(ownerId), [ownerId])
@@ -34,10 +45,16 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
   const [notice, setNotice] = useState('')
   const [voiceOn, setVoiceOn] = useState(false)
   const [speaking, setSpeaking] = useState(false)
+  const [readingId, setReadingId] = useState<string | null>(null)
+  const [preferences] = useState(() => {
+    try { return readDigitalHumanPreferences(storage.getItem('human-preferences')) }
+    catch { return readDigitalHumanPreferences(null) }
+  })
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
-  const [voiceId, setVoiceId] = useState('')
-  const [voiceRate, setVoiceRate] = useState(0.9)
-  const [largeText, setLargeText] = useState(false)
+  const [voiceId, setVoiceId] = useState(preferences.voiceId)
+  const [voiceRate, setVoiceRate] = useState(preferences.voiceRate)
+  const [largeText, setLargeText] = useState(preferences.largeText)
+  const [showLatest, setShowLatest] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settings, setSettings] = useState(loadSettings)
   const voice = voices.find(v => v.voiceURI === voiceId) || voices[0] || null
@@ -53,6 +70,14 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
   const controllerRef = useRef<AbortController | null>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const followReplies = useRef(true)
+
+  const scrollToLatest = () => {
+    const list = messagesRef.current
+    if (list) list.scrollTop = list.scrollHeight
+    followReplies.current = true
+    setShowLatest(false)
+  }
 
   const save = (next: AssistantSession) => {
     sessionRef.current = next
@@ -68,10 +93,12 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
   const silence = () => {
     playerRef.current?.stop()
     setSpeaking(false)
+    setReadingId(null)
   }
-  const speak = (text: string) => {
-    if (!voiceEnabled.current || !voiceRef.current) return
-    playerRef.current?.play(speechText(text), voiceRef.current, voiceRateRef.current)
+  const speak = (text: string, messageId?: string, once = false) => {
+    if ((!voiceEnabled.current && !once) || !voiceRef.current || !playerRef.current) return
+    const started = playerRef.current.play(speechText(text), voiceRef.current, voiceRateRef.current)
+    setReadingId(started ? messageId || null : null)
   }
   const run = async (current: AssistantSession, taskId?: string) => {
     const operation = ++operationRef.current
@@ -90,7 +117,7 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
       const failed = result.status !== 'completed'
       const answer = stopped ? '已停止本次答复。你可以继续提问。' : failed ? assistantFailure(result.answer) : result.answer?.trim() || '这次没有收到有效答复，请换一种说法再试试。'
       save(finishAssistantReply(sessionRef.current, replyId, answer, stopped ? 'stopped' : failed ? 'failed' : undefined))
-      if (!failed) speak(answer)
+      if (!failed) speak(answer, replyId)
     } catch (error) {
       if (!isCurrent() || controller.signal.aborted) return
       const stopped = assistantWasCancelled(error)
@@ -123,6 +150,7 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
     const player = createAssistantSpeech(window.speechSynthesis, {
       onSpeaking: value => { if (mounted.current) setSpeaking(value) },
       onError: () => { if (mounted.current) setNotice('语音暂时无法播放，您可以继续阅读文字。') },
+      onIdle: () => { if (mounted.current) setReadingId(null) },
     })
     playerRef.current = player
     const sync = () => setVoices(window.speechSynthesis.getVoices().filter(v => v.localService && /^zh(?:[-_]|$)/i.test(v.lang)))
@@ -131,11 +159,19 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
     document.addEventListener('visibilitychange', hide)
     return () => { window.speechSynthesis.removeEventListener('voiceschanged', sync); document.removeEventListener('visibilitychange', hide); player.stop(); playerRef.current = null }
   }, [])
-  useEffect(() => { const list = messagesRef.current; if (list) list.scrollTop = list.scrollHeight }, [session.messages, busy])
+  useEffect(() => {
+    if (followReplies.current) scrollToLatest()
+    else setShowLatest(true)
+  }, [session.messages])
+  useEffect(() => {
+    try { storage.setItem('human-preferences', JSON.stringify({ largeText, voiceId, voiceRate })) }
+    catch { /* Unavailable storage must not prevent reading or speaking. */ }
+  }, [storage, largeText, voiceId, voiceRate])
   const send = () => {
     const text = input.trim()
     if (!text || busyRef.current || text.length > 50000) return
     silence(); setNotice(''); setInput('')
+    followReplies.current = true; setShowLatest(false)
     const replyId = crypto.randomUUID()
     const current = sessionRef.current
     const next: AssistantSession = { ...current, title: current.messages.length ? current.title : text.slice(0, 24), taskId: undefined, pendingId: replyId, messages: [...current.messages, { id: crypto.randomUUID(), role: 'user', text }, { id: replyId, role: 'assistant', text: '', state: 'pending' }] }
@@ -159,6 +195,7 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
   const changeSession = (next: AssistantSession) => {
     if (busyRef.current) return
     operationRef.current += 1; silence(); setInput(''); setNotice(''); save(next); void recover(next)
+    followReplies.current = true; setShowLatest(false)
   }
   const updateSettings = (patch: Partial<UserSettings>) => setSettings(current => {
     const next = { ...current, ...patch }; saveSettings(next); applyTheme(next); return next
@@ -168,7 +205,7 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
     try {
       for (const row of readIndex()) storage.removeItem(row.id)
       storage.removeItem('human-index'); storage.removeItem('human-active')
-      silence(); const next = newAssistantSession(); sessionRef.current = next; setSession(next); setHistory([]); setInput(''); setNotice(''); setSettingsOpen(false)
+      silence(); followReplies.current = true; setShowLatest(false); const next = newAssistantSession(); sessionRef.current = next; setSession(next); setHistory([]); setInput(''); setNotice(''); setSettingsOpen(false)
     } catch { setNotice('暂时无法清空记录，请稍后重试。'); setSettingsOpen(false) }
   }
   return <>
@@ -177,11 +214,12 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
       <nav className="dh-navigation" aria-label="服务导航"><span className="dh-current"><MessageCircle size={20}/>在线咨询</span><div><a href="/"><ArrowLeft size={18}/>工作台</a><button onClick={() => setSettingsOpen(true)}><Settings2 size={18}/>设置</button></div></nav>
       <div className="dh-layout">
         <aside className="dh-service-column" aria-label="咨询服务目录">
-          <section className="dh-guide"><h2>服务目录</h2>{topics.map((topic, index) => <button key={topic.name} disabled={busy} onClick={() => { setInput(topic.question); inputRef.current?.focus(); inputRef.current?.closest('form')?.scrollIntoView({block:'nearest',behavior:'auto'}) }}><span className="dh-topic-icon"><topic.icon size={28}/></span><strong>{topic.name}</strong><ChevronRight size={18}/><span className="dh-topic-index" aria-hidden="true">0{index + 1}</span></button>)}</section>
-          <section className="dh-history"><label htmlFor="dh-history">咨询记录</label><select id="dh-history" disabled={busy} value={session.id} onChange={event => { const next = readAssistantSession(storage.getItem(event.target.value)); if (next) changeSession(next) }}><option value={session.id}>{session.title}</option>{history.filter(r => r.id !== session.id).map(r => <option key={r.id} value={r.id}>{r.title}</option>)}</select></section>
+          <section className="dh-guide"><ConsoleFrame/><h2>服务目录</h2>{topics.map((topic, index) => <button key={topic.name} disabled={busy} onClick={() => { setInput(topic.question); inputRef.current?.focus(); inputRef.current?.closest('form')?.scrollIntoView({block:'nearest',behavior:'auto'}) }}><span className="dh-topic-icon"><topic.icon size={28}/></span><strong>{topic.name}</strong><ChevronRight size={18}/><span className="dh-topic-index" aria-hidden="true">0{index + 1}</span></button>)}</section>
+          <section className="dh-history"><ConsoleFrame/><label htmlFor="dh-history">咨询记录</label><select id="dh-history" disabled={busy} value={session.id} onChange={event => { const next = readAssistantSession(storage.getItem(event.target.value)); if (next) changeSession(next) }}><option value={session.id}>{session.title}</option>{history.filter(r => r.id !== session.id).map(r => <option key={r.id} value={r.id}>{r.title}</option>)}</select></section>
           <div className="dh-directory-circuit" aria-hidden="true"><Network size={48}/><i/><i/><i/></div>
         </aside>
         <section className={`dh-host${speaking ? ' is-speaking' : ''}`} aria-label="虚拟助手麦溪">
+            <ConsoleFrame/>
             <div className="dh-host-caption"><h2>数字人服务</h2><span className="dh-voice-level" aria-hidden="true">{[0,1,2,3,4].map(n => <i key={n}/>)}</span></div>
             <div className="dh-avatar-chamber">
               <svg className="dh-instrument" viewBox="0 0 480 520" fill="none" aria-hidden="true" focusable="false">
@@ -205,10 +243,18 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
             {voice && <details className="dh-voice-settings"><summary>声音设置</summary>{voices.length > 1 && <label>音色<select aria-label="播报音色" value={voice.voiceURI} onChange={e => { silence(); setVoiceId(e.target.value) }}>{voices.map(v => <option value={v.voiceURI} key={v.voiceURI}>{v.name}</option>)}</select></label>}<label>语速<select aria-label="播报语速" value={voiceRate} onChange={e => { silence(); setVoiceRate(Number(e.target.value)) }}><option value={0.8}>慢速</option><option value={0.9}>舒缓</option><option value={1}>正常</option></select></label></details>}
         </section>
         <section className="dh-consultation" aria-label="智能咨询对话">
+          <ConsoleFrame/>
           <header className="dh-chat-heading"><h2>与麦溪对话</h2><div><button aria-pressed={largeText} onClick={() => setLargeText(value => !value)}>大字</button><button onClick={() => changeSession(newAssistantSession())} disabled={busy}><Plus size={18}/>新咨询</button></div></header>
-          <div ref={messagesRef} className="dh-messages" role="log" aria-label="咨询消息" aria-live="polite" aria-relevant="additions text">
+          <div className="dh-conversation-body">
+          <div ref={messagesRef} className="dh-messages" role="log" aria-label="咨询消息" aria-live="polite" aria-relevant="additions text" tabIndex={0} onScroll={() => {
+            if (!messagesRef.current) return
+            followReplies.current = isNearConversationEnd(messagesRef.current)
+            if (followReplies.current) setShowLatest(false)
+          }}>
             <div className="dh-message assistant"><span className="dh-message-avatar" aria-hidden="true">麦</span><div className="dh-bubble"><strong className="dh-speaker">麦溪</strong><p>您好，请问有什么可以帮您？</p></div></div>
-            {session.messages.map(message => <article key={message.id} className={`dh-message ${message.role}`}><span className="dh-message-avatar" aria-hidden="true">{message.role === 'user' ? '您' : '麦'}</span><div className={`dh-bubble ${message.state || ''}`}><strong className="dh-speaker">{message.role === 'user' ? '您' : '麦溪'}</strong>{message.state === 'pending' ? <p className="dh-waiting" role="status"><span/>正在整理答复，请稍候。</p> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: () => null, a: ({ children, href }) => <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> }}>{message.text}</ReactMarkdown>}{message.role === 'assistant' && !message.state && voice && <button className="dh-read-reply" onClick={() => { voiceEnabled.current = true; setVoiceOn(true); speak(message.text) }}><Volume2 size={18}/>朗读答复</button>}</div></article>)}
+            {session.messages.map(message => <article key={message.id} className={`dh-message ${message.role}`}><span className="dh-message-avatar" aria-hidden="true">{message.role === 'user' ? '您' : '麦'}</span><div className={`dh-bubble ${message.state || ''}`}><strong className="dh-speaker">{message.role === 'user' ? '您' : '麦溪'}</strong>{message.state === 'pending' ? <p className="dh-waiting" role="status"><span/>正在整理答复，请稍候。</p> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: () => null, a: ({ children, href }) => <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> }}>{message.text}</ReactMarkdown>}{message.role === 'assistant' && !message.state && voice && <button className="dh-read-reply" aria-pressed={readingId === message.id} onClick={() => { if (readingId === message.id) silence(); else speak(message.text, message.id, true) }}>{readingId === message.id ? <Square size={18}/> : <Volume2 size={18}/>} {readingId === message.id ? '停止朗读' : '朗读答复'}</button>}</div></article>)}
+          </div>
+          {showLatest && <button type="button" className="dh-jump-latest" onClick={scrollToLatest}><ArrowDown size={18}/>查看新答复</button>}
           </div>
           <form className="dh-composer" onSubmit={event => { event.preventDefault(); send() }}>{notice && <p role="alert" className="dh-inline-notice">{notice}</p>}<textarea id="dh-input" aria-label="咨询问题" ref={inputRef} rows={3} value={input} onChange={event => setInput(event.target.value)} maxLength={50000} placeholder="请在这里输入您的问题…" onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) { event.preventDefault(); send() } }}/><div className="dh-composer-footer">{busy ? <button type="button" className="dh-send" disabled={stopping} onClick={() => void stop()}><Square size={19}/>{stopping ? '正在停止' : '停止回答'}</button> : <button className="dh-send" disabled={!input.trim()}><Send size={19}/>发送</button>}</div></form>
         </section>

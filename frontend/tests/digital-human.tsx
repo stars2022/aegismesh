@@ -6,12 +6,29 @@ import '../src/styles.css'
 
 const params = new URLSearchParams(location.search)
 document.documentElement.dataset.theme = params.get('theme') === 'dark' ? 'dark' : 'light'
+// Deterministic local speech UI checks, with no audio or network synthesis.
+if (params.get('voice') === 'fixture') {
+  const events = new EventTarget()
+  let spokenTimer: ReturnType<typeof setTimeout> | undefined
+  Object.defineProperty(window, 'SpeechSynthesisUtterance', { configurable: true, value: class {
+    text: string
+    constructor(text: string) { this.text = text }
+  } })
+  Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: {
+    getVoices: () => [{ name: '本地测试音色', voiceURI: 'fixture-local-zh', lang: 'zh-CN', localService: true, default: true }],
+    addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events),
+    cancel: () => clearTimeout(spokenTimer),
+    speak: (utterance: SpeechSynthesisUtterance) => {
+      spokenTimer = setTimeout(() => { utterance.onstart?.call(utterance, new Event('start') as SpeechSynthesisEvent) }, 20)
+    },
+  } })
+}
 type Task = { id: string; session: string; until: number; stopped?: boolean }
 const fixtureKey = 'digital-human-isolated-task'
 const cancelSubscribers = new Set<() => void>()
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 const readTask = (): Task | null => { try { return JSON.parse(sessionStorage.getItem(fixtureKey) || 'null') } catch { return null } }
-const finalReply = '可以的。我们先把出行安排得轻松一些。\n\n建议一天只安排一到两个主要景点，中间留足休息时间；餐厅优先选交通方便、口味清淡的。\n\n**您从哪座城市出发，打算玩几天？** 告诉我预算和父母的步行习惯，我再帮您细化路线。\n\n*这是隔离预览的示例答复，不是实时旅行推荐。*'
+const finalReply = '可以的。我们先把出行安排得轻松一些。\n\n建议一天只安排一到两个主要景点，中间留足休息时间；餐厅优先选交通方便、口味清淡的。\n\n**您从哪座城市出发，打算玩几天？** 告诉我预算和父母的步行习惯，我再帮您细化路线。\n\n*这是隔离预览的示例答复，不是实时旅行推荐。*' + (params.get('long') === '1' ? '\n\n' + Array.from({length:20}, (_, i) => `### 阅读检查 ${i + 1}\n\n这一段用于检查大字、长内容滚动和新答复提示，不应把正在阅读旧消息的人强行拉到底部。`).join('\n\n') : '')
 function stream(task: Task, signal?: AbortSignal | null) {
   const encoder = new TextEncoder()
   let timer: ReturnType<typeof setTimeout>
@@ -45,7 +62,8 @@ window.fetch = async (input, init) => {
   if (path.pathname === '/api/demo/chat/stream' && init?.method === 'POST') {
     const payload = JSON.parse(String(init.body))
     if (payload.presentation !== 'assistant' || payload.mode !== 'collaborate') return json({ detail: 'assistant contract mismatch' }, 422)
-    const task = { id: crypto.randomUUID(), session: payload.session_id, until: Date.now() + (params.get('slow') === '1' ? 120000 : 1800) }
+    const delay = Math.min(10000, Math.max(200, Number(params.get('delay')) || 1800))
+    const task = { id: crypto.randomUUID(), session: payload.session_id, until: Date.now() + (params.get('slow') === '1' ? 120000 : delay) }
     sessionStorage.setItem(fixtureKey, JSON.stringify(task))
     return stream(task, init.signal)
   }

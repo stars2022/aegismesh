@@ -30,3 +30,10 @@ export function selectAvatarMotion(state: AvatarMotionState, clips: AvatarClips,
 export function avatarMotionLoops(motion: AvatarMotion) {
   return motion === 'idle' || motion === 'explain'
 }
+
+export function avatarPlaybackFailure(error: unknown): 'blocked' | 'interrupted' | 'unavailable' {
+  const name = error && typeof error === 'object' && 'name' in error ? error.name : ''
+  if (name === 'NotAllowedError') return 'blocked'
+  if (name === 'AbortError') return 'interrupted'
+  return 'unavailable'
+}

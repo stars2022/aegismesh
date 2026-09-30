@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, statSync } from 'node:fs'
-import { selectAvatarMotion, avatarMotionLoops, avatarClips } from '../src/avatarMotion.ts'
+import { selectAvatarMotion, avatarMotionLoops, avatarClips, avatarPlaybackFailure } from '../src/avatarMotion.ts'
 
 const state = { greeting: false, speaking: false, busy: false, visible: true, reducedMotion: false, saveData: false }
 const clips = { idle: '/idle.mp4', greet: '/greet.mp4', explain: '/explain.mp4', applaud: '/applaud.mp4' }
@@ -41,4 +41,14 @@ test('production clips exist locally and stay within the per-clip download budge
     assert.equal(readFileSync(file).subarray(4, 8).toString(), 'ftyp')
   }
   assert.ok(statSync(new URL('../public/media/digital-human-matte-poster.jpg', import.meta.url)).size < 150_000)
+})
+
+test('autoplay restrictions and interrupted transitions do not blacklist healthy media', () => {
+  assert.equal(avatarPlaybackFailure({name:'NotAllowedError'}), 'blocked')
+  assert.equal(avatarPlaybackFailure({name:'AbortError'}), 'interrupted')
+  assert.equal(avatarPlaybackFailure({name:'NotSupportedError'}), 'unavailable')
+  assert.equal(avatarPlaybackFailure(null), 'unavailable')
+  const avatar = readFileSync(new URL('../src/DigitalHumanAvatar.tsx', import.meta.url), 'utf8')
+  assert.match(avatar, /controls=\{false\}/)
+  assert.doesNotMatch(avatar, /<button|播放动作|暂停动作/)
 })

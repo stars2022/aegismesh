@@ -3,10 +3,10 @@ import assert from 'node:assert/strict'
 import { createAssistantSpeech } from '../src/assistantSpeech.ts'
 
 function fixture() {
-  const spoken = [], states = [], errors = []
+  const spoken = [], states = [], errors = [], idle = []
   const engine = { speak: item => spoken.push(item), cancel: () => {} }
-  const player = createAssistantSpeech(engine, { onSpeaking: value => states.push(value), onError: () => errors.push(true) }, text => ({ text }))
-  return { player, engine, spoken, states, errors, voice: { lang: 'zh-CN', voiceURI: 'local-test' } }
+  const player = createAssistantSpeech(engine, { onSpeaking: value => states.push(value), onError: () => errors.push(true), onIdle: () => idle.push(true) }, text => ({ text }))
+  return { player, engine, spoken, states, errors, idle, voice: { lang: 'zh-CN', voiceURI: 'local-test' } }
 }
 
 test('only one sentence is queued at once and all sentences finish', () => {
@@ -76,4 +76,21 @@ test('empty input and a synchronous engine failure cannot leave speaking stuck',
   player.play(['测试'], voice, 1)
   assert.equal(errors.length, 1)
   assert.equal(states.at(-1), false)
+})
+
+test('reading controls clear on completion, cancellation and failure, not between sentences', () => {
+  const { player, spoken, idle, voice } = fixture()
+  assert.equal(player.play(['一', '二'], voice, .9), true)
+  const started = idle.length
+  spoken[0].onend()
+  assert.equal(idle.length, started)
+  spoken[1].onend()
+  assert.equal(idle.length, started + 1)
+  player.play(['重听'], voice, .9)
+  const beforeStop = idle.length
+  player.stop()
+  assert.equal(idle.length, beforeStop + 1)
+  spoken[2].onend()
+  assert.equal(idle.length, beforeStop + 1)
+  assert.equal(player.play([], voice, .9), false)
 })

@@ -1,5 +1,5 @@
 type Engine = Pick<SpeechSynthesis, 'speak' | 'cancel'>
-type Callbacks = { onSpeaking: (speaking: boolean) => void; onError: () => void }
+type Callbacks = { onSpeaking: (speaking: boolean) => void; onError: () => void; onIdle?: () => void }
 
 /** Retain one utterance at a time; cancelled callbacks cannot affect a newer reply. */
 export function createAssistantSpeech(engine: Engine, callbacks: Callbacks,
@@ -11,6 +11,7 @@ export function createAssistantSpeech(engine: Engine, callbacks: Callbacks,
     active = null
     engine.cancel()
     callbacks.onSpeaking(false)
+    callbacks.onIdle?.()
   }
   const play = (parts: string[], voice: SpeechSynthesisVoice, rate: number) => {
     stop()
@@ -19,7 +20,7 @@ export function createAssistantSpeech(engine: Engine, callbacks: Callbacks,
     let index = 0
     const next = () => {
       if (run !== generation) return
-      if (index >= queue.length) { active = null; callbacks.onSpeaking(false); return }
+      if (index >= queue.length) { active = null; callbacks.onSpeaking(false); callbacks.onIdle?.(); return }
       try {
         const utterance = makeUtterance(queue[index++])
         active = utterance
@@ -33,15 +34,16 @@ export function createAssistantSpeech(engine: Engine, callbacks: Callbacks,
         utterance.onend = () => { if (current()) { active = null; next() } }
         utterance.onerror = event => {
           if (!current()) return
-          generation += 1; active = null; callbacks.onSpeaking(false)
+          generation += 1; active = null; callbacks.onSpeaking(false); callbacks.onIdle?.()
           if (!['canceled', 'interrupted'].includes(event.error)) callbacks.onError()
         }
         engine.speak(utterance)
       } catch {
-        generation += 1; active = null; callbacks.onSpeaking(false); callbacks.onError()
+        generation += 1; active = null; callbacks.onSpeaking(false); callbacks.onIdle?.(); callbacks.onError()
       }
     }
     next()
+    return run === generation && active !== null
   }
   return { play, stop }
 }
