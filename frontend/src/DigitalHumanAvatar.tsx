@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { Pause, Play } from 'lucide-react'
 import { avatarClips, avatarMotionLoops, selectAvatarMotion, type AvatarMotion } from './avatarMotion'
 
 type ConnectionPreferences = EventTarget & { saveData?: boolean }
@@ -14,11 +13,10 @@ export function DigitalHumanAvatar({ speaking, busy, consultationId }: {
   const [visible, setVisible] = useState(false)
   const [reducedMotion, setReducedMotion] = useState(true)
   const [saveData, setSaveData] = useState(false)
-  const [paused, setPaused] = useState(false)
   const [failed, setFailed] = useState<Set<AvatarMotion>>(() => new Set())
   const [playing, setPlaying] = useState<string | null>(null)
   const motion = selectAvatarMotion({ greeting: greeted !== consultationId, speaking, busy,
-    visible, reducedMotion, saveData, paused }, avatarClips, failed)
+    visible, reducedMotion, saveData }, avatarClips, failed)
   const playbackKey = motion === 'greet' ? `${motion}:${consultationId}` : motion
 
   useEffect(() => {
@@ -71,9 +69,5 @@ export function DigitalHumanAvatar({ speaking, busy, consultationId }: {
       onPlaying={() => setPlaying(playbackKey)} onError={fail}
       onEnded={() => { setPlaying(null); if (motion === 'greet') setGreeted(consultationId) }}/>
     }
-    {!reducedMotion && !saveData && (motion || paused) && <button type="button" className="dh-motion-toggle"
-      aria-label={paused ? '播放数字人动作' : '暂停数字人动作'} onClick={() => setPaused(value => !value)}>
-      {paused ? <Play size={14}/> : <Pause size={14}/>} {paused ? '播放动作' : '暂停动作'}
-    </button>}
   </div>
 }

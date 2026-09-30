@@ -173,31 +173,46 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
   }
   return <>
     <main className={`digital-human${largeText ? ' dh-large-text' : ''}`}>
-      <header className="dh-masthead"><div className="dh-emblem"><Network size={34}/></div><h1>智能咨询服务台</h1><strong className="dh-brand">AegisMesh</strong></header>
+      <header className="dh-masthead"><div className="dh-title-plaque"><div className="dh-emblem"><Network size={32}/></div><strong className="dh-brand">AegisMesh</strong><h1>智能咨询服务台</h1></div></header>
       <nav className="dh-navigation" aria-label="服务导航"><span className="dh-current"><MessageCircle size={20}/>在线咨询</span><div><a href="/"><ArrowLeft size={18}/>工作台</a><button onClick={() => setSettingsOpen(true)}><Settings2 size={18}/>设置</button></div></nav>
       <div className="dh-layout">
-        <aside className="dh-service-column">
-          <section className={`dh-host${speaking ? ' is-speaking' : ''}`} aria-label="虚拟助手麦溪">
-            <div className="dh-host-caption"><strong>您好，我是麦溪</strong><span className="dh-voice-level" aria-hidden="true">{[0,1,2,3,4].map(n => <i key={n}/>)}</span></div>
-            <DigitalHumanAvatar speaking={speaking} busy={busy} consultationId={session.id}/>
+        <aside className="dh-service-column" aria-label="咨询服务目录">
+          <section className="dh-guide"><h2>服务目录</h2>{topics.map((topic, index) => <button key={topic.name} disabled={busy} onClick={() => { setInput(topic.question); inputRef.current?.focus(); inputRef.current?.closest('form')?.scrollIntoView({block:'nearest',behavior:'auto'}) }}><span className="dh-topic-icon"><topic.icon size={28}/></span><strong>{topic.name}</strong><ChevronRight size={18}/><span className="dh-topic-index" aria-hidden="true">0{index + 1}</span></button>)}</section>
+          <section className="dh-history"><label htmlFor="dh-history">咨询记录</label><select id="dh-history" disabled={busy} value={session.id} onChange={event => { const next = readAssistantSession(storage.getItem(event.target.value)); if (next) changeSession(next) }}><option value={session.id}>{session.title}</option>{history.filter(r => r.id !== session.id).map(r => <option key={r.id} value={r.id}>{r.title}</option>)}</select></section>
+          <div className="dh-directory-circuit" aria-hidden="true"><Network size={48}/><i/><i/><i/></div>
+        </aside>
+        <section className={`dh-host${speaking ? ' is-speaking' : ''}`} aria-label="虚拟助手麦溪">
+            <div className="dh-host-caption"><h2>数字人服务</h2><span className="dh-voice-level" aria-hidden="true">{[0,1,2,3,4].map(n => <i key={n}/>)}</span></div>
+            <div className="dh-avatar-chamber">
+              <svg className="dh-instrument" viewBox="0 0 480 520" fill="none" aria-hidden="true" focusable="false">
+                <circle cx="240" cy="258" r="218" stroke="currentColor" opacity=".22"/>
+                <circle cx="240" cy="258" r="204" stroke="currentColor" strokeWidth="6" strokeDasharray="2 12" opacity=".42"/>
+                <circle cx="240" cy="258" r="189" stroke="currentColor" strokeDasharray="80 13 6 13" opacity=".22"/>
+                <path d="M27 171V104L68 63H133M347 63H412L453 104V171M27 342V407L68 448H133M347 448H412L453 407V342" stroke="currentColor" strokeWidth="2"/>
+                <path d="M72 95H126M354 95H408M72 416H126M354 416H408M12 258H53M427 258H468" stroke="currentColor" strokeWidth="4" opacity=".55"/>
+                <path d="M166 27H314L326 39H154ZM166 477H314L326 489H154Z" fill="currentColor" opacity=".35"/>
+                <circle cx="27" cy="171" r="4" fill="currentColor"/><circle cx="453" cy="342" r="4" fill="currentColor"/>
+              </svg>
+              <DigitalHumanAvatar speaking={speaking} busy={busy} consultationId={session.id}/>
+              <div className="dh-host-floor" aria-hidden="true"/>
+            </div>
+            <div className="dh-host-name"><strong>麦溪</strong><span>Mesh</span></div>
+            <p className="dh-host-status" role="status"><span aria-hidden="true"/>{speaking ? '正在为您播报' : busy ? '正在整理答复' : '请问有什么可以帮您？'}</p>
             <div className="dh-host-controls">
               <button disabled={!voice} title={voice ? '使用设备本地中文声音' : '当前设备没有可用的本地中文声音'} aria-pressed={voiceOn} onClick={() => { const enabled = !voiceOn; voiceEnabled.current = enabled; setVoiceOn(enabled); if (!enabled) silence(); else speak('您好，我是麦溪，请问有什么可以帮您？') }}>{voiceOn ? <Volume2 size={20}/> : <VolumeX size={20}/>} {voice ? voiceOn ? '关闭播报' : '开启播报' : '语音不可用'}</button>
               {speaking && <button onClick={silence}><Square size={18}/>停止播报</button>}
             </div>
             {voice && <details className="dh-voice-settings"><summary>声音设置</summary>{voices.length > 1 && <label>音色<select aria-label="播报音色" value={voice.voiceURI} onChange={e => { silence(); setVoiceId(e.target.value) }}>{voices.map(v => <option value={v.voiceURI} key={v.voiceURI}>{v.name}</option>)}</select></label>}<label>语速<select aria-label="播报语速" value={voiceRate} onChange={e => { silence(); setVoiceRate(Number(e.target.value)) }}><option value={0.8}>慢速</option><option value={0.9}>舒缓</option><option value={1}>正常</option></select></label></details>}
-          </section>
-          <section className="dh-guide"><h2>常用咨询</h2>{topics.map(topic => <button key={topic.name} disabled={busy} onClick={() => { setInput(topic.question); inputRef.current?.focus(); inputRef.current?.scrollIntoView({block:'nearest',behavior:'auto'}) }}><topic.icon size={23}/><strong>{topic.name}</strong><ChevronRight size={18}/></button>)}</section>
-        </aside>
+        </section>
         <section className="dh-consultation" aria-label="智能咨询对话">
           <header className="dh-chat-heading"><h2>与麦溪对话</h2><div><button aria-pressed={largeText} onClick={() => setLargeText(value => !value)}>大字</button><button onClick={() => changeSession(newAssistantSession())} disabled={busy}><Plus size={18}/>新咨询</button></div></header>
-          <div className="dh-history"><label htmlFor="dh-history">咨询记录</label><select id="dh-history" disabled={busy} value={session.id} onChange={event => { const next = readAssistantSession(storage.getItem(event.target.value)); if (next) changeSession(next) }}><option value={session.id}>{session.title}</option>{history.filter(r => r.id !== session.id).map(r => <option key={r.id} value={r.id}>{r.title}</option>)}</select></div>
           <div ref={messagesRef} className="dh-messages" role="log" aria-label="咨询消息" aria-live="polite" aria-relevant="additions text">
             <div className="dh-message assistant"><span className="dh-message-avatar" aria-hidden="true">麦</span><div className="dh-bubble"><strong className="dh-speaker">麦溪</strong><p>您好，请问有什么可以帮您？</p></div></div>
             {session.messages.map(message => <article key={message.id} className={`dh-message ${message.role}`}><span className="dh-message-avatar" aria-hidden="true">{message.role === 'user' ? '您' : '麦'}</span><div className={`dh-bubble ${message.state || ''}`}><strong className="dh-speaker">{message.role === 'user' ? '您' : '麦溪'}</strong>{message.state === 'pending' ? <p className="dh-waiting" role="status"><span/>正在整理答复，请稍候。</p> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: () => null, a: ({ children, href }) => <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> }}>{message.text}</ReactMarkdown>}{message.role === 'assistant' && !message.state && voice && <button className="dh-read-reply" onClick={() => { voiceEnabled.current = true; setVoiceOn(true); speak(message.text) }}><Volume2 size={18}/>朗读答复</button>}</div></article>)}
           </div>
           <form className="dh-composer" onSubmit={event => { event.preventDefault(); send() }}>{notice && <p role="alert" className="dh-inline-notice">{notice}</p>}<textarea id="dh-input" aria-label="咨询问题" ref={inputRef} rows={3} value={input} onChange={event => setInput(event.target.value)} maxLength={50000} placeholder="请在这里输入您的问题…" onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) { event.preventDefault(); send() } }}/><div className="dh-composer-footer">{busy ? <button type="button" className="dh-send" disabled={stopping} onClick={() => void stop()}><Square size={19}/>{stopping ? '正在停止' : '停止回答'}</button> : <button className="dh-send" disabled={!input.trim()}><Send size={19}/>发送</button>}</div></form>
         </section>
-      </div><footer className="dh-footer">AI 虚拟助手 · 重要信息请核实</footer>
+      </div><footer className="dh-footer"><span>AegisMesh</span><span>AI 虚拟助手 · 重要信息请核实</span></footer>
     </main>
     {settingsOpen && <SettingsDialog settings={settings} onChange={updateSettings} onClose={() => setSettingsOpen(false)} onClear={clearHistory}/>}
   </>
