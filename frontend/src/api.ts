@@ -1,5 +1,6 @@
 import type { Agent, Attachment, ChatResult, DashboardData, Policy, ProbeResult, Provider, Trace, UploadResponse } from './types'
 import type { LogPage, LogRecord, LogStatus } from './logs'
+import type { SearchSettings, SearchSettingsUpdate, SearchTestResult } from './WebSearchSettings'
 
 const jsonHeaders = { 'Content-Type': 'application/json' }
 
@@ -234,7 +235,15 @@ export const api = {
     request<Provider>(`/api/providers/${id}`, { method: 'PATCH', headers: jsonHeaders, body: JSON.stringify(payload) }),
   deleteProvider: (id: string) => request<void>(`/api/providers/${id}`, { method: 'DELETE' }),
   testProvider: (id: string) => request<{ ok: boolean; latency_ms: number }>(`/api/providers/${id}/test`, { method: 'POST' }),
+  searchSettings: () => request<SearchSettings>('/api/admin/web-search'),
+  updateSearchSettings: (payload: SearchSettingsUpdate) => request<SearchSettings>('/api/admin/web-search', {
+    method: 'PUT', headers: jsonHeaders, body: JSON.stringify(payload),
+  }),
+  testSearchSettings: (payload: SearchSettingsUpdate) => request<SearchTestResult>('/api/admin/web-search/test', {
+    method: 'POST', headers: jsonHeaders, body: JSON.stringify(payload),
+  }),
   policy: () => request<Policy>('/api/policy'),
+  chatConfig: () => request<{ interop_compatibility: boolean; default_coordinator_id: string | null }>('/api/chat/config'),
   updatePolicy: (payload: Policy) =>
     request<Policy>('/api/policy', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(payload) }),
   uploadFile: async (file: File) => {
@@ -313,6 +322,10 @@ export const api = {
   getActiveTask: (sessionId: string) =>
     request<{ active: boolean; interrupted?: { invocation_id: string; message: string; partial_result?: string }; task?: { task_id: string; agent_id?: string; status: string; event_count: number; has_result: boolean; error?: string; created_at?: number } }>(
       `/api/demo/tasks/active?session_id=${encodeURIComponent(sessionId)}`,
+    ),
+  sessionActivity: (sessionId: string, before?: string) =>
+    request<{ session_id: string; items: ChatResult[]; next_before: string | null }>(
+      `/api/chat/sessions/${encodeURIComponent(sessionId)}/activity${before ? `?before=${encodeURIComponent(before)}` : ''}`,
     ),
   reconnectTaskStream: (
     taskId: string,

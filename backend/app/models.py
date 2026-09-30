@@ -153,6 +153,19 @@ class ProviderConfig(Base):
     )
 
 
+class WebSearchConfig(Base):
+    __tablename__ = "web_search_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    # Preserve pre-upgrade behavior until an administrator explicitly opts in.
+    backend: Mapped[str] = mapped_column(String(24), default="legacy")
+    deepseek_provider_id: Mapped[str] = mapped_column(String(64), default="")
+    exa_api_key_ciphertext: Mapped[str] = mapped_column(Text, default="")
+    timeout_seconds: Mapped[float] = mapped_column(Float, default=30.0)
+    max_results: Mapped[int] = mapped_column(Integer, default=5)
+    max_queries: Mapped[int] = mapped_column(Integer, default=8)
+
+
 class RoutingPolicy(Base):
     __tablename__ = "routing_policies"
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import os
@@ -11,6 +12,7 @@ import uuid
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -147,6 +149,32 @@ def make_transport_timeout(timeout_seconds: float) -> httpx.Timeout:
     )
 
 
+def provider_request_headers(api_base: str, api_key: str, session_id: str | None) -> dict[str, str]:
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        endpoint = urlsplit(api_base)
+        is_opencode_go = (
+            endpoint.scheme == "https"
+            and endpoint.hostname == "opencode.ai"
+            and endpoint.port in (None, 443)
+            and not endpoint.username
+            and not endpoint.password
+            and endpoint.path.rstrip("/") == "/zen/go/v1"
+        )
+    except ValueError:
+        is_opencode_go = False
+    if is_opencode_go:
+        # The Go gateway requires a stable, opaque session identifier on every
+        # request in one AegisMesh conversation. Do not expose our internal ID.
+        conversation_id = (session_id or "").strip() or uuid.uuid4().hex
+        opaque_session_id = hashlib.sha256(
+            f"aegismesh:{conversation_id}".encode("utf-8")
+        ).hexdigest()[:32]
+        headers["User-Agent"] = "AegisMesh/0.1"
+        headers["x-opencode-session"] = f"aegismesh-{opaque_session_id}"
+    return headers
+
+
 class PartnerTransport(Protocol):
     async def execute(
         self,
@@ -228,7 +256,7 @@ class OpenAICompatibleTransport:
                     body["tools"] = tool_schemas
                     body["tool_choice"] = "auto"
                 endpoint = f"{api_base.rstrip('/')}/chat/completions"
-                headers = {"Authorization": f"Bearer {api_key}"}
+                headers = provider_request_headers(api_base, api_key, session_id)
 
                 message: dict[str, Any] = {}
                 usage: dict[str, Any] = {}

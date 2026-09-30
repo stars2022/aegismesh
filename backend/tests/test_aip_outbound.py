@@ -418,7 +418,7 @@ def test_import_without_streaming_flag_stays_off() -> None:
     assert response.json()["streaming_enabled"] is False
 
 
-def test_external_dispatch_projects_peer_report(db) -> None:
+def test_external_dispatch_never_injects_unreviewed_peer_report(db) -> None:
     invocation = Invocation(id="inv-ext", session_id="sess-ext", query="汇总", status="working")
     db.add(invocation)
     db.commit()
@@ -443,9 +443,9 @@ def test_external_dispatch_projects_peer_report(db) -> None:
         agent,
         "请汇总多智能体路由延迟实验",
         invocation,
-        [{"role": "user", "content": "整段会话历史不应原样外发"}],
+        [{"role": "user", "content": "调用方明确选取的待核实参考片段"}],
         shared,
     )
     joined = "\n".join(item["content"] for item in projected)
-    assert "420" in joined
-    assert "整段会话历史不应原样外发" not in joined
+    assert "420" not in joined
+    assert "调用方明确选取的待核实参考片段" in joined

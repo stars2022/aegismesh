@@ -1,0 +1,20 @@
+.web-search-settings { margin-top: 20px; }
+.web-search-settings summary { display: flex; align-items: center; gap: 10px; padding: 18px; cursor: pointer; list-style: none; }
+.web-search-settings summary::-webkit-details-marker { display: none; }
+.web-search-settings summary strong { font-size: 14px; }
+.web-search-settings summary span { margin-left: auto; color: var(--c85857f); font-size: 12px; }
+.web-search-settings summary > svg:last-child { transition: transform .2s; }
+.web-search-settings details[open] summary > svg:last-child { transform: rotate(180deg); }
+.web-search-settings-body { padding: 0 18px 18px; border-top: 1px solid var(--soft-line); }
+.web-search-settings-body p { color: var(--c85857f); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.web-search-settings fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.web-search-settings .web-search-limits { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap: 12px; }
+.web-search-limits label { display: flex; flex-direction: column; gap: 8px; }
+.web-search-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.web-search-test-result { overflow-wrap: anywhere; font-size: 13px; line-height: 1.8; }
+.web-search-test-result a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 540px) {
+  .web-search-settings .web-search-limits { grid-template-columns: 1fr; }
+  .web-search-settings summary span { max-width: 45%; text-align: right; }
+}
+@media (prefers-reduced-motion: reduce) { .web-search-settings summary > svg:last-child { transition: none; } }

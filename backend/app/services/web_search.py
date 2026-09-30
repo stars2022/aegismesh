@@ -1,20 +1,24 @@
 from __future__ import annotations
 
+import json
+import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
+from sqlalchemy.orm import Session
 
 from ..config import get_settings
-from ..models import ProviderConfig
-from .provider_secrets import resolve_api_key
+from ..models import ProviderConfig, WebSearchConfig
+from .provider_secrets import decrypt_api_key, resolve_api_key
 
 
 WEB_SEARCH_SCHEMA: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": "web_search",
-        "description": "检索互联网中的最新信息，返回可引用的来源。",
+        "description": "检索互联网中的最新信息，返回可引用的来源及剩余检索次数。search_budget.remaining 为 0 时停止检索，依据已有来源汇总，缺少证据的内容如实标注。",
         "parameters": {
             "type": "object",
             "properties": {
@@ -30,8 +34,12 @@ WEB_SEARCH_SCHEMA: dict[str, Any] = {
 def supports_deepseek_search(provider: ProviderConfig | None) -> bool:
     if not provider or not provider.active:
         return False
-    hostname = (urlsplit(provider.base_url).hostname or "").lower()
-    return hostname == "api.deepseek.com"
+    try:
+        parts = urlsplit(provider.base_url)
+        return (parts.scheme == "https" and parts.hostname == "api.deepseek.com"
+                and parts.port in (None, 443) and not parts.username and not parts.password)
+    except ValueError:
+        return False
 
 
 class DeepSeekWebSearch:
@@ -39,9 +47,16 @@ class DeepSeekWebSearch:
         self,
         provider: ProviderConfig,
         cache: dict[str, dict[str, Any]] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+        max_results: int | None = None,
+        model: str | None = None,
     ) -> None:
         self.provider = provider
         self.cache = cache if cache is not None else {}
+        self.timeout_seconds = timeout_seconds
+        self.max_results = max_results
+        self.model = model
 
     async def __call__(self, arguments: dict[str, Any]) -> dict[str, Any]:
         query = arguments.get("query")
@@ -60,8 +75,12 @@ class DeepSeekWebSearch:
 
         settings = get_settings()
         endpoint = f"{settings.deepseek_search_base_url.rstrip('/')}/messages"
+        if not supports_deepseek_search(self.provider) or not supports_deepseek_search(
+            ProviderConfig(base_url=endpoint, active=True)
+        ):
+            raise RuntimeError("DeepSeek 搜索必须使用独立配置的官方 HTTPS 供应商")
         body = {
-            "model": settings.deepseek_search_model,
+            "model": self.model or settings.deepseek_search_model,
             "max_tokens": 4096,
             "messages": [
                 {
@@ -88,12 +107,14 @@ class DeepSeekWebSearch:
         }
         try:
             async with httpx.AsyncClient(
-                timeout=settings.web_search_timeout_seconds,
+                timeout=self.timeout_seconds or settings.web_search_timeout_seconds,
                 follow_redirects=False,
             ) as client:
                 response = await client.post(endpoint, headers=headers, json=body)
             response.raise_for_status()
             payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            raise search_http_error(exc.response.status_code) from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise RuntimeError("联网检索服务调用失败") from exc
 
@@ -124,7 +145,7 @@ class DeepSeekWebSearch:
                 if not isinstance(item, dict) or item.get("type") != "web_search_result":
                     continue
                 url = item.get("url")
-                if not isinstance(url, str) or not url or url in seen:
+                if not _public_url(url) or url in seen:
                     continue
                 seen.add(url)
                 source = {"url": url}
@@ -141,7 +162,7 @@ class DeepSeekWebSearch:
 
         if not found_result_block:
             raise RuntimeError("联网检索未返回结构化结果")
-        limit = settings.web_search_max_results
+        limit = self.max_results or settings.web_search_max_results
         usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
         result = {
             "query": query.strip(),
@@ -155,3 +176,181 @@ class DeepSeekWebSearch:
         }
         self.cache[cache_key] = result
         return result
+
+
+def search_http_error(status: int) -> RuntimeError:
+    message = {
+        401: "搜索密钥无效，请在后台更新",
+        402: "搜索账户额度不足，请检查余额",
+        403: "搜索服务拒绝访问，请检查账户权限",
+        429: "搜索服务限流，请稍后重试或配置独立密钥",
+    }.get(status, f"联网搜索服务返回 HTTP {status}")
+    return RuntimeError(message)
+
+
+def _query(arguments: dict[str, Any]) -> str:
+    value = arguments.get("query")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("query 不能为空")
+    if len(value) > 1000:
+        raise ValueError("query 过长")
+    return value.strip()
+
+
+def _public_url(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parts = urlsplit(value)
+        return bool(parts.scheme in ("http", "https") and parts.hostname
+                    and not parts.username and not parts.password)
+    except ValueError:
+        return False
+
+
+def parse_exa_response(body: str) -> list[dict[str, str]]:
+    """Accept MCP JSON or SSE; never promote unstructured model prose to sources."""
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        payload = None
+        for frame in re.split(r"\r?\n\r?\n", body):
+            data = "\n".join(line[5:].lstrip() for line in frame.splitlines() if line.startswith("data:"))
+            if not data:
+                continue
+            try:
+                candidate = json.loads(data)
+            except ValueError:
+                continue
+            if isinstance(candidate, dict) and candidate.get("id") == 1:
+                payload = candidate
+                break
+    if not isinstance(payload, dict) or payload.get("error"):
+        raise RuntimeError("Exa 搜索未返回有效 MCP 结果")
+    result = payload.get("result")
+    if not isinstance(result, dict) or result.get("isError"):
+        raise RuntimeError("Exa 搜索失败，请检查额度、密钥或稍后重试")
+    structured = result.get("structuredContent")
+    items = structured.get("results") if isinstance(structured, dict) else None
+    if isinstance(items, list):
+        sources = [
+            {out_key: item[in_key] for out_key, in_key in (
+                ("url", "url"), ("title", "title"), ("published_at", "publishedDate"), ("snippet", "text")
+            ) if isinstance(item.get(in_key), str)}
+            for item in items if isinstance(item, dict) and _public_url(item.get("url"))
+        ]
+        if items and not sources:
+            raise RuntimeError("Exa 搜索未返回可引用来源")
+        for source in sources:
+            for field in ("snippet", "title"):
+                if field in source:
+                    source[field] = source[field][:3000]
+        return list({source["url"]: source for source in sources}.values())
+    blocks = result.get("content")
+    text = "\n".join(block["text"] for block in blocks
+                     if isinstance(block, dict) and isinstance(block.get("text"), str)) if isinstance(blocks, list) else ""
+    sources = []
+    for entry in re.split(r"(?m)^Title: *", text)[1:]:
+        lines = entry.splitlines()
+        url = next((line[4:].strip() for line in lines if line.startswith("URL:")), "")
+        if not _public_url(url) or any(source["url"] == url for source in sources):
+            continue
+        source = {"title": lines[0].strip(), "url": url}
+        published = next((line[10:].strip() for line in lines if line.startswith("Published:")), "")
+        if published:
+            source["published_at"] = published
+        source["snippet"] = "\n".join(line for line in lines[1:]
+                                      if not line.startswith(("URL:", "Published:", "Author:"))).strip()[:3000]
+        sources.append(source)
+    if not sources:
+        raise RuntimeError("Exa 搜索未返回可引用来源，不能将普通文本当作检索结果")
+    return sources
+
+
+class ExaWebSearch:
+    def __init__(self, config: WebSearchConfig) -> None:
+        self.config = config
+
+    async def __call__(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        query = _query(arguments)
+        headers = {"Accept": "application/json, text/event-stream", "User-Agent": "AegisMesh/0.1"}
+        if self.config.exa_api_key_ciphertext:
+            headers["x-api-key"] = decrypt_api_key(self.config.exa_api_key_ciphertext)
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "web_search_exa", "arguments": {
+                "query": query, "type": "auto", "numResults": self.config.max_results,
+                "livecrawl": "fallback", "contextMaxCharacters": 12000,
+            },
+        }}
+        try:
+            async with httpx.AsyncClient(timeout=self.config.timeout_seconds, follow_redirects=False) as client:
+                async with client.stream("POST", "https://mcp.exa.ai/mcp", headers=headers, json=payload) as response:
+                    response.raise_for_status()
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        body.extend(chunk)
+                        if len(body) > 512_000:
+                            raise RuntimeError("Exa 搜索结果过大，请缩小查询范围")
+            sources = parse_exa_response(body.decode("utf-8"))
+        except httpx.HTTPStatusError as exc:
+            raise search_http_error(exc.response.status_code) from exc
+        except (httpx.HTTPError, UnicodeError) as exc:
+            raise RuntimeError("Exa 搜索连接失败或超时") from exc
+        return {"query": query, "sources": sources[:self.config.max_results],
+                "truncated": len(sources) > self.config.max_results,
+                "_usage": {"llm_calls": 0, "prompt_tokens": 0, "completion_tokens": 0}}
+
+
+SearchHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+def configured_search(
+    db: Session, inference_provider: ProviderConfig | None,
+    cache: dict[str, dict[str, Any]], *, config: WebSearchConfig | None = None,
+    budget_scope: str = "default",
+) -> SearchHandler | None:
+    config = config or db.get(WebSearchConfig, 1)
+    if config is None or config.backend == "legacy":
+        return DeepSeekWebSearch(inference_provider, cache) if supports_deepseek_search(inference_provider) else None
+    if config.backend == "disabled":
+        return None
+    if config.backend == "exa":
+        handler: SearchHandler = ExaWebSearch(config)
+    elif config.backend == "deepseek":
+        provider = db.get(ProviderConfig, config.deepseek_provider_id)
+        if not supports_deepseek_search(provider):
+            async def unavailable(_: dict[str, Any]) -> dict[str, Any]:
+                raise RuntimeError("独立 DeepSeek 搜索供应商不可用，请检查后台配置")
+            return unavailable
+        handler = DeepSeekWebSearch(
+            provider,
+            timeout_seconds=config.timeout_seconds,
+            max_results=config.max_results,
+            model=provider.default_model,
+        )
+    else:
+        raise RuntimeError("搜索服务配置无效")
+
+    async def search(arguments: dict[str, Any]) -> dict[str, Any]:
+        query = _query(arguments)
+        budget = cache.setdefault(f"search:budget:{budget_scope}", {"used": 0})
+        def budget_status() -> dict[str, int]:
+            return {"used": budget["used"], "limit": config.max_queries,
+                    "remaining": max(0, config.max_queries - budget["used"])}
+        key = f"search:{config.backend}:{config.deepseek_provider_id}:{config.max_results}:{' '.join(query.casefold().split())}"
+        if key in cache:
+            return {**cache[key], "cached": True,
+                    "search_budget": budget_status(),
+                    "_usage": {"llm_calls": 0, "prompt_tokens": 0, "completion_tokens": 0}}
+        if budget["used"] >= config.max_queries:
+            return {"status": "budget_exhausted", "query": query, "sources": [],
+                    "message": "当前智能体已用完检索次数，未发起新搜索。请根据已有来源作答，将缺少证据的内容标注为未核实。",
+                    "search_budget": budget_status(),
+                    "_usage": {"llm_calls": 0, "prompt_tokens": 0, "completion_tokens": 0}}
+        budget["used"] += 1
+        result = await handler({"query": query})
+        result["search_backend"] = config.backend
+        cache[key] = result
+        return {**result, "search_budget": budget_status()}
+
+    return search

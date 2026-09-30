@@ -227,9 +227,9 @@ async def test_shared_context_read_tool_and_isolation(db: Session) -> None:
         summary_res = await summary_res
     assert summary_res["ok"] is True
     summary = summary_res["result"]
-    assert "[REDACTED_SECRET]" in summary["overall_objective"]
-    assert summary["total_completed_reports"] == 1
-    assert summary["peer_completed_reports"][0]["agent_id"] == "partner-b"
+    assert "sk-123456" not in str(summary)
+    assert "这是同伴B的已完成输出" not in str(summary)
+    assert "审核" in summary["notice"]
 
 
 def test_anti_recursion_and_lineage_validation() -> None:
@@ -572,4 +572,3 @@ async def test_orchestrator_call_chain_loop_rejection(db: Session) -> None:
     res_depth_exceeded = await dispatch_max_depth({"task": "超限派发", "agent": "partner-a"})
     assert res_depth_exceeded["ok"] is False
     assert "超出最大调用链深度限制" in res_depth_exceeded["error"]
-

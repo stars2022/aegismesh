@@ -18,13 +18,16 @@ from ..models import (
     RouteAttempt,
     RoutingPolicy,
     TraceEvent,
+    WebSearchConfig,
 )
+from ..schemas import WebSearchSettings
 
 
 DATA_MODELS = [
     Agent,
     ProviderConfig,
     RoutingPolicy,
+    WebSearchConfig,
     Invocation,
     InvocationFeedback,
     RouteAttempt,
@@ -48,8 +51,8 @@ def export_database(db: Session) -> dict[str, Any]:
                 )
                 for column in mapper.columns
                 if not (
-                    model is ProviderConfig
-                    and column.key in {"api_key_ciphertext", "api_key_env"}
+                    (model is ProviderConfig and column.key in {"api_key_ciphertext", "api_key_env"})
+                    or (model is WebSearchConfig and column.key == "exa_api_key_ciphertext")
                 )
             }
             for row in rows
@@ -86,6 +89,8 @@ def import_database(db: Session, payload: dict[str, Any], mode: str) -> dict[str
                 for key, value in raw.items():
                     if model is ProviderConfig and key in {"api_key_ciphertext", "api_key_env"}:
                         continue
+                    if model is WebSearchConfig and key == "exa_api_key_ciphertext":
+                        continue
                     column = columns.get(key)
                     if column is None:
                         continue
@@ -94,7 +99,19 @@ def import_database(db: Session, payload: dict[str, Any], mode: str) -> dict[str
                             raise ValueError(f"{table_name}.{key} 的时间格式无效")
                         value = datetime.fromisoformat(value)
                     values[key] = value
-                if model is ProviderConfig:
+                if model is WebSearchConfig:
+                    if values.get("id") != 1:
+                        raise ValueError("web_search_configs.id 必须为 1")
+                    validated = WebSearchSettings.model_validate(values).model_dump()
+                    # Imported files cannot enable external traffic or install credentials.
+                    validated["backend"] = "disabled"
+                    existing_search = db.get(WebSearchConfig, 1)
+                    if existing_search is None:
+                        db.add(WebSearchConfig(id=1, **validated, exa_api_key_ciphertext=""))
+                    else:
+                        for key, value in validated.items():
+                            setattr(existing_search, key, value)
+                elif model is ProviderConfig:
                     required = {"id", "name", "kind", "base_url", "default_model"}
                     if not required.issubset(values):
                         raise ValueError("provider_configs 缺少必需字段")

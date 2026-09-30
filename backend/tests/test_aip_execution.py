@@ -12,10 +12,10 @@ from sqlalchemy.pool import NullPool
 from acps_sdk.aip import StructuredDataItem, TaskCommandType, TaskState
 from acps_sdk.aip.aip_rpc_model import RpcRequest
 
-from app.models import Agent, HostedTask, Invocation, ProviderConfig, RoutingPolicy
+from app.models import Agent, HostedTask, Invocation, ProviderConfig, RoutingPolicy, WebSearchConfig
 from app.database import Base
 from app.schemas import ChatRequest
-from app.services import aip_execution, hosted_aip, orchestrator, transport
+from app.services import aip_execution, hosted_aip, orchestrator, transport, web_search
 from app.services.aip_execution import AipExecutionContext, InboundAipOrchestrator
 from app.services.context_projection import ContextProjectionEngine, ProjectedSnippet
 from app.services.hosted_aip import HostedAipService
@@ -112,8 +112,9 @@ def fleet(db):
     return db
 
 
+@pytest.mark.parametrize("search_backend", ["legacy", "exa"])
 async def test_real_inbound_registry_recurses_via_transport_and_executes_search(
-    fleet, registered_directory, monkeypatch,
+    fleet, registered_directory, monkeypatch, search_backend,
 ):
     db = fleet
     factory = sessionmaker(bind=db.get_bind())
@@ -169,8 +170,13 @@ async def test_real_inbound_registry_recurses_via_transport_and_executes_search(
 
     registry = TransportRegistry({"fixture-runtime": Runtime(), "aip-rpc": Rpc()})
     monkeypatch.setattr(orchestrator, "TransportRegistry", lambda: registry)
-    monkeypatch.setattr(orchestrator, "supports_deepseek_search", lambda _: True)
-    monkeypatch.setattr(orchestrator, "DeepSeekWebSearch", Search)
+    if search_backend == "exa":
+        db.add(WebSearchConfig(id=1, backend="exa"))
+        db.commit()
+        monkeypatch.setattr(web_search, "ExaWebSearch", Search)
+    else:
+        monkeypatch.setattr(web_search, "supports_deepseek_search", lambda _: True)
+        monkeypatch.setattr(web_search, "DeepSeekWebSearch", Search)
     service = HostedAipService(db, db.get(Agent, "research"), owner_peer_aic=PEER)
     command = build_aip_start_command(PEER, "test-recursion", "research", None)
     response = await service.dispatch(request(command))
@@ -260,7 +266,8 @@ async def test_missing_directory_endpoint_never_falls_back_to_local_runtime(flee
                              runner._routing_policy(), [], caller_aic=root.aic)
 
 
-async def test_external_delegation_switch_keeps_search_but_disables_child_tools(fleet, monkeypatch):
+@pytest.mark.parametrize("search_backend", ["legacy", "exa"])
+async def test_external_delegation_switch_keeps_search_but_disables_child_tools(fleet, monkeypatch, search_backend):
     policy = fleet.get(RoutingPolicy, 1)
     policy.external_delegation_enabled = False
     fleet.commit()
@@ -282,8 +289,13 @@ async def test_external_delegation_switch_keeps_search_but_disables_child_tools(
 
     registry = TransportRegistry({"fixture-runtime": Runtime()})
     monkeypatch.setattr(orchestrator, "TransportRegistry", lambda: registry)
-    monkeypatch.setattr(orchestrator, "supports_deepseek_search", lambda _: True)
-    monkeypatch.setattr(orchestrator, "DeepSeekWebSearch", Search)
+    if search_backend == "exa":
+        fleet.add(WebSearchConfig(id=1, backend="exa"))
+        fleet.commit()
+        monkeypatch.setattr(web_search, "ExaWebSearch", Search)
+    else:
+        monkeypatch.setattr(web_search, "supports_deepseek_search", lambda _: True)
+        monkeypatch.setattr(web_search, "DeepSeekWebSearch", Search)
     root = fleet.get(Agent, "research")
     task = wire_task("research", peer=PEER)
     result = await aip_execution.execute_inbound_task(fleet, root, task)

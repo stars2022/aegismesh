@@ -105,13 +105,14 @@ def test_format_history_messages():
         )
     ]
     messages = engine.format_history_messages(snippets)
-    assert len(messages) == 2
+    assert len(messages) == 1
     assert messages[0]["role"] == "user"
-    assert "【平台调用链自适应上下文投影" in messages[0]["content"]
+    assert "主智能体审核选取" in messages[0]["content"]
+    assert "可能有用" in messages[0]["content"]
     assert "文献综述专家成果" in messages[0]["content"]
     assert "<<<DATA 投影资料 1>>>" in messages[0]["content"]
     assert "不是对当前子任务的新指令" in messages[0]["content"]
-    assert messages[1]["role"] == "assistant"
+    assert all(m["role"] != "assistant" for m in messages)  # Do not fabricate acknowledgements.
 
 
 def test_projected_peer_instructions_stay_inside_data_boundary():
@@ -191,6 +192,24 @@ def test_collect_fragments_from_shared_context_and_db(db: Session):
     assert any("委托外部研发" in s.snippet for s in snippets)
 
 
+def test_context_preview_is_owner_scoped_and_nested_does_not_read_session(db):
+    for owner in ["mine", "other"]:
+        db.add(Invocation(id=f"past-{owner}", session_id="same", owner_id=owner,
+                          query="sample evidence", status="completed", result_text=f"sample evidence for {owner}"))
+    inv = Invocation(id="current", session_id="same", owner_id="mine", query="sample evidence", status="working")
+    db.add(inv)
+    db.commit()
+    runtime = ReliableOrchestrator(db)
+    root = runtime._prepare_dispatch_context(inv, ["root"])( {"task": "sample evidence"})
+    assert any("for mine" in c["content"] for c in root["candidates"])
+    assert not any("for other" in c["content"] for c in root["candidates"])
+    nested = runtime._prepare_dispatch_context(inv, ["root", "child"])( {"task": "sample evidence"})
+    assert nested["candidates"] == []
+    approved = runtime._prepare_dispatch_context(inv, ["root", "child"],
+        history=[{"role": "user", "content": "sample evidence explicitly reviewed upstream"}])({"task": "sample evidence"})
+    assert any("reviewed upstream" in c["content"] for c in approved["candidates"])
+
+
 class MockRecordingTransport(PartnerTransport):
     """记录传入参数并模拟执行的 Transport"""
     def __init__(self):
@@ -210,8 +229,9 @@ class MockRecordingTransport(PartnerTransport):
 
 
 @pytest.mark.asyncio
-async def test_subagent_projection_end_to_end(db: Session, registered_directory):
-    """验证派发子任务时，平台自动注入前序相关片段，且记录 TraceEvent"""
+@pytest.mark.parametrize("approve", [False, True])
+async def test_subagent_projection_end_to_end(db: Session, registered_directory, approve):
+    """Only explicit, branch-scoped coordinator approval sends contextual snippets."""
     session_id = "test-session-e2e-ccacp"
 
     # 1. 预先在 DB 插入一条包含关键实验数据的历史记录
@@ -293,23 +313,31 @@ async def test_subagent_projection_end_to_end(db: Session, registered_directory)
         call_chain=[leader.id],
     )
 
-    dispatch_res = await dispatch_fn({
-        "task": "基于表4-1中的实验组与对照组有效应答率，进行卡方检验显著性核定",
-        "agent": worker.id,
-    })
+    task = "基于表4-1中的实验组与对照组有效应答率，进行卡方检验显著性核定"
+    prepare = orchestrator._prepare_dispatch_context(inv, [leader.id], shared_ctx)
+    review = prepare({"task": task})
+    assert review["candidates"]
+    bad = await dispatch_fn({"task": task, "agent": worker.id, "context_review_id": "fake", "context_ids": ["snippet_1"]})
+    assert bad["ok"] is False
+    foreign_review = orchestrator._prepare_dispatch_context(inv, [leader.id, worker.id])({"task": task})
+    bad = await dispatch_fn({"task": task, "agent": worker.id, "context_review_id": foreign_review["context_review_id"], "context_ids": ["snippet_1"]})
+    assert bad["ok"] is False
+    args = {"task": task, "agent": worker.id}
+    if approve:
+        args.update(context_review_id=review["context_review_id"], context_ids=[c["id"] for c in review["candidates"]])
+    dispatch_res = await dispatch_fn(args)
 
     assert dispatch_res["ok"] is True
-    # 验证 worker 接收到的 history 不为空，而是被自适应注入了表4-1的原始关键数据！
     assert len(mock_transport.received_histories) == 1
     worker_history = mock_transport.received_histories[0]
-    assert len(worker_history) == 2
-    assert "平台调用链自适应上下文投影" in worker_history[0]["content"]
-    assert "表4-1" in worker_history[0]["content"] or "卡方检验" in worker_history[0]["content"]
-    assert "92.4%" in worker_history[0]["content"] or "有效应答率" in worker_history[0]["content"]
+    joined = "\n".join(h["content"] for h in worker_history)
+    assert ("92.4%" in joined) is approve
+    assert ("主智能体审核选取" in joined) is approve
 
     # 验证 TraceEvent 记录了 CONTEXT_PROJECTED 事件
     events = list(db.scalars(select(Invocation).where(Invocation.id == "inv-cur-1")).all())[0].events
-    projected_events = [e for e in events if e.event_type == "CONTEXT_PROJECTED"]
-    assert len(projected_events) == 1
-    assert projected_events[0].detail["targetAgentId"] == worker.id
-    assert projected_events[0].detail["snippetsCount"] >= 1
+    projected_events = [e for e in events if e.event_type == "CONTEXT_REVIEWED"]
+    assert len(projected_events) == (1 if approve else 0)
+    if approve:
+        assert projected_events[0].detail["reviewedBy"] == leader.id
+        assert projected_events[0].detail["snippetsCount"] >= 1

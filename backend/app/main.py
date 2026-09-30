@@ -54,6 +54,7 @@ from .models import (
     RouteAttempt,
     RoutingPolicy,
     TraceEvent,
+    WebSearchConfig,
 )
 from .schemas import (
     AgentCreate,
@@ -83,9 +84,12 @@ from .schemas import (
     ProviderUpdate,
     TraceRead,
     UploadResponse,
+    WebSearchRead,
+    WebSearchUpdate,
 )
 from .seed import seed_database
 from .services.tools import ToolRegistry
+from .services.web_search import configured_search, supports_deepseek_search
 from .services.transport import TransportRegistry
 from .services.orchestrator import NoEligibleAgentError, ReliableOrchestrator
 from .services.runtime_recovery import INTERRUPTED_MESSAGE, recover_interrupted_runtime
@@ -741,6 +745,14 @@ def list_agents(db: DbSession) -> list[AgentRead]:
     return [agent_to_read(agent) for agent in db.scalars(select(Agent).order_by(Agent.name)).all()]
 
 
+@app.get("/api/chat/config", dependencies=[Depends(require_demo_or_admin)], tags=["chat"])
+def chat_runtime_config(db: DbSession) -> dict:
+    orchestrator = ReliableOrchestrator(db)
+    leader = orchestrator._usable_leader()
+    return {"interop_compatibility": bool(orchestrator._routing_policy().interop_compatibility),
+            "default_coordinator_id": leader.id if leader else None}
+
+
 @app.post("/api/agents", response_model=AgentRead, status_code=201, dependencies=[Depends(require_admin)], tags=["agents"])
 def create_agent(payload: AgentCreate, db: DbSession) -> AgentRead:
     if db.get(Agent, payload.id):
@@ -1031,6 +1043,9 @@ def delete_provider(provider_id: str, db: DbSession) -> Response:
     referenced = db.scalar(select(func.count()).select_from(Agent).where(Agent.model_provider == provider_id)) or 0
     if referenced:
         raise HTTPException(status_code=409, detail="供应商仍被智能体使用")
+    search = db.get(WebSearchConfig, 1)
+    if search and search.backend == "deepseek" and search.deepseek_provider_id == provider_id:
+        raise HTTPException(status_code=409, detail="供应商仍被联网搜索使用，请先更改搜索设置")
     db.delete(provider)
     db.commit()
     return Response(status_code=204)
@@ -1060,6 +1075,65 @@ async def test_provider(provider_id: str, db: DbSession) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=502, detail="连接测试失败") from exc
     return {"ok": True, "latency_ms": latency}
+
+
+def search_config_read(config: WebSearchConfig | None) -> WebSearchRead:
+    if config is None:
+        return WebSearchRead()
+    return WebSearchRead(**WebSearchRead.model_validate(config).model_dump(exclude={"exa_key_configured"}),
+                         exa_key_configured=bool(config.exa_api_key_ciphertext))
+
+
+def prepare_search_config(payload: WebSearchUpdate, db: Session) -> WebSearchConfig:
+    old = db.get(WebSearchConfig, 1)
+    config = WebSearchConfig(
+        id=1,
+        **payload.model_dump(exclude={"exa_api_key", "clear_exa_api_key"}),
+        exa_api_key_ciphertext=old.exa_api_key_ciphertext if old else "",
+    )
+    if payload.exa_api_key and payload.clear_exa_api_key:
+        raise HTTPException(status_code=422, detail="不能同时更新和清除 Exa 密钥")
+    try:
+        if payload.exa_api_key and payload.exa_api_key.strip():
+            config.exa_api_key_ciphertext = encrypt_api_key(payload.exa_api_key.strip())
+        elif payload.clear_exa_api_key:
+            config.exa_api_key_ciphertext = ""
+        if config.backend == "deepseek":
+            provider = db.get(ProviderConfig, config.deepseek_provider_id)
+            if not supports_deepseek_search(provider):
+                raise HTTPException(status_code=422, detail="请选择启用且地址为 api.deepseek.com 的独立供应商")
+            resolve_api_key(provider)
+    except ProviderSecretError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return config
+
+
+@app.get("/api/admin/web-search", response_model=WebSearchRead, dependencies=[Depends(require_admin)], tags=["search"])
+def read_search_settings(db: DbSession) -> WebSearchRead:
+    return search_config_read(db.get(WebSearchConfig, 1))
+
+
+@app.put("/api/admin/web-search", response_model=WebSearchRead, dependencies=[Depends(require_admin)], tags=["search"])
+def update_search_settings(payload: WebSearchUpdate, db: DbSession) -> WebSearchRead:
+    config = db.merge(prepare_search_config(payload, db))
+    db.commit()
+    return search_config_read(config)
+
+
+@app.post("/api/admin/web-search/test", dependencies=[Depends(require_admin)], tags=["search"])
+async def test_search_settings(payload: WebSearchUpdate, db: DbSession) -> dict:
+    # Test the draft without saving or changing the active configuration.
+    if payload.backend not in ("exa", "deepseek"):
+        raise HTTPException(status_code=422, detail="请先选择 Exa 或 DeepSeek 进行真实检索测试")
+    config = prepare_search_config(payload, db)
+    handler = configured_search(db, None, {}, config=config)
+    started = time.monotonic()
+    try:
+        result = await handler({"query": "OpenCode web search official documentation"})
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True, "latency_ms": round((time.monotonic() - started) * 1000),
+            "backend": payload.backend, "sources": result["sources"], "usage": result.get("_usage", {})}
 
 
 @app.get("/api/policy", response_model=PolicyRead, dependencies=[Depends(require_admin)], tags=["routing"])
@@ -1185,6 +1259,32 @@ def extract_canvas_user_id(request: Request) -> str:
         return f"demo_{hashlib.sha256(cookie.encode()).hexdigest()[:24]}"
     ip = request.client.host if request.client else "127.0.0.1"
     return f"anon_{hashlib.sha256(ip.encode()).hexdigest()[:24]}"
+
+
+@app.get("/api/chat/sessions/{session_id}/activity", dependencies=[Depends(require_demo_or_admin_or_api_key)], tags=["runtime"])
+def session_activity(session_id: str, request: Request, db: DbSession,
+                     before: str | None = None, limit: int = Query(default=30, ge=1, le=100)) -> dict:
+    from .services.session_activity import activity_data
+    # Public demo access must not make an arbitrary API header an identity.
+    if request.headers.get("X-API-Key"):
+        require_api_key(request, db, x_api_key=request.headers["X-API-Key"])
+    # Session IDs are correlation keys, never authorization. An admin looking
+    # at the chat UI also sees only records owned by this authenticated client.
+    owner = extract_user_id(request)
+    query = select(Invocation).where(Invocation.session_id == session_id, Invocation.owner_id == owner)
+    if before:
+        cursor = db.get(Invocation, before)
+        if not cursor or cursor.session_id != session_id or cursor.owner_id != owner:
+            raise HTTPException(status_code=404, detail="会话记录不存在")
+        query = query.where((Invocation.created_at < cursor.created_at) |
+                            ((Invocation.created_at == cursor.created_at) & (Invocation.id < cursor.id)))
+    rows = list(db.scalars(query.order_by(Invocation.created_at.desc(), Invocation.id.desc()).limit(limit + 1)))
+    items = []
+    for inv in rows[:limit]:
+        result = _chat_response(inv, [], db.get(Agent, inv.selected_agent_id) if inv.selected_agent_id else None, db)
+        result.result_data = activity_data(db, inv)
+        items.append(result.model_dump(mode="json"))
+    return {"session_id": session_id, "items": items, "next_before": rows[limit - 1].id if len(rows) > limit else None}
 
 
 @app.post(

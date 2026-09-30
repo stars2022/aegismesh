@@ -299,6 +299,25 @@ class DemoLogin(BaseModel):
     password: str = Field(min_length=8, max_length=256)
 
 
+class WebSearchSettings(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    backend: Literal["legacy", "disabled", "exa", "deepseek"] = "legacy"
+    deepseek_provider_id: str = Field(default="", max_length=64)
+    timeout_seconds: float = Field(default=30, ge=5, le=120)
+    max_results: int = Field(default=5, ge=1, le=10)
+    max_queries: int = Field(default=8, ge=1, le=20)
+
+
+class WebSearchRead(WebSearchSettings):
+    exa_key_configured: bool = False
+
+
+class WebSearchUpdate(WebSearchSettings):
+    exa_api_key: str | None = Field(default=None, max_length=512)
+    clear_exa_api_key: bool = False
+
+
 class ProviderCreate(BaseModel):
     id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
     name: str = Field(min_length=1, max_length=120)

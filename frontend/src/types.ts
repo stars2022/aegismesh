@@ -110,8 +110,18 @@ export type Candidate = {
   weights?: Record<string, number>
 }
 
+export type ToolActivity = {
+  id?: string
+  name: string
+  arguments?: Record<string, unknown>
+  status?: string
+  output_preview?: string
+}
+
 export type SubagentCollaboration = {
   task_id?: string
+  session_id?: string
+  invocation_id?: string
   agent_id: string
   agent_name: string
   caller_id?: string
@@ -122,7 +132,7 @@ export type SubagentCollaboration = {
   current_tool?: string
   tool_preview?: string
   latency_ms?: number
-  tools?: { name: string; arguments?: Record<string, unknown>; output_preview?: string }[]
+  tools?: ToolActivity[]
   messages?: {
     role: string
     content?: string
@@ -214,6 +224,7 @@ export type ChatResult = {
   usage: { llm_calls: number; prompt_tokens: number; completion_tokens: number }
   result_data: {
     mode?: string
+    runtime_tools?: ToolActivity[]
     tool_executions?: { name: string; arguments: Record<string, unknown>; output: unknown }[]
     contributions?: { agent_id: string; agent_name: string; text: string; data: Record<string, unknown> }[]
     collaborations?: SubagentCollaboration[]

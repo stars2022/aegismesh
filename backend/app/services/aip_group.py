@@ -118,12 +118,17 @@ class MqGroupSession:
             leader._ensure_inbox = shared_inbox
             outgoing_groups.setdefault(self._leader_aic, []).append(leader)
         try:
-            self._session = await leader.create_group_session(
-                self._session_id, [ACSObject(aic=p.aic) for p in self._partners])
+            stage = "连接与建群"
+            self._session = await asyncio.wait_for(leader.create_group_session(
+                self._session_id, [ACSObject(aic=p.aic) for p in self._partners]), 30)
             self.group_id = self._session.group_id
             for p in self._partners:
-                await leader.invite_partner(self._session_id, ACSObject(aic=p.aic),
-                                            partner_rpc_url=p.rpc_url or None, partner_acs_data=p.acs)
+                stage = f"等待 {p.name} 入群"
+                await asyncio.wait_for(leader.invite_partner(self._session_id, ACSObject(aic=p.aic),
+                                            partner_rpc_url=p.rpc_url or None, partner_acs_data=p.acs), 45)
+        except TimeoutError as exc:
+            await self.close()
+            raise AipGroupBridgeError(f"官方 MQ {stage}超时，尚未发送子任务，未回退本地直调") from exc
         except BaseException:
             await self.close()
             raise

@@ -55,7 +55,8 @@ async def test_direct_registered_partner_also_uses_mq_in_compatibility(db, monke
     from app.services import orchestrator
     policy, agent, inv = setup(db, mode=True)
     agent.registration_status = "approved"; db.commit()
-    monkeypatch.setattr(orchestrator, "get_settings", lambda: SimpleNamespace(leader_aic="leader-aic"))
+    config = orchestrator.get_settings().model_copy(update={"leader_aic": "leader-aic"})
+    monkeypatch.setattr(orchestrator, "get_settings", lambda: config)
     execute=AsyncMock(return_value=PartnerResult(text="ok", data={}))
     async def delivered(caller, target, query, session, timeout, callback):
         assert caller == "leader-aic"

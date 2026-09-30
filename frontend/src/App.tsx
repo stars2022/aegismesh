@@ -100,7 +100,9 @@ import {
   Switch,
 } from "./components";
 import { AgentPicker } from "./AgentPicker";
+import { WebSearchSettings } from "./WebSearchSettings";
 import { defaultCoordinatorId } from "./agentMenu";
+import { collaborationKey, mergeCollaborations, mergeSessionResults, mergeTools } from "./collaborationActivity";
 import {
   COMPRESSION_STRATEGIES,
   CONTEXT_WINDOWS,
@@ -124,6 +126,7 @@ import type {
   SharedCollaborationContextData,
   Skill,
   SubagentCollaboration,
+  ToolActivity,
   Trace,
 } from "./types";
 import {
@@ -3151,24 +3154,36 @@ function Providers({
   const [editing, setEditing] = useState<Provider | null>(null);
   const [open, setOpen] = useState(false);
   const [testing, setTesting] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<{
+    message: string;
+    type: "success" | "error";
+  } | null>(null);
   const remove = async (provider: Provider) => {
     if (!window.confirm(`删除供应商“${provider.name}”？`)) return;
     try {
       await api.deleteProvider(provider.id);
       await onChanged();
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "删除失败");
+      setNotice({
+        type: "error",
+        message: reason instanceof Error ? reason.message : "删除失败",
+      });
     }
   };
   const test = async (provider: Provider) => {
     setTesting(provider.id);
-    setNotice("");
+    setNotice(null);
     try {
       const result = await api.testProvider(provider.id);
-      setNotice(`${provider.name} 连接正常 · ${formatMs(result.latency_ms)}`);
+      setNotice({
+        type: "success",
+        message: `${provider.name} 连接正常 · ${formatMs(result.latency_ms)}`,
+      });
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "连接失败");
+      setNotice({
+        type: "error",
+        message: reason instanceof Error ? reason.message : "连接失败",
+      });
     } finally {
       setTesting("");
     }
@@ -3192,9 +3207,9 @@ function Providers({
         </button>
       </div>
       {notice && (
-        <div className="connection-banner">
-          <span>{notice}</span>
-          <button onClick={() => setNotice("")}>关闭</button>
+        <div className={`connection-banner ${notice.type}`}>
+          <span>{notice.message}</span>
+          <button onClick={() => setNotice(null)}>关闭</button>
         </div>
       )}
       <div className="provider-grid">
@@ -3283,6 +3298,7 @@ function Providers({
           }}
         />
       )}
+      <WebSearchSettings providers={providers} />
     </>
   );
 }
@@ -4507,7 +4523,7 @@ type LiveSubagentState = {
   started_at?: number;
   completed_at?: number;
   latency_ms?: number;
-  tools?: Array<{ name: string; arguments?: any; output_preview?: string }>;
+  tools?: ToolActivity[];
   result?: string;
   phase_name?: string;
   tokens_per_second?: number;
@@ -4572,6 +4588,7 @@ function handleSubagentEvent(
     setLiveSubagents((prev) => ({
       ...prev,
       [key]: {
+        ...prev[key],
         task_id: event.data.task_id,
         agent_id: event.data.agent_id,
         agent_name: event.data.agent_name,
@@ -4579,9 +4596,9 @@ function handleSubagentEvent(
         call_chain: event.data.call_chain,
         depth: event.data.call_chain ? event.data.call_chain.length - 1 : undefined,
         task: event.data.task,
-        status: "running",
-        started_at: Date.now(),
-        tools: [],
+        status: prev[key]?.status && prev[key].status !== "running" ? prev[key].status : "running",
+        started_at: prev[key]?.started_at || Date.now(),
+        tools: prev[key]?.tools || [],
       },
     }));
     onNewRunning?.();
@@ -4602,15 +4619,14 @@ function handleSubagentEvent(
         typeof event.data.arguments === "object"
           ? JSON.stringify(event.data.arguments)
           : String(event.data.arguments || "");
-      const tools = [
-        ...(current.tools || []),
-        { name: event.data.tool, arguments: event.data.arguments, output_preview: "" },
-      ];
+      const tools = mergeTools(current.tools, [
+        { id: event.data.tool_call_id, name: event.data.tool, arguments: event.data.arguments, status: "running", output_preview: "" },
+      ]);
       return {
         ...prev,
         [key]: {
           ...current,
-          current_tool: event.data.tool,
+          current_tool: current.status === "running" ? tools.find(t => t.status === "running")?.name : undefined,
           tool_preview: preview,
           tools,
         },
@@ -4630,17 +4646,17 @@ function handleSubagentEvent(
       if (!key || !prev[key]) return prev;
       const current = prev[key];
       const tools = current.tools ? [...current.tools] : [];
-      if (tools.length > 0) {
-        tools[tools.length - 1] = {
-          ...tools[tools.length - 1],
-          output_preview: event.data.output_preview,
-        };
-      }
+      const index = tools.findIndex(t => event.data.tool_call_id ? t.id === event.data.tool_call_id :
+        t.name === event.data.tool && t.status === "running");
+      const done = { id: event.data.tool_call_id, name: event.data.tool, arguments: event.data.arguments,
+        status: event.data.status || "completed", output_preview: event.data.output_preview };
+      if (index < 0) tools.push(done);
+      else tools[index] = { ...tools[index], ...done };
       return {
         ...prev,
         [key]: {
           ...current,
-          current_tool: undefined,
+          current_tool: tools.find(t => t.status === "running")?.name,
           tool_preview: event.data.output_preview,
           tools,
         },
@@ -4701,6 +4717,21 @@ function handleSubagentEvent(
       };
     });
   }
+}
+
+function ToolActivityList({ tools, toolNames = {} }: { tools: ToolActivity[]; toolNames?: Record<string, string> }) {
+  return <div className="collab-tools-list">{tools.map((tool, index) => (
+    <details className="collab-tool-item" key={tool.id || `${tool.name}-${index}`}>
+      <summary className="collab-tool-head">
+        <ChevronRight size={14} className="tool-trace-chevron" />
+        <span className="tool-chip">{toolNames[tool.name] || tool.name}</span>
+        <code>{tool.name}</code>
+        <span className="collab-tool-status">{tool.status === "running" ? "进行中" : tool.status === "failed" ? "失败" : tool.status === "cancelled" ? "已中断" : "已完成"}</span>
+      </summary>
+      {tool.arguments && <pre className="collab-tool-args">{JSON.stringify(tool.arguments, null, 2)}</pre>}
+      {tool.output_preview && <div className="collab-tool-preview"><span>输出摘要</span><p>{tool.output_preview}</p></div>}
+    </details>
+  ))}</div>;
 }
 
 function SubagentConversationView({
@@ -4811,29 +4842,7 @@ function SubagentConversationView({
               <Sparkles size={12} />
               <span>工具调用轨迹 ({collab.tools.length})</span>
             </div>
-            <div className="collab-tools-list">
-              {collab.tools.map((tool, idx) => (
-                <div className="collab-tool-item" key={idx}>
-                  <div className="collab-tool-head">
-                    <span className="tool-chip">
-                      {toolNames[tool.name] || tool.name}
-                    </span>
-                    <code>{tool.name}</code>
-                  </div>
-                  {tool.arguments && Object.keys(tool.arguments).length > 0 && (
-                    <pre className="collab-tool-args">
-                      {JSON.stringify(tool.arguments, null, 2)}
-                    </pre>
-                  )}
-                  {tool.output_preview && (
-                    <div className="collab-tool-preview">
-                      <span>输出摘要：</span>
-                      <p>{tool.output_preview}</p>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+            <ToolActivityList tools={collab.tools} toolNames={toolNames} />
           </div>
         )}
 
@@ -5009,54 +5018,7 @@ function SwarmGroupView({
 }
 
 function dedupeCollabList(list: SubagentCollaboration[]): SubagentCollaboration[] {
-  const result: SubagentCollaboration[] = [];
-  for (const item of list) {
-    const existingIdx = result.findIndex((r) => {
-      if (item.task_id && r.task_id && item.task_id === r.task_id) return true;
-      const rName = (r.agent_name || r.agent_id || "").replace(/(智能体|协同|系统)/g, "").trim();
-      const iName = (item.agent_name || item.agent_id || "").replace(/(智能体|协同|系统)/g, "").trim();
-      if (rName && iName && (rName === iName || rName.includes(iName) || iName.includes(rName))) {
-        const rTask = (r.task || "").trim();
-        const iTask = (item.task || "").trim();
-        if (
-          !rTask || !iTask ||
-          rTask === iTask ||
-          rTask.includes(iTask) ||
-          iTask.includes(rTask) ||
-          rTask === "协同任务" || iTask === "协同任务" ||
-          rTask === "子任务" || iTask === "子任务"
-        ) {
-          return true;
-        }
-      }
-      return false;
-    });
-
-    if (existingIdx >= 0) {
-      const ex = result[existingIdx];
-      result[existingIdx] = {
-        ...ex,
-        ...item,
-        task_id: ex.task_id || item.task_id,
-        agent_id: ex.agent_id || item.agent_id,
-        agent_name: (ex.agent_name && ex.agent_name !== "执行智能体") ? ex.agent_name : item.agent_name,
-        task: (ex.task && ex.task !== "子任务" && ex.task !== "协同任务") ? ex.task : item.task,
-        status: (item.status === "completed" || item.status === "failed") ? item.status : ex.status,
-        result: ex.result || item.result,
-        error: ex.error || item.error,
-        tools: (ex.tools && ex.tools.length > 0) ? ex.tools : item.tools,
-        latency_ms: ex.latency_ms || item.latency_ms,
-        started_at: ex.started_at || item.started_at,
-        completed_at: ex.completed_at || item.completed_at,
-        phase_name: ex.phase_name || item.phase_name,
-        token_count: ex.token_count || item.token_count,
-        tokens_per_second: ex.tokens_per_second || item.tokens_per_second,
-      };
-    } else {
-      result.push({ ...item });
-    }
-  }
-  return result;
+  return mergeCollaborations(list);
 }
 
 function extractResultCollabs(res: ChatResult | null | undefined): SubagentCollaboration[] {
@@ -5077,7 +5039,8 @@ function extractResultCollabs(res: ChatResult | null | undefined): SubagentColla
         if (c.agent_id) seenAgentKeys.add(`${c.agent_id}-${c.task}`);
         if (c.agent_name) seenAgentKeys.add(`${c.agent_name}-${c.task}`);
       }
-      items.push(c);
+      items.push({ ...c, invocation_id: c.invocation_id || res.invocation_id,
+        session_id: c.session_id || res.session_id });
     }
   }
 
@@ -5100,19 +5063,18 @@ function extractResultCollabs(res: ChatResult | null | undefined): SubagentColla
         : undefined);
 
     if (taskId && seenTaskIds.has(taskId)) continue;
-    if (agent && agent !== "执行智能体" && seenAgentKeys.has(agent)) continue;
-    if (view.agent && view.agent !== "执行智能体" && seenAgentKeys.has(view.agent)) continue;
-    if (seenAgentKeys.has(`${agent}-${task}`) || seenAgentKeys.has(`${view.agent}-${task}`)) {
+    if (!taskId && (seenAgentKeys.has(`${agent}-${task}`) || seenAgentKeys.has(`${view.agent}-${task}`))) {
       continue;
     }
 
     const alreadyHandled = items.some((it) => {
       if (taskId && it.task_id && it.task_id === taskId) return true;
+      if (taskId && it.task_id) return false;
       const itAgent = it.agent_id || it.agent_name || "";
       const dAgent = agent || view.agent || "";
       if (itAgent && dAgent && itAgent !== "执行智能体" && dAgent !== "执行智能体") {
-        if (itAgent === dAgent || itAgent.includes(dAgent) || dAgent.includes(itAgent)) {
-          if (!it.task || !task || it.task === task || it.task.includes(task) || task.includes(it.task)) {
+        if (itAgent === dAgent) {
+          if (it.task === task) {
             return true;
           }
         }
@@ -5130,6 +5092,8 @@ function extractResultCollabs(res: ChatResult | null | undefined): SubagentColla
       const isErr = Boolean(rawOut?.error || rawOut?.result?.error);
       items.push({
         task_id: taskId,
+        invocation_id: res.invocation_id,
+        session_id: res.session_id,
         agent_id: agent,
         agent_name: view.agent,
         task,
@@ -5149,6 +5113,8 @@ function extractResultCollabs(res: ChatResult | null | undefined): SubagentColla
     if (!seenTaskIds.has(key)) {
       seenTaskIds.add(key);
       items.push({
+        invocation_id: res.invocation_id,
+        session_id: res.session_id,
         agent_id: c.agent_id,
         agent_name: c.agent_name,
         task: "协同任务",
@@ -5168,394 +5134,78 @@ type ListEntry =
   | { kind: "swarm"; key: string; messages: BlackboardMessage[]; live?: boolean };
 
 function CollaborationPanel({
-  inspector,
-  messages = [],
-  liveSubagents = [],
-  liveBlackboardMessages = [],
-  toolNames = {},
+  inspector, messages = [], sessionResults = [], liveSubagents = [], toolNames = {},
 }: {
   inspector: ChatResult | null;
   messages?: ChatMessage[];
+  sessionResults?: ChatResult[];
   liveSubagents?: LiveSubagentState[];
   liveBlackboardMessages?: BlackboardMessage[];
   toolNames?: Record<string, string>;
 }) {
-  const [scope, setScope] = useState<"turn" | "all">("turn");
-
-  const { turnRunning, turnCompleted, allRunning, allCompleted } = useMemo(() => {
-    const liveRunning: SubagentCollaboration[] = liveSubagents
-      .filter((s) => s.status === "running")
-      .map((s) => ({
-        task_id: s.task_id,
-        agent_id: s.agent_id,
-        agent_name: s.agent_name,
-        caller_id: s.caller_id,
-        call_chain: s.call_chain,
-        depth: s.depth,
-        task: s.task,
-        status: "running" as const,
-        tools: s.tools,
-        current_tool: s.current_tool,
-        started_at: s.started_at,
-        phase_name: s.phase_name,
-        tokens_per_second: s.tokens_per_second,
-        token_count: s.token_count,
-      }));
-
-    const liveFinished: SubagentCollaboration[] = liveSubagents
-      .filter((s) => s.status === "completed" || s.status === "error")
-      .map((s) => ({
-        task_id: s.task_id,
-        agent_id: s.agent_id,
-        agent_name: s.agent_name,
-        caller_id: s.caller_id,
-        call_chain: s.call_chain,
-        depth: s.depth,
-        task: s.task,
-        status: s.status === "completed" ? ("completed" as const) : ("failed" as const),
-        result: s.result,
-        error: s.error,
-        tools: s.tools,
-        latency_ms: s.latency_ms,
-        started_at: s.started_at,
-        completed_at: s.completed_at,
-        phase_name: s.phase_name,
-        tokens_per_second: s.tokens_per_second,
-        token_count: s.token_count,
-      }));
-
-    // 1. Current turn items from inspector
-    const turnItems = extractResultCollabs(inspector);
-    const turnCompletedItems: SubagentCollaboration[] = [];
-    const turnSeen = new Set<string>();
-
-    for (const c of turnItems) {
-      const key = c.task_id || `${c.agent_id || c.agent_name}-${c.task}`;
-      if (!turnSeen.has(key)) {
-        turnSeen.add(key);
-        if (c.task_id) turnSeen.add(c.task_id);
-        if (c.agent_id && c.task) turnSeen.add(`${c.agent_id}-${c.task}`);
-        if (c.agent_name && c.task) turnSeen.add(`${c.agent_name}-${c.task}`);
-        if (c.status !== "running") {
-          turnCompletedItems.push(c);
-        }
-      }
-    }
-    for (const f of liveFinished) {
-      const key = f.task_id || `${f.agent_id || f.agent_name}-${f.task}`;
-      if (!turnSeen.has(key)) {
-        turnSeen.add(key);
-        if (f.task_id) turnSeen.add(f.task_id);
-        if (f.agent_id && f.task) turnSeen.add(`${f.agent_id}-${f.task}`);
-        if (f.agent_name && f.task) turnSeen.add(`${f.agent_name}-${f.task}`);
-        turnCompletedItems.push(f);
-      }
-    }
-
-    // 2. All session items from all messages
-    const allCompletedItems: SubagentCollaboration[] = [];
-    const allSeen = new Set<string>();
-
-    for (const m of messages) {
-      if (m.result) {
-        const mCollabs = extractResultCollabs(m.result);
-        for (const c of mCollabs) {
-          const key = c.task_id || `${c.agent_id || c.agent_name}-${c.task}`;
-          if (!allSeen.has(key)) {
-            allSeen.add(key);
-            if (c.task_id) allSeen.add(c.task_id);
-            if (c.agent_id && c.task) allSeen.add(`${c.agent_id}-${c.task}`);
-            if (c.agent_name && c.task) allSeen.add(`${c.agent_name}-${c.task}`);
-            if (c.status !== "running") {
-              allCompletedItems.push(c);
-            }
-          }
-        }
-      }
-    }
-    for (const c of turnCompletedItems) {
-      const key = c.task_id || `${c.agent_id || c.agent_name}-${c.task}`;
-      if (!allSeen.has(key)) {
-        allSeen.add(key);
-        if (c.task_id) allSeen.add(c.task_id);
-        if (c.agent_id && c.task) allSeen.add(`${c.agent_id}-${c.task}`);
-        if (c.agent_name && c.task) allSeen.add(`${c.agent_name}-${c.task}`);
-        allCompletedItems.push(c);
-      }
-    }
-
-    return {
-      turnRunning: dedupeCollabList(liveRunning),
-      turnCompleted: dedupeCollabList(turnCompletedItems),
-      allRunning: dedupeCollabList(liveRunning),
-      allCompleted: dedupeCollabList(allCompletedItems),
-    };
-  }, [inspector, messages, liveSubagents]);
-
-  const allTotal = allRunning.length + allCompleted.length;
-  const turnTotal = turnRunning.length + turnCompleted.length;
-  const hasMultipleTurns = allTotal > turnTotal && turnTotal > 0;
-
-  const isTurnScope = scope === "turn" && hasMultipleTurns;
-  const runningList = isTurnScope ? turnRunning : allRunning;
-  const completedList = isTurnScope ? turnCompleted : allCompleted;
-  const totalCount = runningList.length + completedList.length;
-
-  // Workflow pipeline ordered list
-  // ===== 微信式统一入口列表 =====
-  // 联系人：独立派发的智能体（并行分工，发了几个就是几个）
-  // 群组：串行工作流（每个任务一个入口）、集群群聊黑板（每次研讨一个入口）
-  const [selectedEntry, setSelectedEntry] = useState<ListEntry | null>(null);
-  useEffect(() => {
-    setSelectedEntry(null);
-  }, [inspector]);
-
-  const listEntries = useMemo<ListEntry[]>(() => {
-    const results: ChatResult[] = [];
-    const seenInv = new Set<string>();
-    if (!isTurnScope) {
-      for (const m of messages) {
-        if (m.result && !seenInv.has(m.result.invocation_id)) {
-          seenInv.add(m.result.invocation_id);
-          results.push(m.result);
-        }
-      }
-    }
-    if (inspector && !seenInv.has(inspector.invocation_id)) {
-      seenInv.add(inspector.invocation_id);
-      results.push(inspector);
-    }
-
-    const entries: ListEntry[] = [];
-    const contactSeen = new Set<string>();
-    const isGroupInternalTask = (task: string) =>
-      task.includes("群聊黑板") || task.includes("【承接前序") || task.includes("【本阶段目标");
-
-    const pushContacts = (collabs: SubagentCollaboration[]) => {
-      for (const c of collabs) {
-        const taskText = c.task || "";
-        if (isGroupInternalTask(taskText)) continue;
-        const key = c.task_id || `${c.agent_id}-${c.task}`;
-        if (contactSeen.has(key)) continue;
-        contactSeen.add(key);
-        entries.push({
-          kind: "contact",
-          key,
-          collab: c,
-          timeText: formatSubagentTime(
-            c.started_at,
-            c.completed_at,
-            c.latency_ms || (c.elapsed_seconds ? c.elapsed_seconds * 1000 : undefined),
-          ),
-        });
-      }
-    };
-
-    for (const res of results) {
-      const rd = res.result_data;
-      // 集群群组：仅在显式处于模式三（集群黑板研讨）或明确多智能体群聊时展示
-      const isMode3Swarm =
-        rd?.mode === "group_blackboard" ||
-        (rd as any)?.collaboration_mode === 3 ||
-        rd?.mode === "mode_3_group_blackboard";
-      const bb = rd?.shared_context?.blackboard_messages || [];
-      if (bb.length > 0 && isMode3Swarm) {
-        entries.push({ kind: "swarm", key: `swarm-${res.invocation_id}`, messages: [...bb] });
-      }
-      // 串行群组：execute_workflow 工具调用
-      for (const t of rd?.tool_executions || []) {
-        if (t.name !== "execute_workflow") continue;
-        const raw = typeof t.output === "string"
-          ? (() => { try { return JSON.parse(t.output as string); } catch { return {}; } })()
-          : (t.output || {});
-        const out = raw as Record<string, any>;
-        if (out?.ok && Array.isArray(out.steps) && out.steps.length) {
-          entries.push({
-            kind: "workflow",
-            key: `wf-${res.invocation_id}-${entries.length}`,
-            title: String(out.workflow_title || "串行工作流"),
-            steps: out.steps as WorkflowStep[],
-          });
-        }
-      }
-      pushContacts(dedupeCollabList(extractResultCollabs(res)));
-    }
-    // 进行中的实时派发（尚无最终结果）
-    pushContacts(runningList);
-    // 实时群组：仅在模式三集群研讨时置顶展示
-    const isMode3Live = Boolean(
-      inspector?.result_data?.mode === "group_blackboard" ||
-      (inspector?.result_data as any)?.collaboration_mode === 3
-    );
-    const discussionLive = isMode3Live
-      ? (liveBlackboardMessages || []).filter((m) => m.type === "chat" || m.type === "broadcast")
-      : [];
-    if (discussionLive.length > 0) {
-      let lastSwarmIdx = -1;
-      for (let i = entries.length - 1; i >= 0; i -= 1) {
-        if (entries[i].kind === "swarm") {
-          lastSwarmIdx = i;
-          break;
-        }
-      }
-      if (lastSwarmIdx >= 0) {
-        const lastSwarm = entries[lastSwarmIdx];
-        if (lastSwarm.kind === "swarm") {
-          const merged = [...lastSwarm.messages];
-          for (const m of discussionLive) {
-            if (!merged.some((x) => x.id === m.id)) merged.push(m);
-          }
-          entries[lastSwarmIdx] = { ...lastSwarm, messages: merged };
-        }
-      } else {
-        entries.unshift({
-          kind: "swarm",
-          key: "swarm-live",
-          messages: discussionLive,
-          live: true,
-        });
-      }
-    }
-    const liveWorkflowTasks = runningList.filter(
-      (r) => r.task?.includes("【本阶段目标") || r.task?.includes("【承接前序"),
-    );
-    if (liveWorkflowTasks.length > 0) {
-      entries.unshift({
-        kind: "workflow",
-        key: `wf-live-${liveWorkflowTasks[0].task_id || liveWorkflowTasks[0].agent_id || "live"}`,
-        title: "串行工作流（进行中）",
-        steps: liveWorkflowTasks.map((r, i) => ({
-          step: i + 1,
-          step_title: r.phase_name || r.task?.slice(0, 40) || `阶段 ${i + 1}`,
-          agent: r.agent_name || r.agent_id,
-          result: r.status === "completed" ? r.result : undefined,
-        })),
-      });
-    }
-    return entries;
-  }, [inspector, messages, isTurnScope, runningList, liveBlackboardMessages]);
-
-  if (selectedEntry) {
-    if (selectedEntry.kind === "workflow") {
-      return <WorkflowGroupView entry={selectedEntry} onBack={() => setSelectedEntry(null)} />;
-    }
-    if (selectedEntry.kind === "swarm") {
-      return <SwarmGroupView entry={selectedEntry} onBack={() => setSelectedEntry(null)} />;
-    }
-    return (
-      <SubagentConversationView
-        collab={selectedEntry.collab}
-        onBack={() => setSelectedEntry(null)}
-        toolNames={toolNames}
-      />
-    );
+  const [scope, setScope] = useState<"turn" | "all">("all");
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const results = useMemo(() => {
+    const sessionId = inspector?.session_id || sessionResults[0]?.session_id || latestResult(messages)?.session_id || "";
+    return mergeSessionResults(sessionId, messages.flatMap(m => m.result ? [m.result] : []),
+      inspector ? [inspector] : [], sessionResults);
+  }, [messages, inspector, sessionResults]);
+  const all = useMemo(() => mergeCollaborations([
+    ...results.flatMap(extractResultCollabs),
+    ...liveSubagents.map(s => ({ ...s, status: s.status === "error" ? "failed" : s.status } as SubagentCollaboration)),
+  ]), [results, liveSubagents]);
+  const currentIds = new Set([
+    ...extractResultCollabs(inspector).map(collaborationKey),
+    ...liveSubagents.map(s => collaborationKey(s as SubagentCollaboration)),
+  ]);
+  const shown = scope === "turn" ? all.filter(c => currentIds.has(collaborationKey(c))) : all;
+  const selected = all.find(c => collaborationKey(c) === selectedKey);
+  const rootTools = results.filter(r => scope === "all" || r.invocation_id === inspector?.invocation_id)
+    .flatMap(r => r.result_data?.runtime_tools?.length ? r.result_data.runtime_tools :
+      (r.result_data?.tool_executions || []).map((t, i) => ({
+        id: `${r.invocation_id}:tool:${i}`, name: t.name, arguments: t.arguments, status: "completed",
+        output_preview: typeof t.output === "string" ? t.output : JSON.stringify(t.output),
+      })));
+  if (selected) {
+    return <SubagentConversationView collab={selected} onBack={() => setSelectedKey(null)} toolNames={toolNames} />;
   }
-
-  if (listEntries.length === 0) {
-    return (
-      <div className="collab-empty">
-        <Bot size={28} className="empty-icon" />
-        <p>本次会话暂无子智能体协同记录</p>
-        <span>当协调型智能体派发子任务时，将在此展示协同详情与成果回传</span>
-      </div>
-    );
-  }
-
   return (
     <div className="collab-concise-panel">
-      {/* Overview Top Bar */}
       <div className="collab-overview-bar">
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span>协同会话 ({listEntries.length})</span>
-          {hasMultipleTurns && (
-            <div className="collab-scope-switch">
-              <button
-                type="button"
-                className={`collab-scope-btn ${!isTurnScope ? "active" : ""}`}
-                onClick={() => setScope("all")}
-                title="查看本对话全部轮次派发的子智能体"
-              >
-                全部会话 ({allTotal})
-              </button>
-              <button
-                type="button"
-                className={`collab-scope-btn ${isTurnScope ? "active" : ""}`}
-                onClick={() => setScope("turn")}
-                title="仅查看当前轮次派发的子智能体"
-              >
-                当前轮次 ({turnTotal})
-              </button>
-            </div>
-          )}
-        </div>
+        <span>本会话协作 · {all.length} 个子任务</span>
+        {results.length > 1 && <div className="collab-scope-switch">
+          <button type="button" className={scope === "all" ? "collab-scope-btn active" : "collab-scope-btn"} onClick={() => setScope("all")}>本会话</button>
+          <button type="button" className={scope === "turn" ? "collab-scope-btn active" : "collab-scope-btn"} onClick={() => setScope("turn")}>本轮</button>
+        </div>}
       </div>
-
+      {shown.length === 0 && <div className="collab-empty">
+        <Bot size={28} className="empty-icon" />
+        <p>{scope === "turn" ? "本轮没有子任务" : "本会话暂无子智能体协作记录"}</p>
+        <span>协作与工具记录按会话保存，完成或中断后仍可查看。</span>
+      </div>}
       <div className="collab-workflow-container">
-        {listEntries.map((entry, idx) => {
-          const palette = getSubagentPalette(idx, entry.kind === "contact" ? entry.collab.agent_id || entry.collab.agent_name : entry.key);
+        {shown.map((c, index) => {
+          const palette = getSubagentPalette(index, c.agent_id);
           const Icon = palette.icon;
-          if (entry.kind === "workflow") {
-            const lastStep = entry.steps[entry.steps.length - 1];
-            return (
-              <button key={entry.key} type="button" className="collab-entry-row" onClick={() => setSelectedEntry(entry)}>
-                <div className="collab-concise-icon" style={{ color: palette.color, backgroundColor: palette.bg }}>
-                  <GitBranch size={16} />
-                </div>
-                <div className="collab-entry-main">
-                  <div className="collab-entry-top">
-                    <strong>{entry.title}</strong>
-                    <span className="collab-entry-tag">串行工作流</span>
-                  </div>
-                  <span className="collab-entry-preview">
-                    {entry.steps.length} 棒 · 最新：{lastStep?.agent || "—"} · {lastStep?.step_title || ""}
-                  </span>
-                </div>
-                <ChevronRight size={15} color="var(--muted)" />
-              </button>
-            );
-          }
-          if (entry.kind === "swarm") {
-            const members = new Set(entry.messages.map((m) => m.nickname || m.sender_name || m.sender_id));
-            return (
-              <button key={entry.key} type="button" className="collab-entry-row" onClick={() => setSelectedEntry(entry)}>
-                <div className="collab-concise-icon" style={{ color: palette.color, backgroundColor: palette.bg }}>
-                  <Users size={16} />
-                </div>
-                <div className="collab-entry-main">
-                  <div className="collab-entry-top">
-                    <strong>集群群聊黑板</strong>
-                    <span className="collab-entry-tag swarm">集群群聊</span>
-                  </div>
-                  <span className="collab-entry-preview">
-                    {entry.messages.length} 条发言 · {members.size} 位成员 · {entry.messages.at(-1)?.content?.slice(0, 30) || ""}
-                  </span>
-                </div>
-                <ChevronRight size={15} color="var(--muted)" />
-              </button>
-            );
-          }
-          const c = entry.collab;
-          return (
-            <button key={entry.key} type="button" className="collab-entry-row" onClick={() => setSelectedEntry(entry)}>
-              <div className="collab-concise-icon" style={{ color: palette.color, backgroundColor: palette.bg }}>
-                <Icon size={16} />
+          return <button key={collaborationKey(c)} type="button" className="collab-entry-row"
+            onClick={() => setSelectedKey(collaborationKey(c))}>
+            <div className="collab-concise-icon" style={{ color: palette.color, backgroundColor: palette.bg }}><Icon size={16} /></div>
+            <div className="collab-entry-main">
+              <div className="collab-entry-top"><strong>{c.agent_name || c.agent_id}</strong>
+                <span className={c.status === "running" ? "collab-live-tag" : "collab-entry-time"}>
+                  {c.status === "running" ? "执行中" : c.status === "completed" ? "已完成" : "未完成"}
+                </span>
               </div>
-              <div className="collab-entry-main">
-                <div className="collab-entry-top">
-                  <strong>{c.agent_name || c.agent_id}</strong>
-                  {c.status === "running" ? (
-                    <span className="collab-live-tag"><span className="pulse" />进行中</span>
-                  ) : (
-                    <span className="collab-entry-time">{entry.timeText}</span>
-                  )}
-                </div>
-                <span className="collab-entry-preview">{c.task}</span>
-              </div>
-              <ChevronRight size={15} color="var(--muted)" />
-            </button>
-          );
+              <span className="collab-entry-preview">{c.task}</span>
+            </div>
+            <ChevronRight size={15} />
+          </button>;
         })}
       </div>
+      {rootTools.length > 0 && <details className="session-tool-history">
+        <summary>主智能体工具记录 · {rootTools.length}</summary>
+        <ToolActivityList tools={rootTools} toolNames={toolNames} />
+      </details>}
     </div>
   );
 }
@@ -6361,6 +6011,8 @@ function GroupSettingsDrawer({
 
 function CanvasFloatingAssistant({
   messages,
+  sessionResults,
+  activityControls,
   showAllMessages: _showAllMessages,
   setShowAllMessages: _setShowAllMessages,
   sending,
@@ -6390,6 +6042,8 @@ function CanvasFloatingAssistant({
   openRequest,
 }: {
   messages: ChatMessage[];
+  sessionResults: ChatResult[];
+  activityControls: ReactNode;
   showAllMessages: boolean;
   setShowAllMessages: (val: boolean) => void;
   sending: boolean;
@@ -6611,7 +6265,7 @@ function CanvasFloatingAssistant({
                   ref={composerTextareaRef}
                   className="floating-textarea"
                   value={input}
-                  placeholder="描述要写入或修改的内容（回车发送）..."
+                  placeholder="描述要写入或修改的内容"
                   rows={2}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
@@ -6635,7 +6289,7 @@ function CanvasFloatingAssistant({
                     className="floating-agent-dropdown"
                     value={agentId}
                     onChange={handleAgentSelect}
-                    agents={agents.filter((a) => a.role === "leader")}
+                    agents={agents}
                   />
                 </div>
                 <button
@@ -6723,10 +6377,12 @@ function CanvasFloatingAssistant({
             <CollaborationPanel
               inspector={inspector}
               messages={messages}
+              sessionResults={sessionResults}
               liveSubagents={liveSubagents}
               liveBlackboardMessages={liveBlackboardMessages}
               toolNames={toolNames}
             />
+            {activityControls}
           </div>
         )}
 
@@ -6734,13 +6390,10 @@ function CanvasFloatingAssistant({
           <div className="floating-panel-scroll floating-menu-panel">
             <div className="menu-group">
               <label>切换主控智能体</label>
-              <Dropdown
+              <AgentPicker
                 value={agentId}
                 onChange={handleAgentSelect}
-                options={agents.map((a) => ({
-                  value: a.id,
-                  label: `${a.name} · ${a.role === "leader" ? "协调型" : "执行型"}`,
-                }))}
+                agents={agents}
               />
             </div>
 
@@ -6817,6 +6470,42 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const [inspector, setInspector] = useState<ChatResult | null>(
     latestResult(initialActive?.messages || []),
   );
+  const [sessionActivity, setSessionActivity] = useState<{ session: string; results: ChatResult[]; next: string | null; error?: string }>({ session: "", results: [], next: null });
+  const [activityRefresh, setActivityRefresh] = useState(0);
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const sync = async () => {
+      let stillWorking = sending;
+      try {
+        const page = await api.sessionActivity(session);
+        stillWorking ||= page.items.some(item => item.status === "working" || item.status === "routing");
+        if (cancelled || activeIdRef.current !== activeId) return;
+        setSessionActivity(old => ({ session, results: mergeSessionResults(session,
+          old.session === session ? old.results : [], page.items),
+          next: old.session === session && old.results.length > page.items.length ? old.next : page.next_before }));
+      } catch (error) {
+        if (!cancelled) setSessionActivity(old => ({ session,
+          results: old.session === session ? old.results : [], next: old.session === session ? old.next : null,
+          error: error instanceof Error ? error.message : "协作记录加载失败" }));
+      } finally {
+        if (!cancelled && stillWorking) timer = setTimeout(sync, 5000);
+      }
+    };
+    void sync();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [activeId, session, sending, activityRefresh]);
+  const loadMoreActivity = async () => {
+    if (!session || sessionActivity.session !== session || !sessionActivity.next) return;
+    try {
+      const page = await api.sessionActivity(session, sessionActivity.next);
+      if (activeIdRef.current !== activeId) return;
+      setSessionActivity(old => ({ session, results: mergeSessionResults(session, old.results, page.items), next: page.next_before }));
+    } catch (error) {
+      if (activeIdRef.current === activeId) setSessionActivity(old => ({ ...old, error: error instanceof Error ? error.message : "协作记录加载失败" }));
+    }
+  };
   const [detail, setDetail] = useState<"route" | "collaboration" | "members" | "blackboard" | "canvas">(
     initialActive?.isGroup || activeMeta?.isGroup ? "members" : initialActive?.isCanvas || activeMeta?.isCanvas ? "canvas" : "route",
   );
@@ -7175,12 +6864,12 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   }, [activeId, messages, session, agentId, queue, isCanvasConv]);
 
   useEffect(() => {
-    api
-      .agents()
-      .then((list) => {
+    const refreshAgents = () => Promise.all([api.agents(), api.chatConfig()])
+      .then(([list, runtime]) => {
         const selectable = list.filter(
           (agent) =>
             agent.active &&
+            (!runtime.interop_compatibility || agent.transport === "aip-rpc" || (agent.registration_status === "approved" && Boolean(agent.aic) && !agent.aic.startsWith("local:"))) &&
             (agent.usage_mode === "internal" ||
               agent.usage_mode === "both" ||
               (agent.transport === "aip-rpc" && agent.usage_mode === "external")),
@@ -7193,11 +6882,21 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
             selectable.some((a) => a.id === activeMeta.agentId)
           )
             return activeMeta.agentId;
+          if (runtime.interop_compatibility && selectable.some((a) => a.id === runtime.default_coordinator_id)) return runtime.default_coordinator_id!;
           return defaultCoordinatorId(selectable, activeMeta?.isCanvas);
         });
       })
       .catch(() => undefined);
+    void refreshAgents();
+    window.addEventListener("focus", refreshAgents);
+    return () => window.removeEventListener("focus", refreshAgents);
   }, []);
+
+  useEffect(() => {
+    if (agents.length && !agents.some((agent) => agent.id === agentId)) {
+      setAgentId(defaultCoordinatorId(agents, isCanvasConv));
+    }
+  }, [agents, agentId, isCanvasConv]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -7223,6 +6922,9 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   }, [messages, sending]);
 
   const openConversation = (target: ConversationMeta) => {
+    activeIdRef.current = target.id;
+    setLiveSubagents({});
+    setLiveBlackboardMessages([]);
     setActiveId(target.id);
     const data = loadConversationData(target.id);
     const taskStillRunning =
@@ -7268,6 +6970,8 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     if (canvasConversation) setInspectorCollapsed(false);
   };
   const createConversation = (targetAgentId?: string, isCanvas = false) => {
+    setLiveSubagents({});
+    setLiveBlackboardMessages([]);
     const newId = crypto.randomUUID();
     const canvasSession = isCanvas ? `ses-${crypto.randomUUID()}` : undefined;
     const defaultAgentId = targetAgentId || defaultCoordinatorId(agents, isCanvas);
@@ -7346,7 +7050,10 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     const nextMetas = [newMeta, ...conversations.filter((c) => c.id !== newId)];
     setConversations(nextMetas);
     saveConversationIndex(nextMetas);
+    activeIdRef.current = newId;
     setActiveId(newId);
+    setLiveSubagents({});
+    setLiveBlackboardMessages([]);
     setMessages([]);
     setShowAllMessages(false);
     setSession(undefined);
@@ -7503,6 +7210,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
                 }
               },
               (event) => {
+                if (activeIdRef.current !== recoveryConvId) return;
                 handleSubagentEvent(
                   event,
                   setLiveSubagents,
@@ -7547,8 +7255,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
             sendingRef.current = false;
             setSending(false);
             setSendingSince(null);
-            setLiveSubagents({});
-            setLiveBlackboardMessages([]);
+            // Keep completed live records until the durable session snapshot arrives.
             abortControllerRef.current = null;
             currentTaskIdRef.current = null;
             if (taskConvRef.current === recoveryConvId) taskConvRef.current = null;
@@ -8070,6 +7777,7 @@ ${cleanHistory}
           });
         },
         (event) => {
+          if (activeIdRef.current !== taskConvId) return;
           handleSubagentEvent(
             event,
             setLiveSubagents,
@@ -8147,8 +7855,7 @@ ${cleanHistory}
       sendingRef.current = false;
       setSending(false);
       setSendingSince(null);
-      setLiveSubagents({});
-      setLiveBlackboardMessages([]);
+      // Finalization must not make just-completed tool/subtask rows disappear.
       abortControllerRef.current = null;
       currentTaskIdRef.current = null;
       taskConvRef.current = null;
@@ -8289,7 +7996,11 @@ void runMessage(next.text, next.agentId, next.attachments);
     setMentionMenuOpen(false);
   };
 
+  const composingRef = useRef(false);
+  const handleCompositionStart = () => { composingRef.current = true; };
+  const handleCompositionEnd = () => { composingRef.current = false; };
   const handleInputKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (composingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
     if (mentionMenuOpen && mentionList.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -8315,7 +8026,7 @@ void runMessage(next.text, next.agentId, next.attachments);
         return;
       }
     }
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && (!window.matchMedia("(max-width: 820px), (pointer: coarse)").matches || event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       setMentionMenuOpen(false);
       submit();
@@ -8702,7 +8413,13 @@ void runMessage(next.text, next.agentId, next.attachments);
             }}
           />
           <CanvasFloatingAssistant
+            key={activeId}
             messages={messages}
+            sessionResults={sessionActivity.session === session ? sessionActivity.results : []}
+            activityControls={<>
+              {sessionActivity.session === session && sessionActivity.error && <button className="activity-history-control" onClick={() => setActivityRefresh(v => v + 1)}>协作记录加载失败，点击重试</button>}
+              {sessionActivity.session === session && sessionActivity.next && <button className="activity-history-control" onClick={() => void loadMoreActivity()}>加载更早的协作记录</button>}
+            </>}
             showAllMessages={showAllMessages}
             setShowAllMessages={setShowAllMessages}
             sending={sending}
@@ -8711,6 +8428,8 @@ void runMessage(next.text, next.agentId, next.attachments);
             setInput={setInput}
             handleSend={() => submit()}
             handleKeyDown={handleInputKeyDown}
+            handleCompositionStart={handleCompositionStart}
+            handleCompositionEnd={handleCompositionEnd}
             attachments={attachments}
             uploading={uploading}
             fileInputRef={fileInputRef}
@@ -9184,6 +8903,8 @@ void runMessage(next.text, next.agentId, next.attachments);
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleInputKeyDown}
+              onCompositionStart={handleCompositionStart}
+              onCompositionEnd={handleCompositionEnd}
               placeholder={
                 activeMeta?.isGroup
                   ? `给 ${loadConversationData(activeId)?.groupConfig?.name || "群聊"} 发消息`
@@ -9536,13 +9257,19 @@ void runMessage(next.text, next.agentId, next.attachments);
               agents={agents}
             />
           ) : (
+            <>
             <CollaborationPanel
+              key={activeId}
               inspector={inspector}
               messages={messages}
+              sessionResults={sessionActivity.session === session ? sessionActivity.results : []}
               liveSubagents={Object.values(liveSubagents)}
               liveBlackboardMessages={liveBlackboardMessages}
               toolNames={toolNames}
             />
+            {sessionActivity.session === session && sessionActivity.error && <button className="activity-history-control" onClick={() => setActivityRefresh(v => v + 1)}>协作记录加载失败，点击重试</button>}
+            {sessionActivity.session === session && sessionActivity.next && <button className="activity-history-control" onClick={() => void loadMoreActivity()}>加载更早的协作记录</button>}
+            </>
           )
         )}
         {activeMeta?.isGroup && detail === "blackboard" && (
@@ -10116,11 +9843,11 @@ function SettingsDrawer({
 }) {
   return (
     <div className="drawer-layer">
-      <button className="drawer-backdrop" onClick={onClose} />
+      <button className="drawer-backdrop" onClick={onClose} aria-label="关闭用户设置遮罩" />
       <aside className="builder-drawer settings-drawer">
         <div className="drawer-header">
           <h2>用户设置</h2>
-          <button className="icon-button" onClick={onClose}>
+          <button className="icon-button" onClick={onClose} aria-label="关闭用户设置">
             <X size={18} />
           </button>
         </div>

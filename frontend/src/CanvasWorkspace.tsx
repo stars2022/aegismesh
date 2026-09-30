@@ -64,7 +64,8 @@ export function CanvasWorkspace({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [outlineOpen, setOutlineOpen] = useState(true);
+  const [compact, setCompact] = useState(() => window.matchMedia("(max-width: 820px)").matches);
+  const [outlineOpen, setOutlineOpen] = useState(() => !window.matchMedia("(max-width: 820px)").matches);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [priorRevision, setPriorRevision] = useState<{ version: number; content: string } | null>(null);
   const [pendingReview, setPendingReview] = useState<{ version: number; content: string; userContent?: string } | null>(null);
@@ -80,6 +81,20 @@ export function CanvasWorkspace({
   const [draggingImage, setDraggingImage] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
+
+  const closeSidebar = () => { setOutlineOpen(false); setReviewOpen(false); };
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 820px)");
+    const change = () => { setCompact(media.matches); setOutlineOpen(!media.matches); setReviewOpen(false); };
+    media.addEventListener("change", change);
+    return () => media.removeEventListener("change", change);
+  }, []);
+  useEffect(() => {
+    if (!compact || (!outlineOpen && !reviewOpen)) return;
+    const dismiss = (event: KeyboardEvent) => { if (event.key === "Escape") closeSidebar(); };
+    window.addEventListener("keydown", dismiss);
+    return () => window.removeEventListener("keydown", dismiss);
+  }, [compact, outlineOpen, reviewOpen]);
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -385,7 +400,7 @@ export function CanvasWorkspace({
     <div className={`canvas-wysiwyg ${editing ? "is-editing" : "is-reading"}`}>
       <header className="canvas-wysiwyg-toolbar">
         <div className="canvas-wysiwyg-context">
-          <button type="button" className={`canvas-wysiwyg-history-toggle ${showHistoryToggle ? "is-visible" : ""}`} aria-label="打开会话列表" title="会话列表" onClick={onOpenHistory}><Menu size={18} /></button>
+          <button type="button" className={`canvas-wysiwyg-history-toggle ${showHistoryToggle ? "is-visible" : ""}`} aria-label="打开会话列表" title="会话列表" onClick={() => { if (compact) closeSidebar(); onOpenHistory(); }}><Menu size={18} /></button>
           <strong title={sessionTitle}>{sessionTitle}</strong>
         </div>
         <div className="canvas-wysiwyg-tools">
@@ -432,7 +447,7 @@ export function CanvasWorkspace({
             <button type="button" title="取消编辑" aria-label="取消编辑" onClick={cancelEdit}><X size={16} /><span>取消</span></button>
             <button type="button" className="canvas-wysiwyg-save" aria-label={saving ? "保存中" : "确认画布修改"} disabled={saving || conflicted} onClick={() => { if (dirty) void save(); else setEditing(false); }}><Save size={15} /><span>{saving ? "保存中" : "确认"}</span></button>
           </> : <button type="button" title="编辑画布" aria-label="编辑画布" disabled={Boolean(pendingReview)} onClick={() => setEditing(true)}><Pencil size={16} /><span>编辑</span></button>}
-          <button type="button" title="大纲与文档信息" aria-label="大纲与文档信息" aria-pressed={outlineOpen} onClick={() => setOutlineOpen(!outlineOpen)}><BookOpen size={16} /></button>
+          <button type="button" title="大纲与文档信息" aria-label="大纲与文档信息" aria-expanded={outlineOpen && !reviewOpen} aria-controls="canvas-document-outline" aria-pressed={outlineOpen && !reviewOpen} onClick={() => { setOutlineOpen(reviewOpen || !outlineOpen); setReviewOpen(false); }}><BookOpen size={16} /></button>
         </div>
       </header>
 
@@ -448,6 +463,7 @@ export function CanvasWorkspace({
       </div>}
 
       <div className={`canvas-wysiwyg-body ${outlineOpen || reviewOpen ? "with-outline" : ""}`}>
+        {compact && (outlineOpen || reviewOpen) && <button type="button" className="canvas-sidebar-backdrop" aria-label="关闭画布侧边栏" onClick={closeSidebar} />}
         <div className={`canvas-wysiwyg-scroll ${draggingImage ? "dragging-image" : ""}`} onScroll={() => { setMenuOpen(null); setSelection(""); }} onDragOver={(event) => { if (editing && event.dataTransfer.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setDraggingImage(true); } }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDraggingImage(false); }} onDrop={(event) => {
           if (!editing || !event.dataTransfer.files.length) return;
           event.preventDefault();
@@ -471,17 +487,17 @@ export function CanvasWorkspace({
           {uploadingImage && <div className="canvas-wysiwyg-upload-hint" role="status"><FlowMark className="flow-mark-compact" />图片上传中…</div>}
         </div>
         {reviewOpen ? <aside className="canvas-wysiwyg-outline canvas-wysiwyg-review" aria-label="版本变更审查">
-          <div className="canvas-wysiwyg-review-header"><strong>{pendingReview ? "确认协同改动" : "版本变更"}</strong><button type="button" aria-label="关闭变更审查" onClick={() => setReviewOpen(false)}><X size={16} /></button></div>
+          <div className="canvas-wysiwyg-review-header"><strong>{pendingReview ? "确认协同改动" : "版本变更"}</strong><button type="button" aria-label="关闭变更审查" onClick={() => { setReviewOpen(false); if (compact) setOutlineOpen(false); }}><X size={16} /></button></div>
           {reviewError ? <p role="alert">{reviewError}</p> : reviewedRevision ? <p>{reviewEdits.length ? `${reviewEdits.length} 处改动` : "这一版没有可见内容变化"}</p> : <p>{document.version < 2 ? "尚无上一版可供对比。" : "正在读取上一版…"}</p>}
           {pendingReview && <p>在正文中查看高亮；用底部工具栏接受或撤销。冲突处默认保留手工内容。</p>}
           {dirty && <p>手工草稿已保留。</p>}
           {!pendingReview && priorRevision && <button type="button" className="canvas-wysiwyg-restore" disabled={dirty} onClick={() => { if (!window.confirm("将上一版载入编辑器？需要再次保存才会生效。")) return; setEditing(true); editor?.commands.setContent(priorRevision.content, { contentType: "markdown" }); setReviewOpen(false); }}>载入上一版到编辑器</button>}
-        </aside> : outlineOpen && <aside className="canvas-wysiwyg-outline">
-          <div className="canvas-wysiwyg-outline-title">大纲</div>
+        </aside> : outlineOpen && <aside id="canvas-document-outline" className="canvas-wysiwyg-outline" aria-label="文档大纲侧边栏">
+          <div className="canvas-wysiwyg-review-header"><strong>大纲</strong><button type="button" aria-label="关闭文档大纲" onClick={() => setOutlineOpen(false)}><X size={16} /></button></div>
           <strong className="canvas-wysiwyg-doc-title">{title}</strong>
           <nav aria-label="文档大纲">
             {outline.filter((item) => item.level > 1).length ? outline.filter((item) => item.level > 1).map((item, index) => (
-              <button key={`${item.pos}-${index}`} type="button" className={`level-${item.level}`} onClick={() => editor?.chain().focus().setTextSelection(item.pos + 1).scrollIntoView().run()}>{item.text}</button>
+              <button key={`${item.pos}-${index}`} type="button" className={`level-${item.level}`} onClick={() => { editor?.chain().setTextSelection(item.pos + 1).scrollIntoView().run(); if (compact) setOutlineOpen(false); }}>{item.text}</button>
             )) : <p>添加章节标题后会显示在这里。</p>}
           </nav>
           <div className="canvas-wysiwyg-info">

@@ -93,8 +93,6 @@ TLS workers deliberately do not own MQ consumers. They use ADP's live HTTPS
 endpoint instead of trying an in-process delivery binding or falling back to a
 local model. Normal UI orchestration and its compatibility switch are unchanged.
 """
-    coordination_tool_rounds = 8
-    max_dispatches = 8
     allow_coordination_fallback = False
 
     def __init__(self, db, context: AipExecutionContext, **kwargs):
@@ -128,8 +126,6 @@ local model. Normal UI orchestration and its compatibility switch are unchanged.
                     "本次外部任务未开放子智能体派发（管理员开关关闭或已达调用深度上限）。"
                     "请使用当前实际可用的领域工具自行完成；不要要求用户开放权限，"
                     "不得声称已派发其他智能体。已配置的 web_search 可以正常使用。"}]
-            if kwargs.get("max_rounds", 4) > 0:
-                kwargs["max_rounds"] = max(kwargs.get("max_rounds", 4), self.coordination_tool_rounds)
             return await super()._invoke(agent, query, invocation, request, policy, history,
                                          caller_aic=None, **kwargs)
 

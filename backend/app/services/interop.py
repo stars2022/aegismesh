@@ -11,6 +11,11 @@ from typing import Any
 from ..config import get_settings
 
 
+def registered_hosted_identity(agent: Any) -> bool:
+    return bool(agent.registration_status == "approved" and agent.aic
+                and not agent.aic.startswith("local:"))
+
+
 def identity_context(aic: str) -> ssl.SSLContext:
     if not aic or aic.startswith("local:") or any(c in aic for c in "/\\"):
         raise RuntimeError("兼容模式要求已注册的 AIC 身份，不能使用本地 ID")

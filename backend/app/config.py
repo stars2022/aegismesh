@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     web_search_max_results: int = 8
     web_search_timeout_seconds: float = 60.0
     idle_watchdog_timeout_seconds: float = 60.0
+    # Per-agent tool rounds; total time/cycle/dispatch caps still apply.
+    coordination_tool_rounds: int = Field(default=24, ge=1, le=64)
+    partner_tool_rounds: int = Field(default=12, ge=1, le=32)
+    max_dispatches_per_coordinator: int = Field(default=16, ge=1, le=32)
+    max_dispatches_per_task: int = Field(default=64, ge=1, le=128)
     leader_aic: str = ""
     aip_poll_interval_seconds: float = 0.8
     aip_task_timeout_seconds: float = Field(default=600.0, ge=1.0, le=1800.0)

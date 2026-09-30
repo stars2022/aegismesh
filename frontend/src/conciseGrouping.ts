@@ -7,6 +7,7 @@ export const toolNames: Record<string, string> = {
   web_search: "联网搜索",
   calculator: "计算器",
   current_time: "当前时间",
+  prepare_dispatch_context: "审核派发参考资料",
 };
 
 export function dispatchView(output: unknown): { agent: string; text: string } {
@@ -116,7 +117,8 @@ export function buildTurnActions(
 ): TurnAction[] {
   if (!result || !result.result_data) return [];
 
-  const direct = result.result_data.tool_executions || [];
+  const direct = result.result_data.tool_executions?.length ? result.result_data.tool_executions :
+    (result.result_data.runtime_tools || []).map(t => ({ name: t.name, arguments: t.arguments || {}, output: t.output_preview }));
   const contributions = result.result_data.contributions || [];
   const collabs = result.result_data.collaborations || [];
   const totalCollabs = Math.max(contributions.length, collabs.length);

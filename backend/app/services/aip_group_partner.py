@@ -16,6 +16,59 @@ from .interop import identity_context, deliveries, ready_partners, outgoing_grou
 from .amp_service import amp_service
 
 logger = logging.getLogger("uvicorn.error.aip_group_partner")
+GROUP_CLOSE_TIMEOUT = 3
+
+
+async def _close_group(client, agent_id: str) -> None:
+    # A dissolved exchange can leave an SDK robust channel waiting to recover.
+    # Cleanup of that old group must never block the next inbox invitation.
+    try:
+        await asyncio.wait_for(client.close(), GROUP_CLOSE_TIMEOUT)
+    except Exception as exc:
+        logger.warning("event=group_cleanup_failed agent=%s error_type=%s", agent_id, type(exc).__name__)
+        connection = client.connection
+        if connection and not connection.is_closed:
+            with suppress(Exception):
+                await asyncio.wait_for(connection.close(), GROUP_CLOSE_TIMEOUT)
+
+
+async def _join_invitation(agent_id, aic, kwargs, groups, joining, inv):
+    from acps_sdk.aip.aip_group_partner import GroupPartnerMqClient
+    logger.info("event=group_invitation_received agent=%s group=%s", agent_id, inv.groupId)
+    stale = [groups.pop(gid) for gid, peer in list(groups.items())
+             if gid not in joining and not peer.is_joined]
+    await asyncio.gather(*(_close_group(peer, agent_id) for peer in stale))
+    if inv.groupId in groups:
+        return
+    if len(groups) >= 32:
+        logger.warning("Group capacity reached for %s", agent_id)
+        return
+    # Only the long-lived inbox reconnects automatically. A task group is
+    # ephemeral; resurrecting a dissolved exchange cannot restore its ACL.
+    child = GroupPartnerMqClient(partner_aic=aic, robust_connection=False, **kwargs)
+    groups[inv.groupId] = child
+    joining.add(inv.groupId)
+    async def on_command(command, is_mentioned):
+        await handle_command(agent_id, child, command, is_mentioned, inv.group.leader.aic)
+    async def disconnected(client, group_id):
+        if groups.get(group_id) is client:
+            groups.pop(group_id, None)
+    child.set_command_handler(on_command)
+    child.set_disconnect_handler(disconnected)
+    joined = False
+    try:
+        await asyncio.wait_for(child.connect(), 15)
+        joined = await asyncio.wait_for(child.join_group_from_invitation(inv), 30)
+        if joined:
+            logger.info("event=group_invitation_joined agent=%s group=%s", agent_id, inv.groupId)
+    except Exception as exc:
+        logger.warning("event=group_invitation_failed agent=%s group=%s error_type=%s", agent_id, inv.groupId, type(exc).__name__)
+    finally:
+        joining.discard(inv.groupId)
+        if not joined:
+            if groups.get(inv.groupId) is child:
+                groups.pop(inv.groupId, None)
+            await _close_group(child, agent_id)
 
 
 async def handle_command(agent_id, client, command, is_mentioned, leader_aic):
@@ -78,6 +131,7 @@ async def _partner_loop(agent_id: str, aic: str) -> None:
     while True:
         inbox = None
         groups = {}
+        joining = set()
         try:
             kwargs = {**mq_settings(), "ssl_context": identity_context(aic),
                       "identity_binding_enabled": True, "message_emitter": message_emitter(aic)}
@@ -85,26 +139,7 @@ async def _partner_loop(agent_id: str, aic: str) -> None:
             await asyncio.wait_for(inbox.connect(), 15)
 
             async def invitation(inv):
-                for gid, peer in list(groups.items()):
-                    if not peer.is_joined:
-                        await peer.close()
-                        groups.pop(gid, None)
-                if inv.groupId in groups:
-                    return
-                if len(groups) >= 32:
-                    logger.warning("Group capacity reached for %s", agent_id)
-                    return
-                child = GroupPartnerMqClient(partner_aic=aic, **kwargs)
-                async def on_command(command, is_mentioned):
-                    await handle_command(agent_id, child, command, is_mentioned, inv.group.leader.aic)
-                child.set_command_handler(on_command)
-                try:
-                    await child.connect()
-                    if await child.join_group_from_invitation(inv):
-                        groups[inv.groupId] = child
-                finally:
-                    if inv.groupId not in groups:
-                        await child.close()
+                await _join_invitation(agent_id, aic, kwargs, groups, joining, inv)
 
             # One consumer per AIC, for both SDK leader error replies and partner
             # invitations. Keep SDK payload and AMQP user_id identity validation.

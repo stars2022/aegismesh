@@ -9,7 +9,7 @@ AegisMesh 是一个 ACPs/AIP 兼容的多智能体构建与运营平台。平台
 - `backend/app/services/hosted_aip.py`：平台托管 Partner 的 AIP 任务生命周期
 - `backend/app/services/acs.py`：标准 ACS 能力声明生成与校验
 - `backend/app/services/router.py`：协议兼容硬约束筛选与贝叶斯反馈校准的混合熵权 TOPSIS 路由
-- `backend/app/services/aip_group.py`：AIP 国标群组模式桥——配置 `AIP_GROUP_MQ_URL`（或 `AIP_GROUP_MQ_HOST` 等）后，集群研讨中登记为 AIP 智能体的外部参与者经 RabbitMQ 群组 Exchange 邀请入群、群发议题并收集发言（`run_swarm_discussion` 自动双传输：外部成员走国标 MQ，内部成员走本地黑板，MQ 不可用自动回退）；`aip_group_partner.py` 在 `AIP_GROUP_PARTNER_ENABLED=true` 时让本平台智能体作为 Partner 接受外部群组邀请并执行群任务
+- `backend/app/services/aip_group.py`：AIP 国标群组模式桥——配置 `AIP_GROUP_MQ_URL`（或 `AIP_GROUP_MQ_HOST` 等）后支持 RabbitMQ 群组邀请、议题和回传；`aip_group_partner.py` 在 `AIP_GROUP_PARTNER_ENABLED=true` 时接受外部群组任务。兼容模式下，托管智能体的派发通过官方 MQ 完成，失败不回退本地直调。
 - `backend/app/services/orchestrator.py`：智能体主导的任务运行时——执行型智能体直接执行（含声明工具）；协调型智能体注入平台 harness 协调提示词，通过 `list_agents` / `dispatch_task` 平台调度工具规划、派发子任务并汇总结果；未指定智能体时按质量路由自动选择，保留广播协同、熔断与自动迁移
 - `backend/app/services/discovery.py`：基于官方 SDK 的 ADP 跨平台发现客户端
 - `backend/app/seed.py`：默认路由策略与预置智能体目录；内置方式三「发现智能体」（智能体发现助手），自然语言需求经协调者工具链检索本地注册表 + ADP 全网发现，输出带质量评分的推荐名单与智能体/技能组合建议
@@ -53,6 +53,42 @@ npm run dev
 同一 `session_id` 的已完成轮次会作为真实会话上下文传给后续智能体。平台以智能体为运行单位：聊天界面按智能体发起任务，选择执行型智能体即直接对话（可使用其声明工具）；选择协调型智能体则由平台执行其协同调度（子任务由平台按质量路由派发给执行型智能体，结果回传给协调者汇总）。配置 `ADP_DISCOVERY_URL` 后，可通过 `POST /api/discovery/search` 发现其他平台发布的智能体。平台预置方式三「发现智能体」（agent_discovery，协调型）：在聊天端直接对它用自然语言描述需求，即可得到带质量评分的候选名单与智能体/技能组合建议；其 ACS 中声明了 `discovery.nl_agent_discovery` 技能，外部平台也可经 AIP 调用。
 
 工作区默认不创建 Agent，也不生成调用记录或统计占位值。面板数据来自数据库中的实际配置、探针结果与运行记录。
+
+## 独立联网搜索
+
+管理后台「模型供应商」下方的「联网搜索」面板独立管理搜索服务，不修改智能体的模型绑定或 AIC。
+
+- **Exa**：可先不填密钥使用免密限流额度；正式持续运行建议配置独立 Exa API Key。固定连接 `https://mcp.exa.ai/mcp`，密钥只发给 Exa，不复用推理供应商密钥。
+- **DeepSeek**：另建一条启用的供应商（例如标识 `deepseek-search`、地址 `https://api.deepseek.com`、独立 DeepSeek 密钥），在搜索设置中选择它。搜索始终走 DeepSeek 的 Anthropic Messages 接口；主模型可以来自另一供应商。`DEEPSEEK_SEARCH_MODEL` 控制搜索模型，不读取主模型的名称。
+- **关闭搜索**：不注册 `web_search`，但不影响智能体发现、派发及其他工具。
+- **沿用旧配置**：升级默认保留的兼容选项，仅当前推理供应商为官方 DeepSeek 地址时启用旧搜索。须手动保存 Exa 或独立 DeepSeek，才能与推理供应商完全解耦；升级不会擅自新增外部调用。
+
+智能体仍须在自身工具列表中启用 `web_search`。聊天、画布和外部 AIP 托管任务共用同一工具注册入口；搜索设置不改变外部子智能体派发权限。
+
+「测试搜索」使用未保存的草稿发起一次真实检索，展示来源和耗时，**不会自动保存设置**。DeepSeek 检索及整理会产生模型 token 用量；Exa 的免密额度可能限流。不能把网页搜索当作免费无限服务。
+
+独立模式支持超时、结果数及单次执行的搜索工具调用上限（包括失败请求；重复查询命中缓存不计费、不占次数）。上限针对一个执行实例，外部递归子任务各自计数，不是整条调用链的总预算。DeepSeek 的一次工具调用还可能包含多次服务端搜索。来源返回标题、URL、摘要和可用的发布时间；纯文本或服务错误不会被当成已核实来源。
+
+搜索密钥复用平台的加密存储机制，不在读取接口、审计或数据库导出中返回。数据导入后独立搜索默认关闭，需检查供应商与密钥后重新启用。配置接口为 `/api/admin/web-search`，真实检索测试为 `/api/admin/web-search/test`，均要求管理员身份。配置变更和检索测试可在管理审计中查看。
+
+## 工具预算、协作记录与上下文审核
+
+普通聊天、画布、外部 AIP 托管任务使用同一默认工具预算，可通过环境变量调整并重启服务：
+
+| 配置 | 默认值 | 含义 |
+| --- | --- | --- |
+| `COORDINATION_TOOL_ROUNDS` | 24 | 每次协调型模型执行的工具轮数（1–64） |
+| `PARTNER_TOOL_ROUNDS` | 12 | 每次执行型模型执行的工具轮数（1–32） |
+| `MAX_DISPATCHES_PER_COORDINATOR` | 16 | 每个协调分支直接派发次数（1–32） |
+| `MAX_DISPATCHES_PER_TASK` | 64 | 同一运行实例内全部分支的派发安全上限（1–128） |
+
+一轮可以含多个工具调用，轮数不等于工具总次数；达到预算后仍需汇总已有结果。最多三级调用、循环检测、总时限和空闲超时继续生效。远端外部平台自行控制其内部预算。联网搜索另有后台可配置的每智能体上限，默认 8 次；失败计数，缓存命中不计数。增加工具轮数不会自动扩大搜索配额。
+
+子任务按 `session_id`、`invocation_id`、`task_id` 绑定；每次工具执行另有稳定 ID。开始、完成、失败和取消均保存快照，不依赖最终答复才落库。`GET /api/chat/sessions/{session_id}/activity` 按当前调用者身份读取和分页，不能仅凭 session ID 读取其他人的历史。协作面板默认展示本会话，支持切回本轮；刷新、断线及任务中断后仍可查看已保存记录。旧任务可从已有派发事件恢复基本信息，但无法补造过去未保存的工具输出。
+
+协调者先调用 `prepare_dispatch_context(task)` 查看候选片段，再在 `dispatch_task` 中提交本任务对应的 `context_review_id` 和明确选取的 `context_ids`。未选片段一律不转发；片段标记为“可能有用、尚待核实的参考资料”，不能当作指令或已核实事实。嵌套协调者只能预览上级已审核资料和自己的子任务回传，不能读取整个用户会话。路由服务仅推荐候选，不替协调者审核上下文。这里的审核是主智能体明确选择，不额外要求用户逐次点击批准。
+
+工作流工具每次执行一个步骤，群体讨论工具每次执行一轮独立观点收集；后续步骤或轮次交还协调模型审核后再派发，避免工具内部自动转发同伴文本。
 
 ## 多维度质量路由
 

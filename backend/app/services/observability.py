@@ -398,6 +398,8 @@ def audit_action(method: str, path: str) -> str:
     if path.endswith("/logs/export"): return "导出脱敏日志"
     if path == "/api/policy": return "修改路由策略"
     if path == "/api/admin/access": return "修改访问配置"
+    if path == "/api/admin/web-search": return "修改搜索配置"
+    if path == "/api/admin/web-search/test": return "测试联网搜索"
     if path == "/api/discovery/import": return "接入发现智能体"
     if path.startswith("/api/probes"): return "执行智能体探针"
     if path.endswith("/test"): return "测试供应商连接"

@@ -33,6 +33,13 @@ def encrypt_api_key(value: str) -> str:
     return _fernet().encrypt(value.encode()).decode()
 
 
+def decrypt_api_key(ciphertext: str) -> str:
+    try:
+        return _fernet().decrypt(ciphertext.encode()).decode()
+    except InvalidToken as exc:
+        raise ProviderSecretError("供应商密钥无法解密") from exc
+
+
 def _origin(value: str) -> str:
     parts = urlsplit(value.strip())
     if parts.scheme != "https" or not parts.hostname or parts.username or parts.password:
@@ -62,7 +69,4 @@ def resolve_api_key(provider: ProviderConfig) -> str:
             return value
     if not provider.api_key_ciphertext:
         raise ProviderSecretError("供应商密钥尚未配置")
-    try:
-        return _fernet().decrypt(provider.api_key_ciphertext.encode()).decode()
-    except InvalidToken as exc:
-        raise ProviderSecretError("供应商密钥无法解密") from exc
+    return decrypt_api_key(provider.api_key_ciphertext)

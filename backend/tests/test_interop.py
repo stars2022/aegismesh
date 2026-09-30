@@ -168,3 +168,84 @@ async def test_rpc_compatibility_requires_completion_handshake(monkeypatch):
     with pytest.raises(RuntimeError, match="completion failed"):
         await runtime._consume_rpc(client, TaskState, agent=SimpleNamespace(), session_id="s",
             user_input="q", timeout_seconds=1, poll_interval=.01, controller=None, require_completion=True)
+
+
+async def test_stale_group_cleanup_cannot_block_next_invitation(monkeypatch):
+    async def stuck_close():
+        await asyncio.Future()
+    stale = SimpleNamespace(is_joined=False, close=stuck_close,
+                            connection=SimpleNamespace(is_closed=False, close=AsyncMock()))
+    groups = {"old": stale}
+    joining = set()
+    made = []
+    class Client:
+        def __init__(self, **kwargs):
+            assert kwargs["robust_connection"] is False
+            assert kwargs["identity_binding_enabled"] is True
+            self.is_joined = False
+            self.connection = None
+            self.close = AsyncMock()
+            made.append(self)
+        def set_command_handler(self, handler): pass
+        def set_disconnect_handler(self, handler): self.disconnected = handler
+        async def connect(self): pass
+        async def join_group_from_invitation(self, inv):
+            self.is_joined = True
+            return True
+    monkeypatch.setattr(aip_group_partner, "GROUP_CLOSE_TIMEOUT", .01)
+    monkeypatch.setattr("acps_sdk.aip.aip_group_partner.GroupPartnerMqClient", Client)
+    invitation = SimpleNamespace(groupId="new", group=SimpleNamespace(leader=SimpleNamespace(aic="leader")))
+    await asyncio.wait_for(aip_group_partner._join_invitation("worker", "callee",
+        {"identity_binding_enabled":True}, groups, joining, invitation), .5)
+    assert list(groups) == ["new"] and not joining
+    stale.connection.close.assert_awaited_once()
+    made[0].close.assert_not_awaited()
+    await made[0].disconnected(made[0], "new")
+    assert not groups
+
+
+async def test_concurrent_invitations_do_not_close_a_join_in_progress(monkeypatch):
+    groups, joining, clients = {}, set(), []
+    started, release = asyncio.Event(), asyncio.Event()
+    class Client:
+        def __init__(self, **kwargs):
+            self.is_joined = False
+            self.connection = None
+            self.close = AsyncMock()
+            clients.append(self)
+        def set_command_handler(self, handler): pass
+        def set_disconnect_handler(self, handler): pass
+        async def connect(self): pass
+        async def join_group_from_invitation(self, inv):
+            if inv.groupId == "first":
+                started.set()
+                await release.wait()
+            self.is_joined = True
+            return True
+    monkeypatch.setattr("acps_sdk.aip.aip_group_partner.GroupPartnerMqClient", Client)
+    first = asyncio.create_task(aip_group_partner._join_invitation("worker", "callee", {}, groups, joining,
+        SimpleNamespace(groupId="first")))
+    await started.wait()
+    await aip_group_partner._join_invitation("worker", "callee", {}, groups, joining, SimpleNamespace(groupId="second"))
+    await aip_group_partner._join_invitation("worker", "callee", {}, groups, joining, SimpleNamespace(groupId="first"))
+    release.set()
+    await first
+    assert set(groups) == {"first", "second"} and len(clients) == 2 and not joining
+    for client in clients:
+        client.close.assert_not_awaited()
+
+
+async def test_group_setup_timeout_is_not_mislabeled_as_model_timeout(monkeypatch):
+    class Leader:
+        def __init__(self, *args, **kwargs): pass
+        async def create_group_session(self, *args): raise TimeoutError()
+        async def close(self): pass
+    monkeypatch.setattr("acps_sdk.aip.aip_group_leader.GroupLeader", Leader)
+    monkeypatch.setattr(aip_group, "identity_context", lambda aic: None)
+    monkeypatch.setattr(aip_group, "message_emitter", lambda aic: None)
+    monkeypatch.setattr(aip_group, "mq_settings", lambda: {"rabbitmq_host":"test", "rabbitmq_port":5671, "rabbitmq_vhost":"acps"})
+    monkeypatch.setattr(aip_group, "get_settings", lambda: SimpleNamespace(aip_group_auth_url="https://auth.test"))
+    session = aip_group.MqGroupSession("caller", [aip_group.ExternalPartner("callee", "worker", "")])
+    with pytest.raises(aip_group.AipGroupBridgeError, match="连接与建群超时，尚未发送子任务"):
+        await session.ensure()
+    assert session._leader is None
