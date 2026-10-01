@@ -5,6 +5,7 @@ export const toolNames: Record<string, string> = {
   list_agents: "查询执行者",
   check_subagent_status: "查询智能体状态",
   web_search: "联网搜索",
+  read_web_page: "读取原文",
   calculator: "计算器",
   current_time: "当前时间",
   prepare_dispatch_context: "审核派发参考资料",

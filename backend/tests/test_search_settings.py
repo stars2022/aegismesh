@@ -175,6 +175,41 @@ def test_orchestrator_registers_search_for_opencode(db):
     db.commit()
     registry = ReliableOrchestrator(db)._runtime_registry(provider())
     assert registry.schemas(["web_search"])[0]["function"]["name"] == "web_search"
+    assert registry.schemas(["read_web_page"])[0]["function"]["name"] == "read_web_page"
+
+
+def test_disabling_search_also_removes_source_reader(db):
+    config = search_config()
+    db.add(config)
+    db.commit()
+    runner = ReliableOrchestrator(db)
+    assert len(runner._runtime_registry(provider()).schemas(["web_search", "read_web_page"])) == 2
+    config.backend = "disabled"
+    db.commit()
+    closed = runner._runtime_registry(provider())
+    assert closed.schemas(["web_search", "read_web_page"]) == []
+    assert closed.execute("calculator", {"expression": "1+2"})["result"] == 3
+
+
+@pytest.mark.asyncio
+async def test_link_only_search_is_honest_and_reader_allowlist_is_branch_scoped(db, monkeypatch):
+    db.add(search_config())
+    db.commit()
+    async def indexed(self, args):
+        return {"query": args["query"], "sources": [{"title": "标题", "url": "https://example.org/paper"}]}
+    monkeypatch.setattr(web_search.ExaWebSearch, "__call__", indexed)
+    cache = {}
+    root = web_search.configured_search(db, provider(), cache, budget_scope="root")
+    child = web_search.configured_search(db, provider(), cache, budget_scope="child")
+    result = await root({"query": "paper"})
+    assert result["sources"][0]["evidence_status"] == "link_only"
+    assert result["evidence"]["sources_with_excerpt"] == 0
+    assert "未取得正文" in result["evidence"]["notice"]
+    assert cache["pages:allowed:root"] == {"https://example.org/paper": True}
+    assert "pages:allowed:child" not in cache
+    reused = await child({"query": "paper"})
+    assert reused["cached"]
+    assert cache["pages:allowed:child"] == {"https://example.org/paper": True}
 
 
 def test_settings_preserve_encrypt_and_clear_key(db):

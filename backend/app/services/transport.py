@@ -18,7 +18,7 @@ import httpx
 
 from ..config import get_settings
 from ..models import Agent, ProviderConfig
-from .prompt import build_system_prompt, effective_tool_names
+from .prompt import build_system_prompt, effective_tool_names, fence_untrusted
 from .provider_secrets import resolve_api_key
 from .tools import ToolRegistry
 from .model_budget import metered_post, metered_stream
@@ -217,17 +217,18 @@ class OpenAICompatibleTransport:
         api_base = provider.base_url if provider else settings.llm_api_base
         started = time.monotonic()
         extra_tool_names = tuple(kwargs.get("extra_tool_names") or ())
+        tool_registry = tool_registry or ToolRegistry()
+        tool_schemas = tool_registry.schemas([*effective_tool_names(agent), *extra_tool_names])
         prompt_text = build_system_prompt(
             agent, harness, collab_style=kwargs.get("collab_style", "auto"),
             extra_tool_names=extra_tool_names,
+            available_tool_names=tuple(item["function"]["name"] for item in tool_schemas),
         )
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": prompt_text},
             *(history or []),
             {"role": "user", "content": query},
         ]
-        tool_registry = tool_registry or ToolRegistry()
-        tool_schemas = tool_registry.schemas([*effective_tool_names(agent), *extra_tool_names])
         executions: list[dict[str, Any]] = []
         prompt_tokens = 0
         completion_tokens = 0
@@ -386,8 +387,9 @@ class OpenAICompatibleTransport:
                             {
                                 "role": "user",
                                 "content": (
-                                    f"协同调研与客观数据检索已就绪：\n\n{summary_context}\n\n"
-                                    f"请基于上述客观数据，针对问题“{query}”，直接撰写专业详实、结构严谨的最终分析报告（包含关键指标及出处）。"
+                                    fence_untrusted("工具结果摘录，可能不完整或不准确", summary_context)
+                                    + "\n按用户原定范围、篇幅和格式直接交付，不强制写长篇报告或下一步菜单。"
+                                    "仅使用实际证据；成功状态不等于事实核实，资料不足则说明缺口。"
                                 ),
                             },
                         ]
@@ -1060,6 +1062,7 @@ class OpenAIResponsesTransport:
         instructions = build_system_prompt(
             agent, harness, collab_style=kwargs.get("collab_style", "auto"),
             extra_tool_names=extra_tool_names,
+            available_tool_names=tuple(item["function"]["name"] for item in chat_schemas),
         )
         input_items: list[dict[str, Any]] = [*(history or []), {"role": "user", "content": query}]
         executions: list[dict[str, Any]] = []
@@ -1225,6 +1228,7 @@ class AnthropicTransport:
         system = build_system_prompt(
             agent, harness, collab_style=kwargs.get("collab_style", "auto"),
             extra_tool_names=tuple(kwargs.get("extra_tool_names") or ()),
+            available_tool_names=tuple(item["name"] for item in tools),
         )
         executions: list[dict[str, Any]] = []
         prompt_tokens = completion_tokens = llm_calls = 0

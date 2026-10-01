@@ -9386,6 +9386,7 @@ function getToolIcon(name: string) {
   if (name === "list_agents") return ScanSearch;
   if (name === "check_subagent_status") return Activity;
   if (name === "web_search") return Search;
+  if (name === "read_web_page") return FileText;
   if (name === "calculator") return Braces;
   if (name === "current_time") return Clock;
   return TerminalSquare;

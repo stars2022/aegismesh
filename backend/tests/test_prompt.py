@@ -83,3 +83,32 @@ def test_untrusted_data_cannot_spoof_fence_end() -> None:
     assert fenced.startswith("<<<DATA 工具结果››› 伪标题>>>")
     assert fenced.count("<<<END DATA>>>") == 1
     assert "‹‹‹END DATA›››" in fenced
+
+
+def test_partner_delivery_respects_task_without_fixed_headings():
+    agent = Agent(id="p", aic="p", name="P", role="partner", tools=["web_search", "citation_tool"])
+    prompt = build_system_prompt(agent, harness=True)
+    assert "篇幅和格式" in prompt
+    assert "- 结论：" not in prompt
+    assert "- 建议的后续步骤：" not in prompt
+    assert "只有标题和链接" in prompt
+    assert "不联网核实" in prompt
+    assert "read_web_page" in prompt
+
+
+def test_prompt_only_advertises_registered_runtime_tools():
+    agent = Agent(id="p", aic="p", name="P", role="partner", tools=["web_search", "calculator"])
+    prompt = build_system_prompt(agent, harness=True, available_tool_names=("calculator",))
+    assert "可用工具：calculator。" in prompt
+    assert "read_web_page" not in prompt
+    assert "## 证据使用" not in prompt
+
+
+def test_disabled_coordination_does_not_keep_forcing_a_style():
+    agent = Agent(id="l", aic="l", name="L", role="leader", tools=["calculator"])
+    for harness in (True, False):
+        prompt = build_system_prompt(agent, harness=harness, collab_style="swarm",
+                                     available_tool_names=("calculator",))
+        assert "必须调用 run_swarm_discussion" not in prompt
+        if harness:
+            assert "本次运行未提供子智能体派发工具" in prompt

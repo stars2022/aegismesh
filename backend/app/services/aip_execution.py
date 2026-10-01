@@ -169,6 +169,7 @@ async def execute_inbound_task(db, agent: Agent, task: HostedTask, *, on_text=No
     by_aic = {a.aic: a.id for a in db.scalars(select(Agent)).all()}
     ancestors = [by_aic.get(aic, aic) for aic in context.chain[:-1]]
     request = ChatRequest(message=task.query, session_id=session, agent_id=agent.id,
+                          interface="harness",
                           delegation_path=ancestors, delegation_depth=len(ancestors),
                           hard_deadline_seconds=context.remaining(), task_profile="research")
     owner = "aip:" + hashlib.sha256(f"{agent.aic}\0{task.owner_peer_aic}".encode()).hexdigest()

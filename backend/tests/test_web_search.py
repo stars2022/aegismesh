@@ -91,6 +91,7 @@ async def test_deepseek_web_search_returns_structured_sources(
             "title": "报告",
             "published_at": "2026-09-01",
             "snippet": "摘要",
+            "evidence_status": "search_excerpt",
         }
     ]
     assert result["_usage"] == {
@@ -98,6 +99,7 @@ async def test_deepseek_web_search_returns_structured_sources(
         "prompt_tokens": 12,
         "completion_tokens": 5,
     }
+    assert result["evidence"]["sources_with_excerpt"] == 1
 
 
 @pytest.mark.asyncio

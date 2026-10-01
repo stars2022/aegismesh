@@ -125,13 +125,14 @@ async def test_real_inbound_registry_recurses_via_transport_and_executes_search(
         ProjectedSnippet("peer_report", "fixture", "Research evidence", "research context", .9)])
 
     class Search:
-        def __init__(self, *_): pass
+        def __init__(self, *_, **__): pass
         async def __call__(self, args):
             searches.append(args["query"])
             return {"ok": True, "results": [{"url": "https://fixture.invalid/evidence"}]}
 
     class Runtime:
         async def execute(self, agent, query, timeout_seconds, *, tool_registry, **kwargs):
+            assert kwargs.get("harness") is True  # Same runtime rules at each official inbound hop.
             if kwargs.get("max_rounds") == 0:
                 return PartnerResult("verified synthesis", {}, llm_calls=1)
             tools = {s["function"]["name"] for s in tool_registry.schemas(effective_tool_names(agent))}
@@ -226,7 +227,7 @@ async def test_background_start_is_prompt_idempotent_and_cancelable(fleet, monke
 async def test_inbound_scope_cannot_open_user_or_other_peer_history(fleet, monkeypatch):
     captures = []
     async def run(self, req, owner_id=""):
-        captures.append((req.session_id, owner_id, req.delegation_path))
+        captures.append((req.session_id, owner_id, req.delegation_path, req.interface))
         return Invocation(id="fixture-inv", status="completed", result_text="safe",
                           result_data={}, prompt_tokens=0, completion_tokens=0, llm_calls=0), [], None
     monkeypatch.setattr(InboundAipOrchestrator, "run", run)
@@ -236,6 +237,7 @@ async def test_inbound_scope_cannot_open_user_or_other_peer_history(fleet, monke
     assert len({row[0] for row in captures}) == 3
     assert len({row[1] for row in captures}) == 3
     assert all(row[0] != "user-secret-session" for row in captures)
+    assert all(row[3] == "harness" for row in captures)
 
 
 async def test_background_result_can_be_polled_and_completed_without_reexecution(fleet, monkeypatch):
@@ -274,7 +276,7 @@ async def test_external_delegation_switch_keeps_search_but_disables_child_tools(
     searched = []
 
     class Search:
-        def __init__(self, *_): pass
+        def __init__(self, *_, **__): pass
         async def __call__(self, arguments):
             searched.append(arguments["query"])
             return {"results": [{"url": "https://fixture.invalid/source"}]}

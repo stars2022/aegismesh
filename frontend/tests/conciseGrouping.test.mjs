@@ -20,6 +20,16 @@ test("empty turn returns no actions and no blocks", () => {
   assert.deepEqual(partitionTurnActions(buildTurnActions(emptyResult)), []);
 });
 
+test("source reader has a localized label and source subtitle", () => {
+  assert.equal(toolNames.read_web_page, "读取原文");
+  assert.equal(getToolSubtitle({ url: "https://example.org/paper" }), "https://example.org/paper");
+  const blocks = partitionTurnActions(buildTurnActions({ result_data: { tool_executions: [
+    { name: "web_search", arguments: { query: "paper" }, output: {} },
+    { name: "read_web_page", arguments: { url: "https://example.org/paper" }, output: {} },
+  ] } }));
+  assert.equal(blocks[0].summaryTitle, "联网搜索 · 读取原文");
+});
+
 test("single independent tool call is NOT summarized into a group", () => {
   const result = {
     result_data: {

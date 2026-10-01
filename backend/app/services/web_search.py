@@ -13,13 +13,14 @@ from ..config import get_settings
 from ..models import ProviderConfig, WebSearchConfig
 from .provider_secrets import decrypt_api_key, resolve_api_key
 from .model_budget import metered_post
+from .source_pages import remember_sources
 
 
 WEB_SEARCH_SCHEMA: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": "web_search",
-        "description": "检索互联网中的最新信息，返回可引用的来源及剩余检索次数。search_budget.remaining 为 0 时停止检索，依据已有来源汇总，缺少证据的内容如实标注。",
+        "description": "检索互联网来源及剩余次数。evidence_status=link_only 仅代表标题/链接命中，不是正文证据；需要内容时用 read_web_page 读取原始来源。search_budget.remaining 为0时停止检索，缺少证据如实标注。",
         "parameters": {
             "type": "object",
             "properties": {
@@ -52,12 +53,14 @@ class DeepSeekWebSearch:
         timeout_seconds: float | None = None,
         max_results: int | None = None,
         model: str | None = None,
+        budget_scope: str = "default",
     ) -> None:
         self.provider = provider
         self.cache = cache if cache is not None else {}
         self.timeout_seconds = timeout_seconds
         self.max_results = max_results
         self.model = model
+        self.budget_scope = budget_scope
 
     async def __call__(self, arguments: dict[str, Any]) -> dict[str, Any]:
         query = arguments.get("query")
@@ -68,6 +71,7 @@ class DeepSeekWebSearch:
         cache_key = f"{self.provider.id}:{' '.join(query.casefold().split())}"
         cached = self.cache.get(cache_key)
         if cached is not None:
+            remember_sources(self.cache, self.budget_scope, cached.get("sources") or [])
             return {
                 **cached,
                 "cached": True,
@@ -158,7 +162,9 @@ class DeepSeekWebSearch:
                     if isinstance(value, str) and value:
                         source[source_key] = value
                 if snippets.get(url):
-                    source["snippet"] = snippets[url]
+                    source["snippet"] = snippets[url][:3000]
+                elif isinstance(item.get("snippet"), str) and item["snippet"].strip():
+                    source["snippet"] = item["snippet"][:3000]
                 sources.append(source)
 
         if not found_result_block:
@@ -175,6 +181,8 @@ class DeepSeekWebSearch:
                 "completion_tokens": int(usage.get("output_tokens") or 0),
             },
         }
+        result = annotate_evidence(result)
+        remember_sources(self.cache, self.budget_scope, result["sources"])
         self.cache[cache_key] = result
         return result
 
@@ -207,6 +215,24 @@ def _public_url(value: Any) -> bool:
                     and not parts.username and not parts.password)
     except ValueError:
         return False
+
+
+def annotate_evidence(result: dict[str, Any]) -> dict[str, Any]:
+    """Describe returned evidence, without treating unstructured model prose as sources."""
+    raw_sources = result.get("sources") or []
+    if not isinstance(raw_sources, list):
+        raise RuntimeError("检索来源格式无效")
+    sources = [{**source, "evidence_status": (
+        "search_excerpt" if isinstance(source.get("snippet"), str) and source["snippet"].strip()
+        else "link_only"
+    )} for source in raw_sources if isinstance(source, dict)]
+    excerpts = sum(source["evidence_status"] == "search_excerpt" for source in sources)
+    return {**result, "sources": sources, "evidence": {
+        "indexed_sources": len(sources), "sources_with_excerpt": excerpts,
+        "notice": ("本次未取得可引用来源，不能补造文献或最新消息。" if not sources else
+                   "检索返回有限摘录，不等于阅读全文；核实方法、题录或日期须有相应原文证据。" if excerpts else
+                   "只取得标题和链接，未取得正文；不能据此补写文献方法、作者或最新事件。"),
+    }}
 
 
 def parse_exa_response(body: str) -> list[dict[str, str]]:
@@ -312,7 +338,7 @@ def configured_search(
 ) -> SearchHandler | None:
     config = config or db.get(WebSearchConfig, 1)
     if config is None or config.backend == "legacy":
-        return DeepSeekWebSearch(inference_provider, cache) if supports_deepseek_search(inference_provider) else None
+        return DeepSeekWebSearch(inference_provider, cache, budget_scope=budget_scope) if supports_deepseek_search(inference_provider) else None
     if config.backend == "disabled":
         return None
     if config.backend == "exa":
@@ -340,6 +366,7 @@ def configured_search(
                     "remaining": max(0, config.max_queries - budget["used"])}
         key = f"search:{config.backend}:{config.deepseek_provider_id}:{config.max_results}:{' '.join(query.casefold().split())}"
         if key in cache:
+            remember_sources(cache, budget_scope, cache[key].get("sources") or [])
             return {**cache[key], "cached": True,
                     "search_budget": budget_status(),
                     "_usage": {"llm_calls": 0, "prompt_tokens": 0, "completion_tokens": 0}}
@@ -349,7 +376,8 @@ def configured_search(
                     "search_budget": budget_status(),
                     "_usage": {"llm_calls": 0, "prompt_tokens": 0, "completion_tokens": 0}}
         budget["used"] += 1
-        result = await handler({"query": query})
+        result = annotate_evidence(await handler({"query": query}))
+        remember_sources(cache, budget_scope, result["sources"])
         result["search_backend"] = config.backend
         cache[key] = result
         return {**result, "search_budget": budget_status()}

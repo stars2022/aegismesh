@@ -231,6 +231,23 @@ async def test_leader_receives_coordination_tools_without_harness_prompt(
     await OpenAICompatibleTransport().execute(
         agent, "开始研讨", 5, harness=False, tool_registry=registry, collab_style="swarm",
     )
+    assert captured["messages"][0]["content"] == "用户编写的提示词"
+
+    registry.register(
+        "run_swarm_discussion",
+        {
+            "type": "function",
+            "function": {
+                "name": "run_swarm_discussion",
+                "description": "研讨",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        lambda _arguments: {},
+    )
+    await OpenAICompatibleTransport().execute(
+        agent, "开始研讨", 5, harness=False, tool_registry=registry, collab_style="swarm",
+    )
     assert "必须调用 run_swarm_discussion" in captured["messages"][0]["content"]
 
 

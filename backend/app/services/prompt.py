@@ -21,11 +21,10 @@ DATA_BOUNDARY = (
 )
 
 PARTNER_DELIVERY = (
-    "按以下结构交付，便于调用方汇总：\n"
-    "- 结论：直接给出处理结果\n"
-    "- 依据与出处：注明支撑事实或引用来源；没有出处的明确标注「未核实」，严禁编造\n"
-    "- 未完成或受阻之处：若检索为空、数据不足或超出能力范围，如实说明客观原因，不要拼凑答案\n"
-    "- 建议的后续步骤："
+    "按当前任务指定的语言、篇幅和格式交付，先直接给结果。"
+    "已有主题、原文或参数时直接处理，不再要求调用方重复提供。"
+    "简单问题不用固定四段模板、无关副标题、下一步菜单或重复的流程说明。"
+    "仅说明会影响结论的证据缺口、限制与真实失败；没有出处的事实标注「未核实」，严禁编造。"
 )
 
 STYLE_DIRECTIVES = {
@@ -47,6 +46,7 @@ STYLE_DIRECTIVES = {
         "直接执行，严禁在回复中宣告模式或输出指令文本。"
     ),
 }
+STYLE_TOOLS = {"workflow": "execute_workflow", "swarm": "run_swarm_discussion", "parallel": "dispatch_task"}
 
 LEADER_COORDINATION = (
     "你负责规划、协调与汇总，但应以完成用户目标为准。\n"
@@ -116,6 +116,8 @@ def fence_untrusted(title: str, body: str) -> str:
 
 def effective_tool_names(agent: Agent) -> list[str]:
     names = list(agent.tools or [])
+    if "web_search" in names and "read_web_page" not in names:
+        names.append("read_web_page")
     if agent.role == "leader":
         names.extend(name for name in LEADER_RUNTIME_TOOLS if name not in names)
     return names
@@ -126,6 +128,7 @@ def build_system_prompt(
     harness: bool = False,
     collab_style: str = "auto",
     extra_tool_names: tuple[str, ...] = (),
+    available_tool_names: tuple[str, ...] | None = None,
 ) -> str:
     authored = (agent.system_prompt or "").strip()
     canvas_guidance = (
@@ -135,11 +138,16 @@ def build_system_prompt(
     )
     if not harness:
         style_directive = STYLE_DIRECTIVES.get(collab_style) if agent.role == "leader" else None
+        if available_tool_names is not None and STYLE_TOOLS.get(collab_style) not in available_tool_names:
+            style_directive = None
         return "\n\n".join(part for part in (authored, canvas_guidance, style_directive) if part)
     skills = "、".join(
         item.get("name", "").strip() for item in (agent.skills or []) if item.get("name")
     )
-    tools = "、".join(dict.fromkeys([*effective_tool_names(agent), *extra_tool_names]))
+    names = list(available_tool_names) if available_tool_names is not None else [
+        *effective_tool_names(agent), *extra_tool_names,
+    ]
+    tools = "、".join(dict.fromkeys(names))
     sections = [
         PromptSection(-100, "身份", f"你是 {agent.name}。"),
         PromptSection(0, "系统提示词", authored or (agent.description or "").strip() or "完成当前任务。"),
@@ -155,11 +163,35 @@ def build_system_prompt(
     ]
     if agent.role != "leader":
         sections.append(PromptSection(160, "交付规范", PARTNER_DELIVERY))
+    if "web_search" in names:
+        evidence = (
+            "先判断是否需要检索：翻译已给原文、分析已给教学数据等任务，不为凑来源而联网。"
+            "搜索命中只是索引；只有标题和链接时不能声称已读正文、核实方法、作者、机构或最新事件。"
+            "根据实际取得的摘录作答，区分来源说法、推断与未核实项，不用记忆补全检索缺口。"
+            "日期或版本不明就如实说明，不把查询时间当作来源发布时间。"
+        )
+        if "read_web_page" in names:
+            evidence += (
+                "需要正文证据时，用 read_web_page 读取本轮搜索中的原始来源，优先原始发布方；"
+                "每个分支最多两页，按需要读取，不能把截断摘录称为阅读全文。"
+            )
+        sections.append(PromptSection(170, "证据使用", evidence))
+    if "citation_tool" in names:
+        sections.append(PromptSection(175, "题录核验", (
+            "citation_tool 只解析、格式化或检查你传入的字段，不联网核实文献存在、作者或年份。"
+            "格式化成功不等于事实核验；缺字段就标明缺项，不补造作者、DOI 或机构归属。"
+        )))
     if agent.role == "leader":
-        sections.append(PromptSection(150, "智能体协调", LEADER_COORDINATION))
+        sections.append(PromptSection(150, "智能体协调", (
+            LEADER_COORDINATION if "dispatch_task" in names else
+            "本次运行未提供子智能体派发工具，请使用当前实际可用的领域工具直接完成。"
+            "不得声称已派发其他智能体，也不要要求用户为当前任务额外开放权限。"
+        )))
         if canvas_guidance:
             sections.append(PromptSection(152, "共享画布", canvas_guidance))
         style_directive = STYLE_DIRECTIVES.get(collab_style)
+        if STYLE_TOOLS.get(collab_style) not in names:
+            style_directive = None
         if style_directive:
             sections.append(PromptSection(155, "协作方式指定", style_directive))
     return "\n\n".join(
