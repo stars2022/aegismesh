@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import os
 import socket
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
-from ..models import Agent, HostedTask, Invocation, TraceEvent
+from ..models import Agent, HostedTask, Invocation, OperationalLog, TraceEvent
 
 
 _HOST = socket.gethostname()
@@ -55,6 +56,46 @@ def runtime_is_live(marker: Any) -> bool:
     expected_start = marker.get("start_ticks")
     if expected_start and (actual_start := _process_start_ticks(pid)):
         return expected_start == actual_start
+    return True
+
+
+def _runtime_quiescent():
+    return (
+        ~select(Invocation.id).where(Invocation.status.in_(["routing", "working"])).exists()
+        & ~select(HostedTask.task_id).where(HostedTask.state.in_(["accepted", "working"])).exists()
+    )
+
+
+def recover_idle_probe(
+    db: Session, agent_id: str, *, reason: str, require_quiescent: bool = False,
+) -> bool:
+    """Release an abandoned probe, never declare a successful/healthy agent.
+
+    The conditional update checks persisted load, not a caller's stale ORM
+    snapshot. Startup additionally requires no live work anywhere in this DB.
+    Keep the original cooldown and all failure statistics: only an actual
+    successful call may close the breaker.
+    """
+    conditions = [
+        Agent.id == agent_id, Agent.circuit_state == "half-open",
+        Agent.active_tasks == 0, Agent.queued_tasks == 0,
+    ]
+    if require_quiescent:
+        conditions.append(_runtime_quiescent())
+    changed = db.execute(
+        update(Agent).where(*conditions).values(circuit_state="open")
+        .execution_options(synchronize_session="fetch")
+    ).rowcount
+    if not changed:
+        return False
+    # Local audit in the same transaction; this is not an AMP task/call event.
+    db.add(OperationalLog(
+        event_key=f"circuit-recovery:{uuid.uuid4().hex}", origin="admin", kind="audit",
+        occurred_at=datetime.now(timezone.utc), actor="system:runtime-recovery",
+        action="circuit_probe_recovered", target=f"/runtime/agents/{agent_id}/circuit",
+        outcome="success", summary="未完成的半开探测已释放，等待真实调用验证",
+        detail={"agent_id": agent_id, "reason": reason, "from": "half-open", "to": "open"},
+    ))
     return True
 
 
@@ -103,19 +144,17 @@ def recover_interrupted_runtime(db: Session) -> tuple[int, int]:
         }
         recovered_hosted += 1
 
-    # Do not wipe another process's live load counters. A stale counter may be
-    # cleared only when no working invocation or hosted task remains anywhere.
-    live_invocation = db.scalar(
-        select(Invocation.id).where(Invocation.status.in_(["routing", "working"])).limit(1)
+    # Production sessions disable autoflush: terminal states must reach the DB
+    # before checking for live work. Check quiescence in the UPDATE itself so a
+    # newly accepted request also prevents cleanup, not just an earlier SELECT.
+    db.flush()
+    db.execute(
+        update(Agent).where(
+            _runtime_quiescent(), or_(Agent.active_tasks != 0, Agent.queued_tasks != 0),
+        ).values(active_tasks=0, queued_tasks=0).execution_options(synchronize_session="fetch")
     )
-    live_hosted = db.scalar(
-        select(HostedTask.task_id).where(HostedTask.state.in_(["accepted", "working"])).limit(1)
-    )
-    if live_invocation is None and live_hosted is None:
-        for agent in db.scalars(select(Agent)):
-            if agent.active_tasks != 0 or agent.queued_tasks != 0:
-                agent.active_tasks = 0
-                agent.queued_tasks = 0
+    for agent_id in db.scalars(select(Agent.id).where(Agent.circuit_state == "half-open")):
+        recover_idle_probe(db, agent_id, reason="runtime_interrupted", require_quiescent=True)
     db.commit()
     from .quotas import recover_reservations
     recover_reservations(db)

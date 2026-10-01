@@ -9,12 +9,12 @@ import json
 import re
 import time
 import uuid
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import get_settings
@@ -49,7 +49,7 @@ from .web_search import WEB_SEARCH_SCHEMA, configured_search
 from .amp_service import amp_service
 from .context_projection import ContextFragment, ContextProjectionEngine, DISPATCH_CONTEXT_SCHEMA, CONTEXT_SELECTION_PROPERTIES
 from .prompt import CANVAS_TOOL_NAMES, fence_untrusted
-from .runtime_recovery import runtime_marker
+from .runtime_recovery import recover_idle_probe, runtime_marker
 from .discovery import AdpDiscoveryClient
 from .agent_search import LIST_AGENTS_SCHEMA, search_constraints, matches_agent
 from .discovery_pool import discovery_candidates, remember_selected_candidate, rank_discovery
@@ -120,19 +120,15 @@ class AgentTaskLease:
     def acquire(self, session: Session | None = None) -> None:
         if self._acquired:
             return
-        if session is not None:
-            agent = session.get(Agent, self.agent_id)
-            if agent:
-                agent.active_tasks += 1
-                session.commit()
-            self._acquired = True
-        else:
-            with self.db_factory() as db:
-                agent = db.get(Agent, self.agent_id)
-                if agent:
-                    agent.active_tasks += 1
-                    db.commit()
-            self._acquired = True
+        with nullcontext(session) if session is not None else self.db_factory() as db:
+            db.flush()
+            changed = db.execute(
+                update(Agent).where(Agent.id == self.agent_id)
+                .values(active_tasks=Agent.active_tasks + 1)
+                .execution_options(synchronize_session="fetch")
+            ).rowcount
+            db.commit()
+            self._acquired = bool(changed)
 
     def mark_handled(self) -> None:
         """Marks that active_tasks was already decremented by record_success/failure."""
@@ -143,17 +139,17 @@ class AgentTaskLease:
             return
         self._acquired = False
         try:
-            if session is not None:
-                agent = session.get(Agent, self.agent_id)
-                if agent:
-                    agent.active_tasks = max(0, agent.active_tasks - 1)
-                    session.commit()
-            else:
-                with self.db_factory() as db:
-                    agent = db.get(Agent, self.agent_id)
-                    if agent:
-                        agent.active_tasks = max(0, agent.active_tasks - 1)
-                        db.commit()
+            with nullcontext(session) if session is not None else self.db_factory() as db:
+                db.flush()
+                db.execute(
+                    update(Agent).where(Agent.id == self.agent_id).values(
+                        active_tasks=case((Agent.active_tasks > 0, Agent.active_tasks - 1), else_=0),
+                    ).execution_options(synchronize_session="fetch")
+                )
+                # Cancellation bypasses record_success/failure. Once the last
+                # lease exits, it must not leave a half-open probe held forever.
+                recover_idle_probe(db, self.agent_id, reason="task_lease_released")
+                db.commit()
         except Exception as exc:
             logger.warning("Failed to release task lease for agent %s: %s", self.agent_id, exc)
 
