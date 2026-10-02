@@ -22,6 +22,10 @@ except ImportError:
     pypdf = None
 
 
+RECOVERABLE_TOOL_ERRORS = (ArithmeticError, SyntaxError, ValueError, TypeError,
+                           ZoneInfoNotFoundError, RuntimeError)
+
+
 class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, tuple[dict[str, Any], Callable[[dict[str, Any]], Any]]] = {
@@ -30,7 +34,7 @@ class ToolRegistry:
                     "type": "function",
                     "function": {
                         "name": "calculator",
-                        "description": "计算基础算术表达式。",
+                        "description": "计算一个仅含数字、括号及 + - * / // % ** 的算术表达式，例如 (2+3)/8。不得传入文字、变量、赋值、分号或 mean/sqrt 等函数；复杂计算请拆成合法表达式。",
                         "parameters": {
                             "type": "object",
                             "properties": {"expression": {"type": "string"}},
@@ -172,14 +176,14 @@ class ToolRegistry:
             return {"ok": False, "error": f"工具未注册：{name}"}
         try:
             outcome = self._tools[name][1](arguments)
-        except (ArithmeticError, SyntaxError, ValueError, TypeError, ZoneInfoNotFoundError, RuntimeError) as exc:
+        except RECOVERABLE_TOOL_ERRORS as exc:
             return {"ok": False, "error": str(exc)}
         if inspect.isawaitable(outcome):
 
             async def _finish() -> dict[str, Any]:
                 try:
                     return {"ok": True, "result": await outcome}
-                except (ValueError, TypeError, RuntimeError) as exc:
+                except RECOVERABLE_TOOL_ERRORS as exc:
                     return {"ok": False, "error": str(exc)}
 
             return _finish()

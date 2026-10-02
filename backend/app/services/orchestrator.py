@@ -16,6 +16,7 @@ from typing import Any
 
 from sqlalchemy import case, select, update
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm.attributes import flag_modified
 
 from ..config import get_settings
 from ..database import SessionLocal
@@ -1439,6 +1440,9 @@ class ReliableOrchestrator:
                             data["runtime_tools"] = [call if c.get("id") == call["id"] else c
                                                      for c in data.get("runtime_tools", [])]
                             invocation.result_data = data
+                            # The live call object may already have mutated the
+                            # JSON value in place; force its terminal state dirty.
+                            flag_modified(invocation, "result_data")
                             self.db.commit()
                     event = {"tool_call_id": call["id"], "task_id": collab.get("task_id") if collab else None,
                              "session_id": invocation.session_id, "invocation_id": invocation.id,
@@ -1920,17 +1924,17 @@ class ReliableOrchestrator:
         )
         return wrapped
 
-    def _runtime_registry(self, provider: ProviderConfig | None, *, search_scope: str = "default") -> ToolRegistry:
+    def _runtime_registry(self, provider: ProviderConfig | None, *, search_scope: str = "default",
+                          search_limit: int | None = None, page_limit: int | None = None) -> ToolRegistry:
         registry = ToolRegistry()
-        search = configured_search(self.db, provider, self._web_search_cache, budget_scope=search_scope)
+        search = configured_search(self.db, provider, self._web_search_cache,
+                                   budget_scope=search_scope, max_queries=search_limit)
         if search is not None:
-            registry.register(
-                "web_search",
-                WEB_SEARCH_SCHEMA,
-                search,
-            )
-            registry.register("read_web_page", READ_WEB_PAGE_SCHEMA,
-                              SourcePageReader(self._web_search_cache, search_scope))
+            if search_limit != 0:
+                registry.register("web_search", WEB_SEARCH_SCHEMA, search)
+            if page_limit != 0 and search_limit != 0:
+                registry.register("read_web_page", READ_WEB_PAGE_SCHEMA,
+                                  SourcePageReader(self._web_search_cache, search_scope, max_pages=page_limit))
         return registry
 
     async def _list_agents(

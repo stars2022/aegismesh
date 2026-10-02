@@ -134,7 +134,8 @@ class MqGroupSession:
             raise
 
     async def send_and_collect(self, text: str, session_id: str, target_aic: str | None = None,
-                               timeout_seconds: float = 90, *, task_id: str | None = None) -> str:
+                               timeout_seconds: float = 90, *, task_id: str | None = None,
+                               execution_context: dict[str, Any] | None = None) -> str:
         if not target_aic or target_aic not in {p.aic for p in self._partners}:
             raise AipGroupBridgeError("必须指定群内目标智能体")
         task_id = task_id or f"task-{uuid.uuid4().hex}"
@@ -146,8 +147,16 @@ class MqGroupSession:
                     await self.ensure()
                     # SDK Message tap uses sessionId as correlationId. Give each
                     # task its own wire session so both edges emit the real taskId.
-                    await self._session.leader_mq_client.start_task(task_id, text_content=text,
-                                                  task_id=task_id, mentions=[target_aic])
+                    if execution_context is None:
+                        await self._session.leader_mq_client.start_task(task_id, text_content=text,
+                                                      task_id=task_id, mentions=[target_aic])
+                    else:
+                        from acps_sdk.aip import StructuredDataItem, TaskCommandType
+                        await self._session.leader_mq_client.send_task_command(
+                            TaskCommandType.Start, task_id, task_id, text_content=text,
+                            data_items=[StructuredDataItem(data=execution_context,
+                                                          metadata={"role": "execution-context"})],
+                            mentions=[target_aic])
                     sent = True
                     completion_sent = False
                     while True:

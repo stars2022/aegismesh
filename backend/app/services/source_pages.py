@@ -185,8 +185,11 @@ async def _fetch_excerpt(url: str) -> dict:
 
 
 class SourcePageReader:
-    def __init__(self, cache: dict, scope: str):
+    def __init__(self, cache: dict, scope: str, *, max_pages: int | None = None):
+        if max_pages is not None and (type(max_pages) is not int or not 0 <= max_pages <= MAX_PAGES):
+            raise ValueError("任务原文读取上限无效")
         self.cache, self.scope = cache, scope
+        self.max_pages = MAX_PAGES if max_pages is None else max_pages
 
     async def __call__(self, arguments: dict) -> dict:
         if not isinstance(arguments, dict):
@@ -196,14 +199,15 @@ class SourcePageReader:
             raise ValueError("只能读取当前分支 web_search 已返回的来源")
         budget = self.cache.setdefault(f"pages:budget:{self.scope}", {"used": 0})
         def remaining():
-            return {"used": budget["used"], "limit": MAX_PAGES, "remaining": MAX_PAGES - budget["used"]}
+            return {"used": budget["used"], "limit": self.max_pages,
+                    "remaining": max(0, self.max_pages - budget["used"])}
         key = f"pages:cache:{url}"
         seen = budget.setdefault("seen", [])
         if key in self.cache and url in seen:
             return {**self.cache[key], "cached": True, "page_budget": remaining()}
-        if budget["used"] >= MAX_PAGES:
+        if budget["used"] >= self.max_pages:
             return {"status": "budget_exhausted", "url": url, "evidence_status": "unread",
-                    "notice": "本分支已达到两页读取上限，未发起新请求。", "page_budget": remaining()}
+                    "notice": "本分支已达到原文读取上限，未发起新请求。", "page_budget": remaining()}
         # Reserve synchronously, before DNS/I/O; concurrent tools cannot overspend.
         # A first read of a cached page still counts for this branch's excerpt limit.
         budget["used"] += 1

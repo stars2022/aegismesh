@@ -335,14 +335,22 @@ def configured_search(
     db: Session, inference_provider: ProviderConfig | None,
     cache: dict[str, dict[str, Any]], *, config: WebSearchConfig | None = None,
     budget_scope: str = "default",
+    max_queries: int | None = None,
 ) -> SearchHandler | None:
+    if max_queries is not None and (type(max_queries) is not int or not 0 <= max_queries <= 20):
+        raise ValueError("任务检索上限无效")
     config = config or db.get(WebSearchConfig, 1)
-    if config is None or config.backend == "legacy":
-        return DeepSeekWebSearch(inference_provider, cache, budget_scope=budget_scope) if supports_deepseek_search(inference_provider) else None
-    if config.backend == "disabled":
+    legacy = config is None or config.backend == "legacy"
+    if legacy:
+        if not supports_deepseek_search(inference_provider):
+            return None
+        handler: SearchHandler = DeepSeekWebSearch(inference_provider, cache, budget_scope=budget_scope)
+        if max_queries is None:
+            return handler
+    elif config.backend == "disabled":
         return None
-    if config.backend == "exa":
-        handler: SearchHandler = ExaWebSearch(config)
+    elif config.backend == "exa":
+        handler = ExaWebSearch(config)
     elif config.backend == "deepseek":
         provider = db.get(ProviderConfig, config.deepseek_provider_id)
         if not supports_deepseek_search(provider):
@@ -357,20 +365,27 @@ def configured_search(
         )
     else:
         raise RuntimeError("搜索服务配置无效")
+    # A wire/task limit can tighten the saved administrator limit, never raise it.
+    limit = config.max_queries if config else 8
+    if max_queries is not None:
+        limit = min(limit, max_queries)
+    backend = config.backend if config else "legacy"
+    selected_provider = config.deepseek_provider_id if config and not legacy else inference_provider.id if inference_provider else ""
+    max_results = config.max_results if config else get_settings().web_search_max_results
 
     async def search(arguments: dict[str, Any]) -> dict[str, Any]:
         query = _query(arguments)
         budget = cache.setdefault(f"search:budget:{budget_scope}", {"used": 0})
         def budget_status() -> dict[str, int]:
-            return {"used": budget["used"], "limit": config.max_queries,
-                    "remaining": max(0, config.max_queries - budget["used"])}
-        key = f"search:{config.backend}:{config.deepseek_provider_id}:{config.max_results}:{' '.join(query.casefold().split())}"
+            return {"used": budget["used"], "limit": limit,
+                    "remaining": max(0, limit - budget["used"])}
+        key = f"search:{backend}:{selected_provider}:{max_results}:{' '.join(query.casefold().split())}"
         if key in cache:
             remember_sources(cache, budget_scope, cache[key].get("sources") or [])
             return {**cache[key], "cached": True,
                     "search_budget": budget_status(),
                     "_usage": {"llm_calls": 0, "prompt_tokens": 0, "completion_tokens": 0}}
-        if budget["used"] >= config.max_queries:
+        if budget["used"] >= limit:
             return {"status": "budget_exhausted", "query": query, "sources": [],
                     "message": "当前智能体已用完检索次数，未发起新搜索。请根据已有来源作答，将缺少证据的内容标注为未核实。",
                     "search_budget": budget_status(),
@@ -378,7 +393,7 @@ def configured_search(
         budget["used"] += 1
         result = annotate_evidence(await handler({"query": query}))
         remember_sources(cache, budget_scope, result["sources"])
-        result["search_backend"] = config.backend
+        result["search_backend"] = backend
         cache[key] = result
         return {**result, "search_budget": budget_status()}
 

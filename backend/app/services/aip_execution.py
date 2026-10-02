@@ -31,6 +31,7 @@ class AipExecutionContext:
     deadline: float
     trace_id: str
     upstream_aic: str = ""
+    tool_limits: dict[str, int] | None = None
 
     def remaining(self) -> float:
         remaining = self.deadline - time.time()
@@ -44,8 +45,11 @@ class AipExecutionContext:
         if len(self.chain) >= MAX_CALL_CHAIN_DEPTH:
             raise ValueError("AIP 调用链已达到最大深度")
         self.remaining()
-        return {"kind": EXECUTION_KIND, "chain": list(self.chain),
+        data = {"kind": EXECUTION_KIND, "chain": list(self.chain),
                 "deadline": self.deadline, "trace_id": self.trace_id}
+        if self.tool_limits is not None:
+            data["tool_limits"] = dict(self.tool_limits)
+        return data
 
     @classmethod
     def from_task(cls, task: HostedTask, agent: Agent) -> AipExecutionContext:
@@ -80,8 +84,14 @@ class AipExecutionContext:
             raise ValueError("无效的 AIP 总时限")
         if not isinstance(trace, str) or not trace or len(trace) > 128:
             raise ValueError("无效的 AIP 追踪标识")
+        limits = data.get("tool_limits")
+        maxima = {"web_search": 20, "read_web_page": 2}
+        if limits is not None and (not isinstance(limits, dict)
+                or any(key not in maxima or type(value) is not int
+                       or not 0 <= value <= maxima[key] for key, value in limits.items())):
+            raise ValueError("无效的 AIP 任务工具预算")
         context = cls(tuple(chain) + (agent.aic,), min(deadline, supplied_deadline),
-                      trace, task.owner_peer_aic)
+                      trace, task.owner_peer_aic, dict(limits) if limits is not None else None)
         context.remaining()
         return context
 
@@ -100,6 +110,12 @@ local model. Normal UI orchestration and its compatibility switch are unchanged.
         self.aip_context = context
         self.blocked_aics = {*context.chain, context.upstream_aic} - {""}
         self.external_delegation_enabled = bool(super()._routing_policy().external_delegation_enabled)
+
+    def _runtime_registry(self, provider, *, search_scope="default", **kwargs):
+        limits = self.aip_context.tool_limits or {}
+        return super()._runtime_registry(provider, search_scope=search_scope,
+                                         search_limit=limits.get("web_search"),
+                                         page_limit=limits.get("read_web_page"))
 
     def _coordination_capable(self, agent: Agent) -> bool:
         return (self.external_delegation_enabled and len(self.aip_context.chain) < MAX_CALL_CHAIN_DEPTH
@@ -121,6 +137,10 @@ local model. Normal UI orchestration and its compatibility switch are unchanged.
             # This agent has already received its real network request. Running
             # its model is not another cross-agent call or a self-call for credit.
             kwargs["_mq_delivered"] = True
+            if self.aip_context.tool_limits:
+                history = [*history, {"role": "system", "content":
+                    "本任务服务端硬工具预算（不是建议）：" + str(self.aip_context.tool_limits)
+                    + "。用尽后不再发起请求，直接根据已取得的证据简洁作答；不得重复尝试被拦住的调用。"}]
             if agent.role == "leader" and not self._coordination_capable(agent):
                 history = [*history, {"role": "system", "content":
                     "本次外部任务未开放子智能体派发（管理员开关关闭或已达调用深度上限）。"
