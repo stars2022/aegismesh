@@ -146,6 +146,15 @@ def settle_model(ticket, usage: dict | None):
         db.commit()
 
 
+def recover_terminal_model_reservations(db):
+    """Close orphaned tickets without refunding potentially incurred model cost."""
+    from ..models import Invocation
+    terminal = select(Invocation.id).where(Invocation.status.in_(["completed", "failed", "cancelled"]))
+    return db.execute(update(ModelUsage).where(
+        ModelUsage.status == "reserved", ModelUsage.invocation_id.in_(terminal),
+    ).values(status="estimated")).rowcount
+
+
 async def metered_post(client, endpoint, *, json, headers, output_key="max_tokens", provider_id="default", **kwargs):
     ticket = reserve_model(json, output_key=output_key, provider_id=provider_id)
     usage = None

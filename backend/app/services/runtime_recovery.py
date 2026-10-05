@@ -158,4 +158,7 @@ def recover_interrupted_runtime(db: Session) -> tuple[int, int]:
     db.commit()
     from .quotas import recover_reservations
     recover_reservations(db)
+    from .model_budget import recover_terminal_model_reservations
+    recover_terminal_model_reservations(db)
+    db.commit()
     return recovered_invocations, recovered_hosted

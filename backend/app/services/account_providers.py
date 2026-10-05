@@ -19,6 +19,14 @@ class AuthLogRedactor(logging.Filter):
     def filter(self, record):
         # HTTP clients and ASGI access logs can otherwise retain OAuth GET secrets.
         from .observability import safe_url
+        if record.name == "uvicorn.access" and isinstance(record.args, tuple) and len(record.args) == 5:
+            # AccessFormatter requires the original structured five arguments.
+            # Sanitize the path, not the tuple's shape or its numeric status.
+            client, method, path, version, status = record.args
+            path = safe_url(str(path))
+            path = re.sub(r"(/api/account/oauth/[^/\s]+/callback)\?[^\s\"]+", r"\1?[redacted]", path)
+            record.args = (client, method, path, version, status)
+            return True
         message = record.getMessage()
         message = re.sub(r"https?://[^\s\"<>]+", lambda m: safe_url(m.group(0)), message)
         message = re.sub(r"(/api/account/oauth/[^/\s]+/callback)\?[^\s\"]+", r"\1?[redacted]", message)

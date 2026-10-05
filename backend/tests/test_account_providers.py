@@ -131,3 +131,25 @@ def test_provider_configuration_and_logs_do_not_expose_credentials(monkeypatch):
         record = logging.LogRecord("httpx", logging.INFO, "", 1, message, args, None)
         providers.AuthLogRedactor().filter(record)
         assert all(secret not in record.getMessage() for secret in ["SUPERSECRET", "STATE", "CODE"])
+
+
+def test_access_log_redaction_preserves_uvicorn_formatter_arguments():
+    from uvicorn.logging import AccessFormatter
+    record = logging.LogRecord(
+        "uvicorn.access", logging.INFO, "", 1, '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1:1234", "GET", "/api/account/oauth/google/callback?code=SUPERSECRET&state=STATE", "1.1", 303), None,
+    )
+    assert providers.AuthLogRedactor().filter(record)
+    assert len(record.args) == 5 and record.args[-1] == 303
+    output = AccessFormatter("%(client_addr)s %(request_line)s %(status_code)s").format(record)
+    assert "303" in output and "GET /api/account/oauth/google/callback" in output
+    assert "SUPERSECRET" not in output and "STATE" not in output
+
+
+def test_ordinary_access_log_is_not_flattened():
+    from uvicorn.logging import AccessFormatter
+    args = ("127.0.0.1:1234", "GET", "/api/health", "1.1", 200)
+    record = logging.LogRecord("uvicorn.access", logging.INFO, "", 1, '%s - "%s %s HTTP/%s" %d', args, None)
+    providers.AuthLogRedactor().filter(record)
+    assert record.args == args
+    assert "200" in AccessFormatter("%(request_line)s %(status_code)s").format(record)

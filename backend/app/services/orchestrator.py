@@ -52,6 +52,7 @@ from .amp_service import amp_service
 from .context_projection import ContextFragment, ContextProjectionEngine, DISPATCH_CONTEXT_SCHEMA, CONTEXT_SELECTION_PROPERTIES
 from .prompt import CANVAS_TOOL_NAMES, fence_untrusted
 from .runtime_recovery import recover_idle_probe, runtime_marker
+from .persistence import StorageFailure, sql_cleanup, storage_error, storage_error_code
 from .discovery import AdpDiscoveryClient
 from .agent_search import LIST_AGENTS_SCHEMA, search_constraints, matches_agent
 from .discovery_pool import discovery_candidates, remember_selected_candidate, rank_discovery
@@ -132,28 +133,35 @@ class AgentTaskLease:
             db.commit()
             self._acquired = bool(changed)
 
-    def mark_handled(self) -> None:
-        """Marks that active_tasks was already decremented by record_success/failure."""
-        self._acquired = False
-
     def release(self, session: Session | None = None) -> None:
         if not self._acquired:
             return
-        self._acquired = False
+
+        def decrement(db):
+            db.execute(
+                update(Agent).where(Agent.id == self.agent_id).values(
+                    active_tasks=case((Agent.active_tasks > 0, Agent.active_tasks - 1), else_=0),
+                ).execution_options(synchronize_session="fetch")
+            )
+            recover_idle_probe(db, self.agent_id, reason="task_lease_released")
+
         try:
             with nullcontext(session) if session is not None else self.db_factory() as db:
+                if not db.is_active:
+                    db.rollback()
                 db.flush()
-                db.execute(
-                    update(Agent).where(Agent.id == self.agent_id).values(
-                        active_tasks=case((Agent.active_tasks > 0, Agent.active_tasks - 1), else_=0),
-                    ).execution_options(synchronize_session="fetch")
-                )
-                # Cancellation bypasses record_success/failure. Once the last
-                # lease exits, it must not leave a half-open probe held forever.
-                recover_idle_probe(db, self.agent_id, reason="task_lease_released")
+                decrement(db)
                 db.commit()
-        except Exception as exc:
-            logger.warning("Failed to release task lease for agent %s: %s", self.agent_id, exc)
+            self._acquired = False
+        except Exception:
+            if session is not None:
+                session.rollback()
+            try:
+                # Retry only the uncommitted lease decrement in a fresh Session.
+                sql_cleanup(self.db_factory, decrement)
+                self._acquired = False
+            except Exception:
+                logger.exception("Failed to release task lease for agent %s", self.agent_id)
 
 
 class ReliableOrchestrator:
@@ -189,6 +197,69 @@ class ReliableOrchestrator:
         self.max_dispatches = get_settings().max_dispatches_per_coordinator
         self._context_reviews: dict[str, dict[str, Any]] = {}
         self._collaborations: dict[str, list[dict[str, Any]]] = {}
+        self._storage_failed = False
+        self._storage_failure_code = "storage_unavailable"
+
+    def _check_storage_state(self) -> None:
+        if self._storage_failed:
+            raise StorageFailure(self._storage_failure_code)
+
+    def _abort_storage_failure(self, exc: BaseException) -> None:
+        if storage_error(exc) is None:
+            return
+        self._storage_failed = True
+        self._storage_failure_code = storage_error_code(exc)
+        self.db.rollback()
+        raise StorageFailure(self._storage_failure_code) from exc
+
+    def _finish_storage_failure(self, invocation_id: str, exc: BaseException):
+        """Durably terminate this invocation, not replay its already-issued work."""
+        from . import quotas
+        from .model_budget import recover_terminal_model_reservations
+        code = storage_error_code(exc)
+
+        def finish(db):
+            inv = db.get(Invocation, invocation_id)
+            if inv is not None and inv.status in {"routing", "working"}:
+                inv.status = "failed"
+                inv.finished_at = datetime.now(timezone.utc)
+                message = str(StorageFailure(code))
+                inv.result_text = f"{inv.result_text}\n\n[{message}]" if inv.result_text else message
+                data = deepcopy(inv.result_data or {})
+                data["storage_error"] = code
+                unfinished_tools = list(data.get("runtime_tools") or [])
+                for branch in data.get("collaborations") or []:
+                    if branch.get("status") in {"running", "working", "planned", "pending"}:
+                        branch.update(status="failed", phase="failed", phase_name="任务已中断",
+                                      completed_at=time.time(), error=message)
+                    unfinished_tools.extend(branch.get("tools") or [])
+                for tool in unfinished_tools:
+                    if tool.get("status") == "running":
+                        tool.update(status="failed", completed_at=time.time(),
+                                    output_preview="存储异常中断，工具回执未能完整保存")
+                inv.result_data = data
+                db.execute(update(RouteAttempt).where(
+                    RouteAttempt.invocation_id == invocation_id,
+                    RouteAttempt.state.not_in(["completed", "failed", "cancelled"]),
+                ).values(state="failed", error=message))
+                db.add(TraceEvent(invocation=inv, event_type="TASK_STORAGE_FAILED",
+                                  detail={"error_code": code, "external_work_not_replayed": True}))
+            db.flush()
+            quotas.settle(db, invocation_id, success=bool(inv and inv.status == "completed"),
+                          prompt_tokens=inv.prompt_tokens if inv else 0,
+                          completion_tokens=inv.completion_tokens if inv else 0,
+                          child_calls=len((inv.result_data or {}).get("collaborations") or []) if inv else 0)
+            recover_terminal_model_reservations(db)
+            agent = db.get(Agent, inv.selected_agent_id) if inv and inv.selected_agent_id else None
+            return inv, [], agent
+
+        try:
+            return sql_cleanup(self.session_factory, finish)
+        except Exception as cleanup_error:
+            if storage_error(cleanup_error) is None:
+                raise
+            logger.exception("Invocation %s storage cleanup could not be persisted", invocation_id)
+            raise StorageFailure(storage_error_code(cleanup_error)) from cleanup_error
 
     def _routing_policy(self) -> RoutingPolicy:
         policy = self.db.get(RoutingPolicy, 1)
@@ -217,6 +288,8 @@ class ReliableOrchestrator:
 
     @staticmethod
     def _safe_error_message(exc: Exception) -> str:
+        if storage_error(exc) is not None:
+            return str(StorageFailure(storage_error_code(exc)))
         msg = str(exc).strip()
         if msg:
             return msg
@@ -263,21 +336,37 @@ class ReliableOrchestrator:
         from . import quotas
         session_id = request.session_id or f"ses-{uuid.uuid4().hex}"
         request = request.model_copy(update={"session_id": session_id})
-        bind_conversation(self.db, session_id, owner_id)
         invocation_id = f"inv-{uuid.uuid4().hex[:12]}"
         request = request.model_copy(update={"root_invocation_id": invocation_id})
-        if owner_id:
-            quotas.reserve(self.db, owner=owner_id, entry_id=invocation_id, session_id=session_id)
+        self._storage_failed = False
+        self._storage_failure_code = "storage_unavailable"
         try:
+            bind_conversation(self.db, session_id, owner_id)
+            if owner_id:
+                quotas.reserve(self.db, owner=owner_id, entry_id=invocation_id, session_id=session_id)
             result = await self._run_owned(request, owner_id, invocation_id)
             inv = result[0]
             quotas.settle(self.db, invocation_id, success=inv.status == "completed",
                           prompt_tokens=inv.prompt_tokens, completion_tokens=inv.completion_tokens,
                           child_calls=len((inv.result_data or {}).get("collaborations") or []))
             return result
-        except BaseException:
+        except BaseException as exc:
             self.db.rollback()
-            quotas.settle(self.db, invocation_id, success=False)
+            if storage_error(exc) is not None:
+                self._storage_failed = True
+                recovered = self._finish_storage_failure(invocation_id, exc)
+                self.db.expire_all()
+                if recovered[0] is not None:
+                    return recovered
+                raise StorageFailure(storage_error_code(exc)) from exc
+            try:
+                quotas.settle(self.db, invocation_id, success=False)
+            except Exception as settlement_error:
+                if storage_error(settlement_error) is None:
+                    raise
+                self.db.rollback()
+                self._storage_failed = True
+                self._finish_storage_failure(invocation_id, settlement_error)
             raise
 
     async def _run_owned(self, request: ChatRequest, owner_id: str, invocation_id: str):
@@ -450,7 +539,6 @@ class ReliableOrchestrator:
                     )
                     latency_ms = (time.monotonic() - attempt_started) * 1000
                     self._record_success(agent, latency_ms)
-                    lease.mark_handled()
                     attempt.state = "completed"
                     attempt.latency_ms = round(latency_ms, 2)
                     invocation.status = "completed"
@@ -469,13 +557,13 @@ class ReliableOrchestrator:
                     self.db.commit()
                     return invocation, ranked, agent
                 except Exception as exc:
+                    self._abort_storage_failure(exc)
                     latency_ms = (time.monotonic() - attempt_started) * 1000
                     last_error = self._safe_error_message(exc)
                     attempt.state = "failed"
                     attempt.error = last_error
                     attempt.latency_ms = round(latency_ms, 2)
                     self._record_failure(agent, policy)
-                    lease.mark_handled()
                     self._event(
                         invocation,
                         "PARTNER_FAILED",
@@ -518,6 +606,7 @@ class ReliableOrchestrator:
                 try:
                     return await self._run_direct(invocation, leader, request, policy, history)
                 except Exception as direct_exc:
+                    self._abort_storage_failure(direct_exc)
                     last_error = self._safe_error_message(direct_exc)
 
             invocation.status = "failed"
@@ -782,6 +871,7 @@ class ReliableOrchestrator:
         result_handler: Callable[[PartnerResult], Any] | None = None,
         collaboration_task_id: str | None = None,
     ) -> PartnerResult:
+        self._check_storage_state()
         target_controller = controller or self.controller
         if max_rounds is None:
             max_rounds = self.coordination_tool_rounds if agent.role == "leader" else get_settings().partner_tool_rounds
@@ -947,7 +1037,6 @@ class ReliableOrchestrator:
             )
             latency_ms = (time.monotonic() - attempt_started) * 1000
             self._record_success(driver, latency_ms)
-            lease.mark_handled()
             attempt.state = "completed"
             attempt.latency_ms = round(latency_ms, 2)
             invocation.status = "completed"
@@ -966,13 +1055,13 @@ class ReliableOrchestrator:
             self.db.commit()
             return invocation, [], driver
         except Exception as exc:
+            self._abort_storage_failure(exc)
             latency_ms = (time.monotonic() - attempt_started) * 1000
             error_msg = self._safe_error_message(exc)
             attempt.state = "failed"
             attempt.error = error_msg
             attempt.latency_ms = round(latency_ms, 2)
             self._record_failure(driver, policy)
-            lease.mark_handled()
             self._event(invocation, "PARTNER_FAILED", {"agentId": driver.id, "error": error_msg})
             expired, code, msg = (
                 self.controller.check_deadline()
@@ -1013,6 +1102,7 @@ class ReliableOrchestrator:
         self.db.commit()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
+        self._check_storage_state()
         reports = "\n\n".join(
             fence_untrusted(c.get("agent_name", "子任务"), c.get("result") or c.get("error") or "未取得结果")
             for c in children)
@@ -1112,9 +1202,9 @@ class ReliableOrchestrator:
                     call_chain=[*request.delegation_path, leader.id], controller=self.controller),
             )
 
+            self._check_storage_state()
             latency_ms = (time.monotonic() - started) * 1000
             self._record_success(leader, latency_ms)
-            leader_lease.mark_handled()
             invocation.status = "completed"
             invocation.result_text = result.text
             canvas_snapshot = None
@@ -1153,9 +1243,9 @@ class ReliableOrchestrator:
             self.db.commit()
             return invocation, ranked, leader
         except Exception as exc:
+            self._abort_storage_failure(exc)
             error_msg = self._safe_error_message(exc)
             self._record_failure(leader, policy)
-            leader_lease.mark_handled()
             self._event(invocation, "PARTNER_FAILED", {"agentId": leader.id, "error": error_msg})
             expired, code, msg = (
                 self.controller.check_deadline()
@@ -1178,8 +1268,10 @@ class ReliableOrchestrator:
                     {"reason": f"协调模式异常 ({error_msg})，由协调器启动直接自执行兜底"},
                 )
                 self.db.commit()
+                leader_lease.release(self.db)
                 return await self._run_direct(invocation, leader, request, policy, history)
             except Exception as direct_exc:
+                self._abort_storage_failure(direct_exc)
                 error_msg = self._safe_error_message(direct_exc)
 
             invocation.status = "failed"
@@ -1422,6 +1514,7 @@ class ReliableOrchestrator:
         for name, (schema, executor) in registry._tools.items():
             def bind(tool_name, fn):
                 async def execute(arguments):
+                    self._check_storage_state()
                     call = {"id": f"tool_{uuid.uuid4().hex}", "name": tool_name,
                             "arguments": arguments, "status": "running", "started_at": time.time()}
                     if collab is not None:
@@ -1433,6 +1526,8 @@ class ReliableOrchestrator:
                         invocation.result_data = {**(invocation.result_data or {}), "runtime_tools": [
                             *(invocation.result_data or {}).get("runtime_tools", []), call]}
                     def persist():
+                        if self._storage_failed:
+                            return
                         if collab is not None:
                             self._persist_collaborations(invocation, self._collaborations[invocation.id])
                         else:
@@ -1443,7 +1538,11 @@ class ReliableOrchestrator:
                             # The live call object may already have mutated the
                             # JSON value in place; force its terminal state dirty.
                             flag_modified(invocation, "result_data")
-                            self.db.commit()
+                            try:
+                                self.db.commit()
+                            except Exception as exc:
+                                self._abort_storage_failure(exc)
+                                raise
                     event = {"tool_call_id": call["id"], "task_id": collab.get("task_id") if collab else None,
                              "session_id": invocation.session_id, "invocation_id": invocation.id,
                              "agent_id": agent.id, "agent_name": agent.name,
@@ -1461,6 +1560,7 @@ class ReliableOrchestrator:
                         call.update(status="cancelled", output_preview="工具调用已中断")
                         raise
                     except Exception as exc:
+                        self._abort_storage_failure(exc)
                         call.update(status="failed", output_preview=self._safe_error_message(exc))
                         raise
                     finally:
@@ -1478,9 +1578,15 @@ class ReliableOrchestrator:
 
     def _persist_collaborations(self, invocation: Invocation, collaborations: list[dict[str, Any]]) -> None:
         """A durable session-owned snapshot, including interrupted/failed runs."""
+        if self._storage_failed:
+            return
         self._collaborations[invocation.id] = collaborations
         invocation.result_data = {**(invocation.result_data or {}), "collaborations": deepcopy(collaborations)}
-        self.db.commit()
+        try:
+            self.db.commit()
+        except Exception as exc:
+            self._abort_storage_failure(exc)
+            raise
 
     def _prepare_dispatch_context(self, invocation, call_chain, shared_context=None, collaborations=None, history=None):
         def prepare(arguments):
@@ -2599,7 +2705,6 @@ class ReliableOrchestrator:
                             sub_attempt.latency_ms = round(latency_ms, 2)
                         if sub_agent:
                             self._record_success(sub_agent, latency_ms)
-                            sub_lease.mark_handled()
                         ok_db.commit()
 
                     if shared_context is not None:
@@ -2691,6 +2796,7 @@ class ReliableOrchestrator:
                             cancel_db.commit()
                     raise
                 except Exception as exc:
+                    self._abort_storage_failure(exc)
                     latency_ms = (time.monotonic() - started) * 1000
                     error_msg = self._safe_error_message(exc)
                     with self.session_factory() as err_db:
@@ -2702,7 +2808,6 @@ class ReliableOrchestrator:
                             sub_attempt.latency_ms = round(latency_ms, 2)
                         if sub_agent:
                             self._record_failure(sub_agent, policy)
-                            sub_lease.mark_handled()
                         err_db.commit()
 
                     if shared_context is not None:
@@ -2905,6 +3010,7 @@ class ReliableOrchestrator:
                 )
                 return result, None, (time.monotonic() - attempt_started) * 1000
             except Exception as exc:
+                self._abort_storage_failure(exc)
                 return None, exc, (time.monotonic() - attempt_started) * 1000
 
         try:
@@ -2923,7 +3029,6 @@ class ReliableOrchestrator:
                     attempt.state = "failed"
                     attempt.error = message
                     self._record_failure(agent, policy)
-                    lease.mark_handled()
                     shared_context.finish_subtask(
                         f"collab_{agent.id}",
                         agent.id,
@@ -2939,7 +3044,6 @@ class ReliableOrchestrator:
                 selected = selected or agent
                 attempt.state = "completed"
                 self._record_success(agent, latency_ms)
-                lease.mark_handled()
                 shared_context.finish_subtask(
                     f"collab_{agent.id}",
                     agent.id,
@@ -3001,9 +3105,12 @@ class ReliableOrchestrator:
                         {"reason": "协同各智能体均失败，由协调器启动自执行兜底", "errors": errors},
                     )
                     self.db.commit()
+                    for lease in leases:
+                        lease.release(self.db)
                     try:
                         return await self._run_direct(invocation, leader, request, policy, history)
-                    except Exception:
+                    except Exception as exc:
+                        self._abort_storage_failure(exc)
                         pass
                 invocation.status = "failed"
                 invocation.result_text = "任务执行失败，请联系管理员。"
@@ -3032,7 +3139,7 @@ class ReliableOrchestrator:
         agent.consecutive_failures = 0
         agent.circuit_state = "closed"
         agent.circuit_open_until = None
-        agent.active_tasks = max(0, agent.active_tasks - 1)
+        # Lease release owns the atomic decrement, including failed commits.
 
     def _admit_circuit(self, agent: Agent) -> None:
         """Cooldown elapsed: let this call be the single half-open probe."""
@@ -3050,7 +3157,7 @@ class ReliableOrchestrator:
         agent.request_count += 1
         agent.failure_count += 1
         agent.consecutive_failures += 1
-        agent.active_tasks = max(0, agent.active_tasks - 1)
+        # Do not mix the lease decrement with fallible statistics writes.
         if agent.circuit_state == "half-open" or agent.consecutive_failures >= policy.failure_threshold:
             exponent = min(max(agent.consecutive_failures - policy.failure_threshold, 0), 5)
             agent.circuit_state = "open"

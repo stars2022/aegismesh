@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "AegisMesh"
     database_url: str = "sqlite:///./backend/data/aegismesh.db"
+    sqlite_busy_timeout_seconds: float = Field(default=10.0, ge=1.0, le=30.0)
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     public_api_key: str = ""
     admin_auth_enabled: bool = True

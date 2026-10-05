@@ -7,11 +7,26 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import subprocess
 import tarfile
 import tempfile
+import time
 from datetime import datetime, timezone
+
+
+def snapshot_database(database: Path, snapshot: Path) -> None:
+    """Brief page reads on the live DB; expensive verification/export is offline."""
+    started = time.monotonic()
+
+    def check_headroom(_status, _remaining, _total):
+        if time.monotonic() - started > 600 or shutil.disk_usage(snapshot.parent).free < 384 * 1024 * 1024:
+            raise RuntimeError("Backup stopped to preserve disk headroom or time budget")
+
+    with sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=10) as source:
+        with sqlite3.connect(snapshot) as target:
+            source.backup(target, pages=1024, progress=check_headroom, sleep=0.02)
 
 
 def main():
@@ -27,13 +42,20 @@ def main():
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     root = Path("/home/zcode/aegismesh-backups")
     root.mkdir(mode=0o700, exist_ok=True)
+    if shutil.disk_usage(root).free < database.stat().st_size + 512 * 1024 * 1024:
+        raise SystemExit("Insufficient disk headroom; offload inactive backups before creating a snapshot")
     archive = root / f"pre-accounts-{stamp}.tar.gz"
     manifest = {"created_utc": stamp, "release": str(release), "database": str(database),
                 "database_format": "sqlite SQL dump in a consistent read transaction",
+                "snapshot_method": "chunked SQLite online backup; verification and dump run on the offline copy",
                 "contains_secrets": True, "excluded": ["virtualenv", "node_modules", "older backups", "Git metadata"]}
     with tempfile.TemporaryDirectory(prefix="pre-accounts-", dir=root) as temporary:
         dump = Path(temporary) / "database.sql.gz"
-        with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
+        snapshot = Path(temporary) / "snapshot.sqlite3"
+        # Never hold the live DELETE-mode database's reader lock for the full
+        # verification/SQL export: that would block production writers.
+        snapshot_database(database, snapshot)
+        with sqlite3.connect(f"file:{snapshot}?mode=ro", uri=True) as connection:
             connection.execute("BEGIN")
             if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                 raise SystemExit("Production database failed quick_check")
