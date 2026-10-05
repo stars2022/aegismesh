@@ -93,7 +93,7 @@ class BountyStore:
         with self.factory() as db:
             root = db.get(Invocation, self.invocation_id)
             if root is None or root.owner_id != self.owner_id or root.status != "working":
-                raise ValueError("赏金任务的会话归属无效")
+                raise ValueError("竞标任务的会话归属无效")
             db.add(BountyBoard(invocation_id=self.invocation_id, owner_id=self.owner_id,
                               participants=sorted(self.workers | {self.reviewer}),
                               max_items=self.max_items, deadline_at=self.deadline_at))

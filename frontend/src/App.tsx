@@ -3604,7 +3604,7 @@ function Routing({
           <Switch label="允许外部协调任务调用子智能体" checked={Boolean(draft.external_delegation_enabled)} disabled={saving}
             onChange={(checked) => setDraft({ ...draft, external_delegation_enabled: checked })} />
           <p className="weight-help">开启后，外部 AIP 请求可让协调型智能体发现并派发子任务，子调用始终走官方 AIP，不回退本地直调。关闭时仅执行自身任务；已配置的联网搜索不受影响。可能增加模型与子调用用量，最多三级调用链。保存后对新任务生效。</p>
-          <Switch label="赏金猎人模式" checked={Boolean(draft.bounty_enabled)} disabled={saving}
+          <Switch label="竞标模式" checked={Boolean(draft.bounty_enabled)} disabled={saving}
             onChange={checked => setDraft({ ...draft, bounty_enabled: checked })} />
           {draft.bounty_enabled && <>
             <NumberSetting label="参与成员上限" suffix="个" value={draft.bounty_max_workers ?? 3}
@@ -8977,7 +8977,7 @@ void runMessage(next.text, next.agentId, next.attachments, next.mode);
                 )}
                 {!activeMeta?.isGroup && !isCanvasConv && bountyEnabled && <Dropdown
                   className="runtime-mode" title="协作方式" value={executionMode}
-                  options={[{ value: 'route', label: '默认调度' }, { value: 'bounty', label: '赏金猎人' }]}
+                  options={[{ value: 'route', label: '默认调度' }, { value: 'bounty', label: '竞标模式' }]}
                   onChange={value => setExecutionMode(value as 'route' | 'bounty')} />}
               </div>
               <div className="composer-bottom-right">

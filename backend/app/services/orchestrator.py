@@ -474,7 +474,7 @@ class ReliableOrchestrator:
         async def _execute_task():
             if request.mode == "bounty":
                 if not policy.bounty_enabled:
-                    raise NoEligibleAgentError("管理员尚未启用赏金猎人模式。请使用现有调度方式。")
+                    raise NoEligibleAgentError("管理员尚未启用竞标模式。请使用现有调度方式。")
                 if request.canvas:
                     raise NoEligibleAgentError("自主认领暂用于普通聊天，不会擅自改写共享画布。")
                 if driver is not None and driver.role != "leader":
