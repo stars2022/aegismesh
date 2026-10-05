@@ -243,7 +243,7 @@ export const api = {
     method: 'POST', headers: jsonHeaders, body: JSON.stringify(payload),
   }),
   policy: () => request<Policy>('/api/policy'),
-  chatConfig: () => request<{ interop_compatibility: boolean; default_coordinator_id: string | null }>('/api/chat/config'),
+  chatConfig: () => request<{ interop_compatibility: boolean; bounty_enabled?: boolean; default_coordinator_id: string | null }>('/api/chat/config'),
   updatePolicy: (payload: Policy) =>
     request<Policy>('/api/policy', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(payload) }),
   uploadFile: async (file: File) => {
@@ -302,6 +302,7 @@ export const api = {
     onTaskId?: (taskId: string) => void,
     attachments?: Attachment[],
     canvas?: boolean,
+    mode: 'route' | 'bounty' = 'route',
   ) =>
     streamChat(
       '/api/demo/chat/stream',
@@ -310,6 +311,7 @@ export const api = {
         session_id: sessionId,
         agent_id: agentId || undefined,
         canvas: canvas || undefined,
+        mode,
         interface: 'harness',
         attachments: attachments || [],
       },

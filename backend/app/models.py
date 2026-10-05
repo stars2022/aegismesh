@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -173,6 +173,10 @@ class RoutingPolicy(Base):
     name: Mapped[str] = mapped_column(String(80), default="balanced")
     interop_compatibility: Mapped[bool] = mapped_column(Boolean, default=False)
     external_delegation_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    bounty_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    bounty_max_workers: Mapped[int] = mapped_column(Integer, default=3)
+    bounty_max_items: Mapped[int] = mapped_column(Integer, default=6)
+    bounty_lease_seconds: Mapped[int] = mapped_column(Integer, default=120)
     weights: Mapped[dict[str, float]] = mapped_column(JSON)
     failure_threshold: Mapped[int] = mapped_column(Integer, default=2)
     circuit_cooldown_seconds: Mapped[int] = mapped_column(Integer, default=30)
@@ -209,6 +213,46 @@ class Invocation(Base):
     events: Mapped[list["TraceEvent"]] = relationship(
         back_populates="invocation", cascade="all, delete-orphan"
     )
+
+
+class BountyBoard(Base):
+    """One bounded, private work board for a single authenticated invocation."""
+    __tablename__ = "bounty_boards"
+
+    invocation_id: Mapped[str] = mapped_column(ForeignKey("invocations.id", ondelete="CASCADE"), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(128), index=True)
+    participants: Mapped[list[str]] = mapped_column(JSON, default=list)
+    max_items: Mapped[int] = mapped_column(Integer)
+    published_count: Mapped[int] = mapped_column(Integer, default=0)
+    findings: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    closed: Mapped[bool] = mapped_column(Boolean, default=False)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class BountyWorkItem(Base):
+    __tablename__ = "bounty_work_items"
+    __table_args__ = (UniqueConstraint("invocation_id", "fingerprint"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    invocation_id: Mapped[str] = mapped_column(ForeignKey("bounty_boards.invocation_id", ondelete="CASCADE"), index=True)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(120))
+    task: Mapped[str] = mapped_column(Text)
+    acceptance: Mapped[str] = mapped_column(Text)
+    priority: Mapped[int] = mapped_column(Integer, default=1)
+    proposed_by: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24), default="open", index=True)
+    claimed_by: Mapped[str] = mapped_column(String(64), default="")
+    claim_token: Mapped[str] = mapped_column(String(64), default="")
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result_text: Mapped[str] = mapped_column(Text, default="")
+    evidence: Mapped[list[str]] = mapped_column(JSON, default=list)
+    reviewed_by: Mapped[str] = mapped_column(String(64), default="")
+    review_note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class InvocationFeedback(Base):

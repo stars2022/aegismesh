@@ -36,7 +36,7 @@ conversationStorage.setItem('aegismesh-conv-sidebar-motion', JSON.stringify(conv
 const agents = [{ id: 'fixture-leader', name: '科研协作测试', role: 'leader', active: true,
   usage_mode: 'internal', health: 'online', skills: [], tools: [], description: '本地 UI 样例' }] as Agent[]
 api.agents = async () => agents
-api.chatConfig = async () => ({ interop_compatibility: false, default_coordinator_id: 'fixture-leader' })
+api.chatConfig = async () => ({ interop_compatibility: false, bounty_enabled: query.get('bounty') === 'on', default_coordinator_id: 'fixture-leader' })
 api.getActiveTask = async () => ({ active: false })
 api.sessionActivity = async session => ({ session_id: session, items: [], next_before: null })
 let canvas: CanvasDocument = { id: 'sidebar-motion-canvas', title: '侧栏动效验证', version: 1,

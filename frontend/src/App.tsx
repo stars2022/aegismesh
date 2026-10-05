@@ -104,6 +104,7 @@ import { SettingsDialog, type SettingsSection } from "./SettingsDialog";
 import { requestedSettings, workbenchAfterSettings } from "./accountNavigation";
 import { conversationStorage } from "./conversationStorage";
 import { mergeConversationMeta, type ConversationMeta } from "./conversationHistory";
+import { BountyBoardView } from "./BountyBoard";
 import { defaultCoordinatorId } from "./agentMenu";
 import { collaborationKey, mergeCollaborations, mergeSessionResults, mergeTools } from "./collaborationActivity";
 import {
@@ -3603,6 +3604,16 @@ function Routing({
           <Switch label="允许外部协调任务调用子智能体" checked={Boolean(draft.external_delegation_enabled)} disabled={saving}
             onChange={(checked) => setDraft({ ...draft, external_delegation_enabled: checked })} />
           <p className="weight-help">开启后，外部 AIP 请求可让协调型智能体发现并派发子任务，子调用始终走官方 AIP，不回退本地直调。关闭时仅执行自身任务；已配置的联网搜索不受影响。可能增加模型与子调用用量，最多三级调用链。保存后对新任务生效。</p>
+          <Switch label="赏金猎人模式" checked={Boolean(draft.bounty_enabled)} disabled={saving}
+            onChange={checked => setDraft({ ...draft, bounty_enabled: checked })} />
+          {draft.bounty_enabled && <>
+            <NumberSetting label="参与成员上限" suffix="个" value={draft.bounty_max_workers ?? 3}
+              onChange={value => setDraft({ ...draft, bounty_max_workers: Math.max(1, Math.min(5, value)) })} />
+            <NumberSetting label="本轮任务上限" suffix="项" value={draft.bounty_max_items ?? 6}
+              onChange={value => setDraft({ ...draft, bounty_max_items: Math.max(1, Math.min(12, value)) })} />
+            <NumberSetting label="认领有效期" suffix="秒" value={draft.bounty_lease_seconds ?? 120}
+              onChange={value => setDraft({ ...draft, bounty_lease_seconds: Math.max(10, Math.min(600, value)) })} />
+          </>}
           <NumberSetting
             label="失败阈值"
             suffix="次"
@@ -4230,7 +4241,7 @@ type ChatMessage = {
   taskId?: string;
   recoveryInvocationId?: string;
 };
-type QueuedTask = { id: string; text: string; agentId: string; attachments?: Attachment[] };
+type QueuedTask = { id: string; text: string; agentId: string; attachments?: Attachment[]; mode?: 'route' | 'bounty' };
 type Conversation = {
   id: string;
   title: string;
@@ -5181,6 +5192,11 @@ function CollaborationPanel({
           <button type="button" className={scope === "turn" ? "collab-scope-btn active" : "collab-scope-btn"} onClick={() => setScope("turn")}>本轮</button>
         </div>}
       </div>
+      {results.flatMap(r => {
+        const board = r.result_data?.bounty;
+        return board && (scope === "all" || r.invocation_id === inspector?.invocation_id)
+          ? [<BountyBoardView key={r.invocation_id} board={board} />] : [];
+      })}
       {shown.length === 0 && <div className="collab-empty">
         <Bot size={28} className="empty-icon" />
         <p>{scope === "turn" ? "本轮没有子任务" : "本会话暂无子智能体协作记录"}</p>
@@ -6455,6 +6471,8 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const [feedbackBusy, setFeedbackBusy] = useState("");
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentId, setAgentId] = useState(initialActive?.agentId || activeMeta?.agentId || "");
+  const [bountyEnabled, setBountyEnabled] = useState(false);
+  const [executionMode, setExecutionMode] = useState<'route' | 'bounty'>('route');
   const [pendingAgentSwitch, setPendingAgentSwitch] = useState<{
     targetId: string;
     targetName: string;
@@ -6892,6 +6910,8 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   useEffect(() => {
     const refreshAgents = () => Promise.all([api.agents(), api.chatConfig()])
       .then(([list, runtime]) => {
+        setBountyEnabled(Boolean(runtime.bounty_enabled));
+        if (!runtime.bounty_enabled) setExecutionMode('route');
         const selectable = list.filter(
           (agent) =>
             agent.active &&
@@ -6919,10 +6939,11 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   }, []);
 
   useEffect(() => {
-    if (agents.length && !agents.some((agent) => agent.id === agentId)) {
+    if (agents.length && (!agents.some((agent) => agent.id === agentId)
+        || (executionMode === 'bounty' && agents.find(agent => agent.id === agentId)?.role !== 'leader'))) {
       setAgentId(defaultCoordinatorId(agents, isCanvasConv));
     }
-  }, [agents, agentId, isCanvasConv]);
+  }, [agents, agentId, isCanvasConv, executionMode]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -6948,6 +6969,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   }, [messages, sending]);
 
   const openConversation = (target: ConversationMeta) => {
+    setExecutionMode('route');
     activeIdRef.current = target.id;
     setLiveSubagents({});
     setLiveBlackboardMessages([]);
@@ -6996,6 +7018,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     if (canvasConversation) setInspectorCollapsed(false);
   };
   const createConversation = (targetAgentId?: string, isCanvas = false) => {
+    setExecutionMode('route');
     setLiveSubagents({});
     setLiveBlackboardMessages([]);
     const newId = crypto.randomUUID();
@@ -7697,6 +7720,7 @@ ${cleanHistory}
     message: string,
     taskAgentId: string,
     messageAttachments?: Attachment[],
+    taskMode: 'route' | 'bounty' = 'route',
   ) => {
     const currentConv = loadConversationData(activeId);
     if (currentConv?.isGroup && currentConv?.groupConfig) {
@@ -7830,6 +7854,7 @@ ${cleanHistory}
         },
         messageAttachments,
         isCanvasConv,
+        taskMode,
       );
       if (activeIdRef.current === taskConvId) {
         setSession(result.session_id);
@@ -7892,7 +7917,7 @@ ${cleanHistory}
         const next = queueRef.current[0];
         if (next) {
           setQueue(queueRef.current.slice(1));
-void runMessage(next.text, next.agentId, next.attachments);
+void runMessage(next.text, next.agentId, next.attachments, next.mode);
         }
       }
     }
@@ -7940,11 +7965,12 @@ void runMessage(next.text, next.agentId, next.attachments);
           text: finalMsg,
           agentId,
           attachments: currentAttachments,
+          mode: executionMode,
         },
       ]);
       return;
     }
-    void runMessage(finalMsg, agentId, currentAttachments);
+    void runMessage(finalMsg, agentId, currentAttachments, executionMode);
   };
 
   const groupConfig = activeMeta?.isGroup ? loadConversationData(activeId)?.groupConfig : null;
@@ -8062,12 +8088,14 @@ void runMessage(next.text, next.agentId, next.attachments);
   const handlePromoteTask = async (item: QueuedTask) => {
     setQueue((items) => items.filter((entry) => entry.id !== item.id));
     await handleStopTask();
-    void runMessage(item.text, item.agentId || agentId, item.attachments || []);
+    void runMessage(item.text, item.agentId || agentId, item.attachments || [], item.mode);
   };
 
   const handleEditTask = (item: QueuedTask) => {
     setQueue((items) => items.filter((entry) => entry.id !== item.id));
     setInput(item.text);
+    setAgentId(item.agentId);
+    setExecutionMode(bountyEnabled ? item.mode || 'route' : 'route');
     if (item.attachments) {
       setAttachments(item.attachments);
     }
@@ -8944,9 +8972,13 @@ void runMessage(next.text, next.agentId, next.attachments);
                     className="runtime-mode"
                     value={agentId}
                     onChange={handleAgentSelect}
-                    agents={isCanvasConv ? agents.filter((agent) => agent.role === "leader") : agents}
+                    agents={isCanvasConv || executionMode === 'bounty' ? agents.filter((agent) => agent.role === "leader") : agents}
                   />
                 )}
+                {!activeMeta?.isGroup && !isCanvasConv && bountyEnabled && <Dropdown
+                  className="runtime-mode" title="协作方式" value={executionMode}
+                  options={[{ value: 'route', label: '默认调度' }, { value: 'bounty', label: '赏金猎人' }]}
+                  onChange={value => setExecutionMode(value as 'route' | 'bounty')} />}
               </div>
               <div className="composer-bottom-right">
                 {settings.showContextMeter && (

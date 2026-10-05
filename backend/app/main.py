@@ -233,6 +233,15 @@ def initialize_schema() -> None:
                 connection.execute(text("ALTER TABLE routing_policies ADD COLUMN interop_compatibility BOOLEAN DEFAULT 0"))
             if "external_delegation_enabled" not in {c["name"] for c in inspect(connection).get_columns("routing_policies")}:
                 connection.execute(text("ALTER TABLE routing_policies ADD COLUMN external_delegation_enabled BOOLEAN DEFAULT 0"))
+            routing_columns = {c["name"] for c in inspect(connection).get_columns("routing_policies")}
+            for column, declaration in {
+                "bounty_enabled": "BOOLEAN DEFAULT 0",
+                "bounty_max_workers": "INTEGER DEFAULT 3",
+                "bounty_max_items": "INTEGER DEFAULT 6",
+                "bounty_lease_seconds": "INTEGER DEFAULT 120",
+            }.items():
+                if column not in routing_columns:
+                    connection.execute(text(f"ALTER TABLE routing_policies ADD COLUMN {column} {declaration}"))
         if "canvas_docs" in inspect(connection).get_table_names():
             canvas_columns = {
                 item["name"] for item in inspect(connection).get_columns("canvas_docs")
@@ -782,6 +791,7 @@ def chat_runtime_config(db: DbSession) -> dict:
     orchestrator = ReliableOrchestrator(db)
     leader = orchestrator._usable_leader()
     return {"interop_compatibility": bool(orchestrator._routing_policy().interop_compatibility),
+            "bounty_enabled": bool(orchestrator._routing_policy().bounty_enabled),
             "default_coordinator_id": leader.id if leader else None}
 
 
@@ -1208,7 +1218,7 @@ def update_policy(payload: PolicyUpdate, db: DbSession, request: Request) -> Pol
     request.state.audit_policy_changes = {
         key: {"before": getattr(policy, key), "after": value}
         for key, value in payload.model_dump(exclude_unset=True).items()
-        if key in {"interop_compatibility", "external_delegation_enabled", "weights", "failure_threshold", "circuit_cooldown_seconds", "max_attempts", "request_timeout_seconds"}
+        if key in {"interop_compatibility", "external_delegation_enabled", "bounty_enabled", "bounty_max_workers", "bounty_max_items", "bounty_lease_seconds", "weights", "failure_threshold", "circuit_cooldown_seconds", "max_attempts", "request_timeout_seconds"}
         and getattr(policy, key) != value
     }
     for key, value in payload.model_dump(exclude_unset=True).items():

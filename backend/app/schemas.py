@@ -147,6 +147,10 @@ class PolicyRead(BaseModel):
     name: str
     interop_compatibility: bool = False
     external_delegation_enabled: bool = False
+    bounty_enabled: bool = False
+    bounty_max_workers: int = Field(default=3, ge=1, le=5)
+    bounty_max_items: int = Field(default=6, ge=1, le=12)
+    bounty_lease_seconds: int = Field(default=120, ge=10, le=600)
     weights: dict[str, float]
     failure_threshold: int
     circuit_cooldown_seconds: int
@@ -209,7 +213,7 @@ class ChatRequest(BaseModel):
     output_mode: str = "application/json"
     required_security: str | None = None
     required_transport: str | None = None
-    mode: Literal["route", "collaborate"] = "route"
+    mode: Literal["route", "collaborate", "bounty"] = "route"
     collab_style: Literal["auto", "workflow", "swarm", "parallel"] = "auto"
     max_partners: int = Field(default=2, ge=2, le=5)
     interface: Literal["api", "harness"] = "api"

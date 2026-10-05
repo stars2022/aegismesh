@@ -224,6 +224,7 @@ export type ChatResult = {
   usage: { llm_calls: number; prompt_tokens: number; completion_tokens: number }
   result_data: {
     mode?: string
+    bounty?: BountyBoardData
     runtime_tools?: ToolActivity[]
     tool_executions?: { name: string; arguments: Record<string, unknown>; output: unknown }[]
     contributions?: { agent_id: string; agent_name: string; text: string; data: Record<string, unknown> }[]
@@ -245,11 +246,27 @@ export type Policy = {
   name: string
   interop_compatibility: boolean
   external_delegation_enabled: boolean
+  bounty_enabled?: boolean
+  bounty_max_workers?: number
+  bounty_max_items?: number
+  bounty_lease_seconds?: number
   weights: Record<string, number>
   failure_threshold: number
   circuit_cooldown_seconds: number
   max_attempts: number
   request_timeout_seconds: number
+}
+
+export type BountyBoardData = {
+  invocation_id: string
+  closed: boolean
+  partial?: boolean
+  max_items: number
+  items: Array<{
+    id: string; title: string; task: string; acceptance: string; priority: number
+    status: string; proposed_by: string; claimed_by: string; reviewed_by: string
+    result: string; evidence: string[]; review_note: string
+  }>
 }
 
 export type Trace = {

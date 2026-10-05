@@ -12,7 +12,8 @@ from typing import Any
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
-from ..models import Agent, HostedTask, Invocation, OperationalLog, TraceEvent
+from ..models import Agent, BountyBoard, BountyWorkItem, HostedTask, Invocation, OperationalLog, TraceEvent
+from .bounty import close_abandoned_board
 
 
 _HOST = socket.gethostname()
@@ -119,6 +120,7 @@ def recover_interrupted_runtime(db: Session) -> tuple[int, int]:
             "interruption_reason": "server_restart",
             "interrupted_partial": partial_result,
         }
+        close_abandoned_board(db, inv, "服务重启中断，本轮已结束，未自动重投")
         db.add(TraceEvent(
             invocation=inv,
             event_type="TASK_INTERRUPTED",
@@ -148,6 +150,11 @@ def recover_interrupted_runtime(db: Session) -> tuple[int, int]:
     # before checking for live work. Check quiescence in the UPDATE itself so a
     # newly accepted request also prevents cleanup, not just an earlier SELECT.
     db.flush()
+    terminal_boards = select(Invocation.id).where(Invocation.status.not_in(["routing", "working"]))
+    db.execute(update(BountyBoard).where(BountyBoard.invocation_id.in_(terminal_boards)).values(closed=True))
+    db.execute(update(BountyWorkItem).where(
+        BountyWorkItem.invocation_id.in_(terminal_boards), BountyWorkItem.status.in_(["open", "claimed"]),
+    ).values(status="cancelled", review_note="所属任务已终止，未自动重投", finished_at=now))
     db.execute(
         update(Agent).where(
             _runtime_quiescent(), or_(Agent.active_tasks != 0, Agent.queued_tasks != 0),

@@ -183,7 +183,9 @@ def build_system_prompt(
         )))
     if agent.role == "leader":
         sections.append(PromptSection(150, "智能体协调", (
-            LEADER_COORDINATION if "dispatch_task" in names else
+            "本次是自主认领后的成果复核。成员已自行选择和执行工作，你只复核、整合已有提交；"
+            "不得再分配或执行新子任务。接受只表示智能体复核，不是独立事实认证。"
+            if "review_bounty" in names else LEADER_COORDINATION if "dispatch_task" in names else
             "本次运行未提供子智能体派发工具，请使用当前实际可用的领域工具直接完成。"
             "不得声称已派发其他智能体，也不要要求用户为当前任务额外开放权限。"
         )))

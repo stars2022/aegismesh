@@ -216,6 +216,7 @@ class ReliableOrchestrator:
         """Durably terminate this invocation, not replay its already-issued work."""
         from . import quotas
         from .model_budget import recover_terminal_model_reservations
+        from .bounty import close_abandoned_board
         code = storage_error_code(exc)
 
         def finish(db):
@@ -238,6 +239,7 @@ class ReliableOrchestrator:
                         tool.update(status="failed", completed_at=time.time(),
                                     output_preview="存储异常中断，工具回执未能完整保存")
                 inv.result_data = data
+                close_abandoned_board(db, inv, "存储异常中断，本轮已结束，未自动重投")
                 db.execute(update(RouteAttempt).where(
                     RouteAttempt.invocation_id == invocation_id,
                     RouteAttempt.state.not_in(["completed", "failed", "cancelled"]),
@@ -470,6 +472,18 @@ class ReliableOrchestrator:
         controller = self.controller
 
         async def _execute_task():
+            if request.mode == "bounty":
+                if not policy.bounty_enabled:
+                    raise NoEligibleAgentError("管理员尚未启用赏金猎人模式。请使用现有调度方式。")
+                if request.canvas:
+                    raise NoEligibleAgentError("自主认领暂用于普通聊天，不会擅自改写共享画布。")
+                if driver is not None and driver.role != "leader":
+                    raise NoEligibleAgentError("自主认领需要选择协调型智能体作为最终汇总者。")
+                leader = driver or self._usable_leader()
+                if leader is None:
+                    raise NoEligibleAgentError("当前没有可用的成果汇总智能体。")
+                from .bounty_runtime import run_bounty
+                return await run_bounty(self, invocation, leader, ranked, eligible, request, policy, history)
             if driver is not None:
                 if driver.role == "leader" and self._coordination_capable(driver):
                     return await self._run_coordination(
@@ -870,6 +884,7 @@ class ReliableOrchestrator:
         _mq_delivered: bool = False,
         result_handler: Callable[[PartnerResult], Any] | None = None,
         collaboration_task_id: str | None = None,
+        extra_tool_names: tuple[str, ...] = (),
     ) -> PartnerResult:
         self._check_storage_state()
         target_controller = controller or self.controller
@@ -901,7 +916,8 @@ class ReliableOrchestrator:
                         timeout_seconds=timeout_seconds, harness=harness, tool_registry=tool_registry,
                         max_rounds=max_rounds, stream_output=stream_output,
                         on_text_override=on_text_override, controller=controller, _mq_delivered=True,
-                        result_handler=result_handler, collaboration_task_id=collaboration_task_id))
+                        result_handler=result_handler, collaboration_task_id=collaboration_task_id,
+                        extra_tool_names=extra_tool_names))
             except asyncio.TimeoutError as exc:
                 raise TimeoutError(f"官方 MQ 调用超时（任务剩余预算 {hard_deadline:.1f} 秒），未回退本地直调") from exc
         self._admit_circuit(agent)
@@ -931,7 +947,9 @@ class ReliableOrchestrator:
                 canvas_id_for(invocation.session_id), agent.id, agent.name, invocation.owner_id
             ):
                 tool_registry.register(name, schema, executor)
-            kwargs["extra_tool_names"] = CANVAS_TOOL_NAMES
+            extra_tool_names = tuple(dict.fromkeys((*extra_tool_names, *CANVAS_TOOL_NAMES)))
+        if extra_tool_names:
+            kwargs["extra_tool_names"] = extra_tool_names
         if (request.interface == "harness") if harness is None else harness:
             kwargs["harness"] = True
         if (

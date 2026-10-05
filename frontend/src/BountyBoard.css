@@ -1,0 +1,21 @@
+.bounty-board { margin: 12px 0; color: var(--ink); min-width: 0; }
+.bounty-board > header { display: flex; align-items: center; justify-content: space-between; padding: 10px 2px; font-size: 13px; }
+.bounty-board > header > span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.bounty-item { border: 1px solid var(--line); border-radius: var(--radius-item); background: var(--paper); margin: 6px 0; padding: 10px 12px; overflow-wrap: anywhere; }
+.bounty-item > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; font-size: 12px; }
+.bounty-item > summary::-webkit-details-marker { display: none; }
+.bounty-item > summary::before { content: '›'; flex-shrink: 0; color: var(--muted); }
+.bounty-item[open] > summary::before { content: '⌄'; }
+.bounty-title { min-width: 0; flex: 1; }
+.bounty-status { flex-shrink: 0; font-size: 11px; color: var(--muted); }
+.bounty-item[data-status="accepted"] .bounty-status { color: var(--green); }
+.bounty-item[data-status="claimed"] .bounty-status, .bounty-item[data-status="submitted"] .bounty-status { color: var(--amber); }
+.bounty-item[data-status="failed"] .bounty-status, .bounty-item[data-status="rejected"] .bounty-status { color: var(--red); }
+.bounty-item dl { margin: 12px 0; font-size: 12px; }
+.bounty-item dl > div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; margin: 5px 0; }
+.bounty-item dt, .bounty-review { color: var(--muted); }
+.bounty-item dd { margin: 0; }
+.bounty-result { white-space: pre-wrap; line-height: 1.7; font-size: 12px; }
+.bounty-item ul { padding-left: 20px; font-size: 11px; }
+.bounty-review { font-size: 11px; line-height: 1.6; }
+.bounty-board > p { font-size: 12px; color: var(--muted); }

@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from ..models import (
     Agent,
+    BountyBoard,
+    BountyWorkItem,
     HostedTask,
     Invocation,
     InvocationFeedback,
@@ -70,6 +72,11 @@ def import_database(db: Session, payload: dict[str, Any], mode: str) -> dict[str
         raise ValueError("替换导入必须包含路由策略")
 
     if mode == "replace":
+        # Claim tokens are operational state, never restored from a portable
+        # JSON export. Delete children explicitly even when SQLite FK checks
+        # are off; otherwise an imported root ID can inherit an orphan board.
+        db.execute(delete(BountyWorkItem))
+        db.execute(delete(BountyBoard))
         for model in reversed(DATA_MODELS):
             db.execute(delete(model))
 

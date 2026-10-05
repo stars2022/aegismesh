@@ -64,6 +64,25 @@ test('idle SSE keep-alive comments do not appear as chat events or text', async 
   assert.equal(result.answer, '你好')
 })
 
+test('self-claim mode is explicit and stays bound to its captured session and agent', async t => {
+  const originalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = originalFetch })
+  const requests = []
+  globalThis.fetch = async (path, init) => {
+    requests.push({ path, body: JSON.parse(init.body), credentials: init.credentials })
+    return sseResponse('event: result\ndata: {"type":"result","data":{"answer":"结果"}}\n\n')
+  }
+  await api.chatStream('默认任务', 'ordinary-session', 'ordinary-leader', () => {})
+  await api.chatStream('自主认领', 'private-session', 'private-leader', () => {}, undefined,
+    undefined, undefined, [], false, 'bounty')
+  assert.equal(requests[0].body.mode, 'route')
+  assert.equal(requests[1].body.mode, 'bounty')
+  assert.equal(requests[1].body.session_id, 'private-session')
+  assert.equal(requests[1].body.agent_id, 'private-leader')
+  assert.equal(requests[1].body.owner_id, undefined)
+  assert.equal(requests[1].credentials, 'same-origin')
+})
+
 test('interrupted chat stream resumes after the last event without repeating text', async (t) => {
   const originalFetch = globalThis.fetch
   t.after(() => { globalThis.fetch = originalFetch })

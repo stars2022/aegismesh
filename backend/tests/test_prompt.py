@@ -112,3 +112,12 @@ def test_disabled_coordination_does_not_keep_forcing_a_style():
         assert "必须调用 run_swarm_discussion" not in prompt
         if harness:
             assert "本次运行未提供子智能体派发工具" in prompt
+
+
+def test_bounty_summary_prompt_never_instructs_leader_to_dispatch():
+    agent = Agent(id="l",aic="l",name="L",role="leader",tools=[])
+    prompt = build_system_prompt(agent, harness=True, collab_style="parallel",
+        available_tool_names=("read_bounty_board","review_bounty"))
+    assert "只复核、整合已有提交" in prompt
+    assert "先派发" not in prompt and "直接完成" not in prompt
+    assert "dispatch_task" not in prompt
