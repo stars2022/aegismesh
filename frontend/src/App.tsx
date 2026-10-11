@@ -96,7 +96,7 @@ import {
   Switch,
 } from "./components";
 import { AgentPicker } from "./AgentPicker";
-import { SchemaEditors, StructuredTaskControls, StructuredResult } from "./StructuredIO";
+import { SchemaEditors, StructuredCapability, StructuredTaskControls, StructuredResult } from "./StructuredIO";
 import { buildStructuredTask, inputValues, parseSchemaText, schemaText, taskSchemas } from "./structuredIOModel";
 import type { StructuredTaskOptions } from "./types";
 import { SidebarToggle, useCompactSidebar } from "./SidebarToggle";
@@ -2315,6 +2315,7 @@ function AgentBuilder({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [structuredEnabled, setStructuredEnabled] = useState(agent?.structured_io_enabled ?? false);
+  const [structuredDetailsOpen, setStructuredDetailsOpen] = useState(false);
   const [inputSchema, setInputSchema] = useState(schemaText(agent?.input_schema));
   const [outputSchema, setOutputSchema] = useState(schemaText(agent?.output_schema));
   const [toolsSubmenuOpen, setToolsSubmenuOpen] = useState(true);
@@ -2433,12 +2434,12 @@ function AgentBuilder({
     if (index === 1) {
       if (skills.length === 0) return "请至少配置一个业务能力技能";
       if (skills.some((s) => !s.name.trim())) return "存在未命名技能，请完善技能配置";
+      try { parseSchemaText(inputSchema); parseSchemaText(outputSchema); }
+      catch (reason) { return `结构化输入输出：${reason instanceof Error ? reason.message : "Schema 格式不正确"}`; }
+      if (structuredEnabled && !inputSchema.trim() && !outputSchema.trim() && !skills.some(skill => skill.input_schema || skill.output_schema)) return "结构化输入输出：请配置至少一个输入或输出 Schema";
       return "";
     }
     if (index === 2) {
-      try { parseSchemaText(inputSchema); parseSchemaText(outputSchema); }
-      catch (reason) { return reason instanceof Error ? reason.message : "Schema 格式不正确"; }
-      if (structuredEnabled && !inputSchema.trim() && !outputSchema.trim() && !skills.some(skill => skill.input_schema || skill.output_schema)) return "请配置至少一个输入或输出 Schema";
       if (form.transport === "provider")
         return form.model_provider ? "" : "请选择模型供应商";
       if (!form.endpoint_url.trim()) return "请填写 AIP 端点";
@@ -2457,6 +2458,7 @@ function AgentBuilder({
     for (let index = 0; index < target; index += 1) {
       const error = stepError(index);
       if (error) {
+        if (error.startsWith("结构化输入输出：")) setStructuredDetailsOpen(true);
         setStep(index);
         setSaveError(error);
         return;
@@ -2502,6 +2504,7 @@ function AgentBuilder({
     for (let index = 0; index < 3; index += 1) {
       const error = stepError(index);
       if (error) {
+        if (error.startsWith("结构化输入输出：")) setStructuredDetailsOpen(true);
         setStep(index);
         setSaveError(error);
         return;
@@ -2698,6 +2701,13 @@ function AgentBuilder({
           )}
           {step === 1 && (
             <div className="form-stack">
+              <StructuredCapability
+                enabled={structuredEnabled} onEnabled={value => { setStructuredEnabled(value); setSaveError(""); }}
+                open={structuredDetailsOpen} onOpen={setStructuredDetailsOpen}
+                input={inputSchema} output={outputSchema}
+                onInput={value => { setInputSchema(value); setSaveError(""); }}
+                onOutput={value => { setOutputSchema(value); setSaveError(""); }}
+              />
               <div className="skills-mgr-box">
                 <div className="skills-mgr-header">
                   <div>
@@ -2988,11 +2998,6 @@ function AgentBuilder({
                   label="实时流式输出"
                 />
               </div>
-              <div className="switch-row stream-switch">
-                <strong>提供结构化输入输出</strong>
-                <Switch checked={structuredEnabled} onChange={setStructuredEnabled} label="提供结构化输入输出"/>
-              </div>
-              {structuredEnabled && <SchemaEditors input={inputSchema} output={outputSchema} onInput={setInputSchema} onOutput={setOutputSchema}/>}
               {form.transport === "provider" ? (
                 <>
                   <label>
@@ -3063,6 +3068,10 @@ function AgentBuilder({
                 <div>
                   <dt>工具</dt>
                   <dd>{form.tools || "—"}</dd>
+                </div>
+                <div>
+                  <dt>内置能力</dt>
+                  <dd>{structuredEnabled ? "结构化输入输出" : "—"}</dd>
                 </div>
               </dl>
             </div>

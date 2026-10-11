@@ -1,5 +1,6 @@
 import { useId, useState } from 'react'
-import { Braces, Check, Copy, Download } from 'lucide-react'
+import { Braces, Check, ChevronDown, Copy, Download } from 'lucide-react'
+import { Switch } from './components'
 import type { Agent, JsonSchema } from './types'
 import { fieldType, taskSchemas } from './structuredIOModel'
 import './StructuredIO.css'
@@ -13,6 +14,30 @@ export function SchemaEditors({ input, output, onInput, onOutput, inherited = fa
     <label>输入 Schema<textarea spellCheck={false} rows={7} value={input} onChange={event => onInput(event.target.value)} placeholder={inherited ? '留空沿用智能体配置' : example}/></label>
     <label>输出 Schema<textarea spellCheck={false} rows={7} value={output} onChange={event => onOutput(event.target.value)} placeholder={inherited ? '留空沿用智能体配置' : example}/></label>
   </div>
+}
+
+export function StructuredCapability({ enabled, onEnabled, open, onOpen, input, output, onInput, onOutput }: {
+  enabled: boolean; onEnabled: (enabled: boolean) => void; open: boolean; onOpen: (open: boolean) => void
+  input: string; output: string; onInput: (value: string) => void; onOutput: (value: string) => void
+}) {
+  return <section className="agent-builtin-capabilities" aria-label="内置能力">
+    <h4>内置能力</h4>
+    <details className="structured-capability" open={open} onToggle={event => onOpen(event.currentTarget.open)}>
+      <summary>
+        <Braces size={18} aria-hidden="true"/>
+        <strong>结构化输入输出</strong>
+        <span className="structured-capability-status">{enabled ? '已启用' : '未启用'}</span>
+        <span className="structured-capability-action">详情配置<ChevronDown size={15} aria-hidden="true"/></span>
+      </summary>
+      <div className="structured-capability-body">
+        <div className="switch-row stream-switch">
+          <strong>启用此能力</strong>
+          <Switch checked={enabled} onChange={onEnabled} label="启用结构化输入输出"/>
+        </div>
+        <SchemaEditors input={input} output={output} onInput={onInput} onOutput={onOutput}/>
+      </div>
+    </details>
+  </section>
 }
 
 function InputField({ name, schema, required, value, onChange }: {

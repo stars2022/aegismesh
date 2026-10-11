@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { SchemaEditors, StructuredResult, StructuredTaskControls } from '../src/StructuredIO'
+import { StructuredCapability, StructuredResult, StructuredTaskControls } from '../src/StructuredIO'
 import { buildStructuredTask, schemaText } from '../src/structuredIOModel'
 import type { Agent, JsonSchema } from '../src/types'
 import '../src/styles.css'
@@ -11,13 +11,15 @@ const agent = {id:'fixture',name:'文献检索',structured_io_enabled:true,input
 
 function Fixture() {
   const [enabled,setEnabled] = useState(false)
+  const [capabilityEnabled,setCapabilityEnabled] = useState(false)
+  const [capabilityOpen,setCapabilityOpen] = useState(false)
   const [skill,setSkill] = useState('')
   const [values,setValues] = useState<Record<string,string>>({})
   const [input,setInput] = useState(schemaText(inputSchema))
   const [output,setOutput] = useState(schemaText(outputSchema))
   const [error,setError] = useState('')
   const [result,setResult] = useState<Record<string,unknown>|null>(null)
-  return <main style={{maxWidth:780,margin:'32px auto',padding:16}}><h2>结构化输入输出</h2><div className="panel"><StructuredTaskControls agent={agent} enabled={enabled} skillId={skill} values={values} onEnabled={setEnabled} onSkill={value=>{setSkill(value);setValues({})}} onValues={setValues}/><div style={{padding:16}}><button className="primary-button" onClick={()=>{try{const task=buildStructuredTask(agent,enabled,skill,values);setResult(task ? {summary:'本地静态结果预览，不调用模型',sources:[]}:null);setError(task?'':'普通聊天，不要求结构化字段')}catch(error){setError(String(error))}}}>检查输入</button>{error&&<p role="alert">{error}</p>}</div></div>{result&&<StructuredResult value={result}/>}<details style={{marginTop:24}}><summary>管理员字段编辑</summary><SchemaEditors input={input} output={output} onInput={setInput} onOutput={setOutput}/></details></main>
+  return <main style={{maxWidth:780,margin:'32px auto',padding:16}}><h2>结构化输入输出</h2><div className="panel"><StructuredTaskControls agent={agent} enabled={enabled} skillId={skill} values={values} onEnabled={setEnabled} onSkill={value=>{setSkill(value);setValues({})}} onValues={setValues}/><div style={{padding:16}}><button className="primary-button" onClick={()=>{try{const task=buildStructuredTask(agent,enabled,skill,values);setResult(task ? {summary:'本地静态结果预览，不调用模型',sources:[]}:null);setError(task?'':'普通聊天，不要求结构化字段')}catch(error){setError(String(error))}}}>检查输入</button>{error&&<p role="alert">{error}</p>}</div></div>{result&&<StructuredResult value={result}/>}<div className="form-stack" style={{marginTop:24}}><StructuredCapability enabled={capabilityEnabled} onEnabled={setCapabilityEnabled} open={capabilityOpen} onOpen={setCapabilityOpen} input={input} output={output} onInput={setInput} onOutput={setOutput}/></div></main>
 }
 document.documentElement.dataset.theme = new URLSearchParams(location.search).get('theme') || 'light'
 createRoot(document.getElementById('root')!).render(<Fixture/> )

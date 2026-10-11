@@ -19,3 +19,18 @@
 .structured-result-heading button { display: grid; place-items: center; border: 0; border-radius: 6px; padding: 6px; background: transparent; color: var(--muted); cursor: pointer; }
 .structured-result-heading button:hover { background: var(--control-hover); color: var(--ink); }
 .structured-result small { display: block; color: var(--muted); margin-top: 8px; }
+.agent-builtin-capabilities { min-width: 0; }
+.agent-builtin-capabilities > h4 { margin: 0 0 12px; color: var(--ink); font-size: 13px; font-weight: 600; }
+.structured-capability { border: 1px solid var(--line); border-radius: var(--radius-panel); color: var(--ink); background: var(--paper); overflow: hidden; }
+.structured-capability > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 16px; cursor: pointer; list-style: none; font-size: 12px; }
+.structured-capability > summary::-webkit-details-marker { display: none; }
+.structured-capability > summary:hover { background: var(--control-hover); }
+.structured-capability > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: -3px; }
+.structured-capability > summary > svg { flex: 0 0 auto; color: var(--muted); }
+.structured-capability > summary > strong { flex: 1; min-width: 125px; font-weight: 500; }
+.structured-capability-status { font-size: 11px; color: var(--muted); }
+.structured-capability-action { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.structured-capability[open] .structured-capability-action svg { transform: rotate(180deg); }
+.structured-capability-body { display: grid; gap: 18px; padding: 18px 16px; border-top: 1px solid var(--line); }
+.structured-capability-body .switch-row { margin: 0; }
+[data-theme="dark"] .structured-capability-body .switch:not(.on) .knob { background: var(--ink); }
