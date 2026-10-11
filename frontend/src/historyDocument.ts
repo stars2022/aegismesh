@@ -30,7 +30,8 @@ export function mergeHistory(remote: Conversation, local: Conversation): Convers
     if (index < 0) return message
     const [item] = remaining.splice(index, 1)
     // An authoritative completed response wins over an interrupted local stream.
-    return message.result ? { ...item, ...message, historyId: item.historyId || message.historyId } : { ...message, ...item }
+    return message.result ? { ...item, ...message, streaming: false, taskId: undefined,
+      historyId: item.historyId || message.historyId } : { ...message, ...item }
   })
   messages.push(...remaining)
   return { ...remote, ...local, session: remote.session, messages, queue: local.queue || [] }

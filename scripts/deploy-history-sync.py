@@ -38,6 +38,7 @@ def fetch(path):
 def main():
     os.umask(0o077)
     stage, backup, expected = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), sys.argv[3]
+    frontend_only = '--frontend-only' in sys.argv[4:]
     active = Path(run('systemctl', 'show', 'aegismesh', '--property=WorkingDirectory', '--value')).resolve()
     if active != RELEASE or active != Path.cwd().resolve():
         raise SystemExit('Unexpected active release')
@@ -49,6 +50,8 @@ def main():
     if set(manifest['sources']) != set(FILES) or not manifest['database_backup']['locally_restored_and_checked']:
         raise SystemExit('Expected exact allowlist and verified local database backup')
     for name, hashes in manifest['sources'].items():
+        if frontend_only and not name.startswith('frontend/') and hashes['before'] != hashes['after']:
+            raise SystemExit('Frontend-only update contains a backend/document change')
         target = RELEASE / name
         if (digest(target) if target.is_file() else None) != hashes['before'] or digest(stage / name) != hashes['after']:
             raise SystemExit('Source changed: ' + name)
@@ -87,16 +90,20 @@ def main():
     env = dict(os.environ, PYTHONPATH='backend:.')
     try:
         for name in FILES:
+            if frontend_only and not name.startswith('frontend/'):
+                continue
             target = RELEASE / name; target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.with_suffix(target.suffix + '.history-stage')
             shutil.copy2(stage / name, temporary); temporary.chmod(0o644); temporary.replace(target)
         # Import creates only the new additive table; no historical row is reassigned.
-        run(str(RELEASE / '.venv/bin/python'), '-c',
-            "from dotenv import load_dotenv; load_dotenv('public-aip.env',override=True); from app.main import initialize_schema; initialize_schema()", env=env)
+        if not frontend_only:
+            run(str(RELEASE / '.venv/bin/python'), '-c',
+                "from dotenv import load_dotenv; load_dotenv('public-aip.env',override=True); from app.main import initialize_schema; initialize_schema()", env=env)
         if snapshot() != (0, protected_hash):
             raise RuntimeError('Protected configuration or existing conversation ownership changed')
-        restarted = True
-        run('sudo', '-n', 'systemctl', 'restart', 'aegismesh.service')
+        if not frontend_only:
+            restarted = True
+            run('sudo', '-n', 'systemctl', 'restart', 'aegismesh.service')
         for _ in range(40):
             try:
                 if fetch('/api/health')['status'] != 'ok':
@@ -132,7 +139,7 @@ def main():
         with sqlite3.connect(f'file:{database}?mode=ro', uri=True) as db:
             if not db.execute("SELECT 1 FROM operational_logs WHERE request_id=? AND outcome='success'", (audit_id,)).fetchone():
                 raise RuntimeError('Deployment audit missing')
-        print(json.dumps({'release': str(RELEASE), 'rollback': str(rollback), 'api_restarted': True,
+        print(json.dumps({'release': str(RELEASE), 'rollback': str(rollback), 'api_restarted': restarted,
                           'aip_restarted': False, 'protected_state_preserved': True, 'audit_id': audit_id,
                           'index_sha256': digest(web / 'index.html')}))
     except BaseException:

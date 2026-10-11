@@ -4315,6 +4315,8 @@ function saveConversationIndex(metas: ConversationMeta[]): void {
 }
 
 function loadConversationData(id: string): Conversation | null {
+  const memory = historySync?.owner === getConversationOwner() ? historySync.cached(id) : null;
+  if (memory) return memory;
   try {
     const raw = conversationStorage.getItem(`aegismesh-conv-${id}`);
     if (raw) {
@@ -4340,6 +4342,7 @@ function saveConversationData(conv: Conversation): void {
     ...message, historyId: previous[index]?.role === message.role && previous[index]?.createdAt === message.createdAt
       ? previous[index].historyId || crypto.randomUUID() : crypto.randomUUID(),
   });
+  currentHistorySync()?.remember(conv);
   try {
     conversationStorage.setItem(`aegismesh-conv-${conv.id}`, JSON.stringify(conv));
   } catch { /* Cloud persistence below is independent of localStorage capacity. */ }
@@ -7073,6 +7076,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
         const list = await sync.refresh();
         if (cancelled) return;
         setConversations(list); setHistoryError('');
+        if (sync.isDeleted(sessionRef.current) && !sendingRef.current) { createConversation(); return; }
         const target = list.find(item => item.id === activeIdRef.current) || (!loadConversationData(activeIdRef.current) ? list[0] : undefined);
         if (target && !sendingRef.current) openConversation(target);
       } catch (error) {
@@ -7082,7 +7086,10 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     const unsubscribe = sync.subscribe((error, indexChanged) => {
       if (cancelled) return;
       setHistoryError(error || '');
-      if (indexChanged) setConversations(sync.index());
+      if (indexChanged) {
+        setConversations(sync.index());
+        if (sync.isDeleted(sessionRef.current) && !sendingRef.current) createConversation();
+      }
     });
     void refresh().then(() => {
       if (cancelled) return;

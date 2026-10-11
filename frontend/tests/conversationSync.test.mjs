@@ -15,6 +15,7 @@ test('merge retains both concurrent branches and does not duplicate matched turn
   const local = doc('common'); local.messages.push({ role: 'assistant', text: 'partial', result: { invocation_id: 'call' }, streaming: true }, { role: 'user', text: 'local new' })
   const merged = mergeHistory(remote, local)
   assert.deepEqual(merged.messages.map(message => message.text), ['common', 'cloud', 'local new'])
+  assert.equal(merged.messages[1].streaming, false)
   assert.equal(mergeHistory(remote, remote).messages.length, 2)
 })
 
@@ -75,4 +76,14 @@ test('network failures retain pending content and streaming deltas never write c
   globalThis.fetch = async (_path, init) => init.method === 'PUT' ? Response.json({ revision: 1 }) : Response.json({ detail: 'new' }, { status: 404 })
   await sync.flush('ses-local')
   assert.equal(sync.cached('local').messages[0].text, 'kept')
+})
+
+test('a full browser cache cannot discard a restored group configuration or message', async () => {
+  const storage = { getItem: () => null, setItem: () => { throw new Error('QuotaExceededError') }, removeItem: () => {} }
+  const sync = new ConversationSync('account-a', storage, mergeHistory)
+  const document = doc('retained', { isGroup: true, groupConfig: { name: 'group', members: ['executor'], backendId: 'owned-group' } })
+  globalThis.fetch = async () => Response.json({ revision: 1, conversation: document })
+  await sync.load({ id: 'local', session: 'ses-local' })
+  assert.equal(sync.cached('local').messages[0].text, 'retained')
+  assert.equal(sync.cached('local').groupConfig.backendId, 'owned-group')
 })

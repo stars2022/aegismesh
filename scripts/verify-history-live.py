@@ -14,15 +14,16 @@ import urllib.request
 
 from dotenv import load_dotenv
 load_dotenv('public-aip.env', override=True)
-from fastapi import HTTPException, Request
-from app.main import app
+from fastapi import Request
+from app.main import require_demo, _chat_response
+from app.conversation_api import conversation_router
 from app.database import SessionLocal
 
 owner = sys.argv[1]
 started = time.monotonic()
 request = Request({'type': 'http', 'method': 'GET', 'path': '/api/account/history', 'headers': []})
 request.state.browser_owner_id = owner
-routes = {route.path: route.endpoint for route in app.routes if route.path.startswith('/api/account/history')}
+routes = {route.path: route.endpoint for route in conversation_router(require_demo, _chat_response).routes if 'GET' in route.methods}
 with SessionLocal() as db:
     page = routes['/api/account/history'](request=request, db=db, offset=0, limit=100)
     summaries = []

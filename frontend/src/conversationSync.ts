@@ -36,6 +36,7 @@ export class ConversationSync {
   private busy = new Map<string, Promise<void>>()
   private revisions = new Map<string, number>()
   private deleted = new Set<string>()
+  private documents = new Map<string, Conversation>()
   private listeners = new Set<Change>()
   private listing?: Promise<ConversationMeta[]>
   constructor(owner: string, store: Store, merge: (remote: Conversation, local: Conversation) => Conversation) {
@@ -50,9 +51,20 @@ export class ConversationSync {
     try { const data = JSON.parse(this.store.getItem(INDEX) || '[]'); return Array.isArray(data) ? data : [] } catch { return [] }
   }
   cached(id: string): Conversation | null {
+    const memory = this.documents.get(id)
+    if (memory) return memory
     try { return JSON.parse(this.store.getItem(DATA + id) || 'null') } catch { return null }
   }
+  isDeleted(session?: string) { return Boolean(session && this.deleted.has(session)) }
+  remember(document: Conversation) {
+    this.documents.delete(document.id); this.documents.set(document.id, document)
+    for (const [id, item] of this.documents) {
+      if (this.documents.size <= 20) break
+      if (id !== document.id && (!item.session || !this.pending.has(item.session))) this.documents.delete(id)
+    }
+  }
   private cache(document: Conversation) {
+    this.remember(document)
     try { this.store.setItem(DATA + document.id, JSON.stringify(document)) }
     catch { this.notify('浏览器缓存已满，正在尝试云端保存') }
   }
