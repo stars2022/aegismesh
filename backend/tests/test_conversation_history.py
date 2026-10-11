@@ -20,7 +20,11 @@ def client(db, monkeypatch):
     monkeypatch.setattr(cfg, "background_worker_enabled", False)
     monkeypatch.setattr(identity, "SessionLocal", lambda: Session(db.bind, expire_on_commit=False))
     app.dependency_overrides[get_db] = lambda: db
+    account = UserAccount(id="history-test", email="history@test.test")
+    db.add(account); db.commit()
+    token, _ = identity.issue_session(db, account=account)
     with TestClient(app, base_url="https://testserver") as client:
+        client.cookies.set(identity.SESSION_COOKIE, token)
         yield client
     app.dependency_overrides.pop(get_db, None)
 
@@ -147,6 +151,16 @@ def test_index_is_paginated_without_silent_fifty_item_truncation(client, db):
     assert len(first["items"]) == 100 and len(second["items"]) == 25
     assert second["next_offset"] is None
     assert len({item["session"] for item in first["items"] + second["items"]}) == 125
+
+
+def test_public_guest_has_no_unbounded_cloud_storage_and_history_is_still_readable(client, db):
+    client.cookies.clear()
+    owner = principal(client)
+    assert owner.startswith("guest_")
+    assert put(client).status_code == 401
+    assert client.get("/api/account/history").status_code == 200
+    assert client.get("/api/demo/session").json()["authenticated"] is True
+    assert db.get(ConversationHistory, "ses-a") is None
 
 
 def test_old_owned_invocations_without_mapping_are_discovered_but_mixed_owners_are_not(client, db):

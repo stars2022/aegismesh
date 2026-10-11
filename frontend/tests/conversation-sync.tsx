@@ -7,7 +7,7 @@ import type { Agent } from '../src/types'
 import '../src/styles.css'
 
 if (location.hostname !== '127.0.0.1' || location.port !== '5197') throw new Error('Use isolated port 5197')
-const owner = 'history-sync-fixture'
+const owner = 'account_history-sync-fixture'
 setConversationOwner(owner)
 applyTheme({ ...DEFAULT_SETTINGS, theme: new URLSearchParams(location.search).get('theme') === 'dark' ? 'dark' : 'light' })
 conversationStorage.removeItem('aegismesh-conversations-index')

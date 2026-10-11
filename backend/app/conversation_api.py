@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from datetime import timezone
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import case, exists, func, select, update
+from sqlalchemy import Text, case, cast, exists, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -95,7 +97,7 @@ def conversation_router(require_demo, chat_response):
             Invocation.session_id == sessions.c.id, Invocation.owner_id == owner).order_by(Invocation.created_at, Invocation.id).limit(1).scalar_subquery()
         updated = case((calls.c.latest > ConversationHistory.updated_at, calls.c.latest),
                        else_=func.coalesce(ConversationHistory.updated_at, calls.c.latest, sessions.c.created))
-        query = select(sessions.c.id, calls.c.count, first_query, ConversationHistory.payload,
+        query = select(sessions.c.id, calls.c.count, first_query, ConversationHistory.summary,
                        ConversationHistory.revision, ConversationHistory.deleted_at,
                        updated.label("updated"))\
             .select_from(sessions).outerjoin(calls, calls.c.session == sessions.c.id)\
@@ -107,9 +109,9 @@ def conversation_router(require_demo, chat_response):
             payload = payload or {}
             items.append({"id": payload.get("id", session), "session": session,
                           "title": payload.get("title") or title or "会话",
-                          "agentId": payload.get("agentId"), "messageCount": max(len(payload.get("messages", [])), (count or 0) * 2),
+                          "agentId": payload.get("agentId"), "messageCount": max(payload.get("messageCount", 0), (count or 0) * 2),
                           "isCanvas": payload.get("isCanvas", False), "isGroup": payload.get("isGroup", False),
-                          "groupMemberCount": len((payload.get("groupConfig") or {}).get("members", [])),
+                          "groupMemberCount": payload.get("groupMemberCount", 0),
                           "updatedAt": _millis(updated_at), "revision": revision or 0, "deleted": bool(deleted)})
         return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
 
@@ -156,6 +158,8 @@ def conversation_router(require_demo, chat_response):
     async def save(session: str, request: Request, db: Session = Depends(get_db)):
         require_same_origin(request)
         owner = _owner(request)
+        if not getattr(request.state, "account_id", None):
+            raise HTTPException(401, "登录后可保存云端会话，访客记录仍保存在浏览器")
         raw = bytearray()
         async for chunk in request.stream():
             raw.extend(chunk)
@@ -187,6 +191,17 @@ def conversation_router(require_demo, chat_response):
                 message.pop("result", None)
             message.pop("streaming", None)
             message.pop("taskId", None)
+        stored_size = len(json.dumps(document).encode())
+        if stored_size > 2 * 1024 * 1024:
+            raise HTTPException(413, "会话超过云端保存大小上限，本地原件仍保留")
+        count, used = db.execute(select(func.count(), func.coalesce(func.sum(func.length(cast(ConversationHistory.payload, Text))), 0))
+            .where(ConversationHistory.owner_id == owner, ConversationHistory.id != session)).one()
+        if count >= 2000 or used + stored_size > 64 * 1024 * 1024:
+            raise HTTPException(413, "账号云端历史存储已满，本地原件仍保留")
+        url = db.get_bind().url
+        if url.drivername.startswith("sqlite") and url.database and url.database != ":memory:":
+            if shutil.disk_usage(Path(url.database).resolve().parent).free < 512 * 1024 * 1024:
+                raise HTTPException(507, "云端存储空间不足，本地记录已保留，请稍后重试")
         try:
             bind_conversation(db, session, owner)
         except ConversationOwnershipError:
@@ -195,17 +210,19 @@ def conversation_router(require_demo, chat_response):
         if row and row.deleted_at:
             raise HTTPException(410, "会话已删除，可在数据管理中恢复")
         now = utcnow()
+        summary = {key: document[key] for key in ("id", "title", "agentId", "isCanvas", "isGroup") if key in document}
+        summary.update(messageCount=len(document["messages"]), groupMemberCount=len(group.get("members", [])))
         if row:
             changed = db.execute(update(ConversationHistory).where(ConversationHistory.id == session,
                 ConversationHistory.owner_id == owner, ConversationHistory.revision == revision,
-                ConversationHistory.deleted_at.is_(None)).values(payload=document, revision=revision + 1, updated_at=now)).rowcount
+                ConversationHistory.deleted_at.is_(None)).values(payload=document, summary=summary, revision=revision + 1, updated_at=now)).rowcount
             if not changed:
                 db.rollback()
                 raise HTTPException(409, "会话已在其他页面更新，请合并后重试")
         else:
             if revision != 0:
                 raise HTTPException(409, "会话版本已变化，请重新加载")
-            db.add(ConversationHistory(id=session, owner_id=owner, payload=document, revision=1, updated_at=now))
+            db.add(ConversationHistory(id=session, owner_id=owner, payload=document, summary=summary, revision=1, updated_at=now))
         try:
             db.commit()
         except IntegrityError:

@@ -65,6 +65,7 @@ class ConversationHistory(Base):
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     owner_id: Mapped[str] = mapped_column(String(128), index=True)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
     revision: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

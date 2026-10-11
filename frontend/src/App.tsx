@@ -4263,7 +4263,7 @@ function AccessControl() {
 let historySync: ConversationSync | undefined;
 function currentHistorySync() {
   const owner = getConversationOwner();
-  if (!owner) return undefined;
+  if (!owner.startsWith('account_')) return undefined;
   if (historySync?.owner !== owner) historySync = new ConversationSync(owner, conversationStorageForOwner(owner), mergeHistory);
   return historySync;
 }
