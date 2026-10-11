@@ -1,4 +1,4 @@
-import type { Agent, Attachment, ChatResult, DashboardData, Policy, ProbeResult, Provider, Trace, UploadResponse } from './types'
+import type { Agent, Attachment, ChatResult, DashboardData, Policy, ProbeResult, Provider, Trace, UploadResponse, StructuredTaskOptions } from './types'
 import type { LogPage, LogRecord, LogStatus } from './logs'
 import type { SearchSettings, SearchSettingsUpdate, SearchTestResult } from './WebSearchSettings'
 
@@ -303,6 +303,7 @@ export const api = {
     attachments?: Attachment[],
     canvas?: boolean,
     mode: 'route' | 'bounty' = 'route',
+    structuredOptions?: StructuredTaskOptions,
   ) =>
     streamChat(
       '/api/demo/chat/stream',
@@ -314,6 +315,7 @@ export const api = {
         mode,
         interface: 'harness',
         attachments: attachments || [],
+        ...structuredOptions,
       },
       onDelta,
       onEvent,

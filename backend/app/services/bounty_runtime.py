@@ -11,6 +11,7 @@ import uuid
 from .bounty import BOUNTY_SCHEMAS, BountyStore, SUMMARY_INSTRUCTIONS, WORKER_INSTRUCTIONS
 from .prompt import fence_untrusted
 from .tools import ToolRegistry
+from .structured_io import StructuredOutputError
 
 
 async def run_bounty(o, invocation, leader, ranked, eligible, request, policy, history):
@@ -130,7 +131,8 @@ async def run_bounty(o, invocation, leader, ranked, eligible, request, policy, h
                     "agent_name":agent.name, "delta":delta})
 
             result = await o._invoke(agent, request.message, invocation,
-                request.model_copy(update={"agent_id":agent.id, "canvas":False, "collab_style":"auto"}),
+                request.model_copy(update={"agent_id":agent.id, "canvas":False, "collab_style":"auto",
+                                           "structured_io":False, "input_data":None}),
                 # New members receive the current user goal/attachments, not
                 # an automatic copy of the user's old conversation transcript.
                 policy, [{"role":"system", "content":WORKER_INSTRUCTIONS}],
@@ -186,17 +188,24 @@ async def run_bounty(o, invocation, leader, ranked, eligible, request, policy, h
         o._check_storage_state()
         snapshot = persist()
         submitted = [item for item in snapshot["items"] if item["status"] in {"submitted","accepted"}]
+        summary_data = {}
         if submitted and not halt["reason"] and store.enabled():
             o.controller.record_synthesizing()
             registry = board_registry(leader, summary=True)
-            summary = await o._invoke(leader, request.message, invocation,
-                request.model_copy(update={"canvas":False, "collab_style":"auto"}), policy,
-                [*history, {"role":"system", "content":SUMMARY_INSTRUCTIONS},
-                 {"role":"user", "content":fence_untrusted("待复核的任务板成果", str(snapshot))}],
-                harness=True, tool_registry=registry, extra_tool_names=("read_bounty_board","review_bounty"),
-                max_rounds=min(o.coordination_tool_rounds, policy.bounty_max_items + 3), stream_output=True)
-            add_usage(summary)
-            invocation.result_text = summary.text
+            try:
+                summary = await o._invoke(leader, request.message, invocation,
+                    request.model_copy(update={"canvas":False, "collab_style":"auto"}), policy,
+                    [*history, {"role":"system", "content":SUMMARY_INSTRUCTIONS},
+                     {"role":"user", "content":fence_untrusted("待复核的任务板成果", str(snapshot))}],
+                    harness=True, tool_registry=registry, extra_tool_names=("read_bounty_board","review_bounty"),
+                    max_rounds=min(o.coordination_tool_rounds, policy.bounty_max_items + 3), stream_output=True)
+                add_usage(summary)
+                invocation.result_text = summary.text
+                summary_data = {key: summary.data[key] for key in ("structured_output", "structured_io")
+                                if key in (summary.data or {})}
+            except StructuredOutputError as exc:
+                halt["reason"] = o._safe_error_message(exc)
+                invocation.result_text = "结构化结果校验失败：" + halt["reason"]
         else:
             # No additional model spend after a runtime failure or module switch.
             reports = "\n\n".join(f"{item['title']}（尚未独立核实）：\n{item['result']}" for item in submitted)
@@ -209,14 +218,21 @@ async def run_bounty(o, invocation, leader, ranked, eligible, request, policy, h
         snapshot.update(partial=bool(unfinished or halt["reason"] or not accepted),
                         review_kind="agent_review_not_independent_fact_verification",
                         priority_credits={a.id:sum(t["priority"] for t in accepted if t["claimed_by"] == a.id) for a in pool})
-        invocation.status = "completed" if submitted else "failed"
-        invocation.result_data = {**(invocation.result_data or {}), "mode":"bounty", "bounty":snapshot,
+        contract = request._io_contract if request.structured_io else None
+        output_missing = bool(contract and contract.output_schema is not None
+                              and (summary_data.get("structured_io") or {}).get("status") != "validated")
+        if output_missing and (invocation.result_data or {}).get("structured_io", {}).get("status") != "rejected":
+            reason = "本轮未生成可校验的最终结构化答复"
+            summary_data["structured_io"] = {"status":"rejected", "reason":reason}
+            o._event(invocation, "STRUCTURED_OUTPUT_REJECTED", {"agentId":leader.id, "reason":reason})
+        invocation.status = "completed" if submitted and not output_missing else "failed"
+        invocation.result_data = {**(invocation.result_data or {}), **summary_data, "mode":"bounty", "bounty":snapshot,
                                   "collaborations":deepcopy(collaborations), "context":o._context_info(history)}
         for key in usage:
             setattr(invocation, key, getattr(invocation, key) + usage[key])
         invocation.total_latency_ms = round((time.monotonic()-started)*1000,2)
         invocation.finished_at = datetime.now(timezone.utc)
-        o._event(invocation, "TASK_COMPLETED" if submitted else "TASK_FAILED", {
+        o._event(invocation, "TASK_COMPLETED" if invocation.status == "completed" else "TASK_FAILED", {
             "mode":"bounty", "accepted":len(accepted), "partial":snapshot["partial"]})
         o.db.commit()
         return invocation, ranked, leader

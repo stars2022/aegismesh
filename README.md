@@ -152,6 +152,10 @@ PYTHONPATH=backend .venv/bin/python -m app.cli admin set --username admin
 
 本地开发可以使用纯 HTTP，但管理员接口仍需先运行 `scripts/setup-admin.sh` 完成初始化。
 
+## 可选结构化输入输出
+
+智能体默认关闭此能力；管理员配置输入/输出字段后，用户仍需在单次任务中主动开启。普通聊天不受影响。配置、API、校验与兼容范围见 [结构化输入输出](docs/structured-io.md)。
+
 ## 测试
 
 管理后台「日志与审计」支持 AMP 日志查询、任务关联、管理操作审计和脱敏导出，且不改变直通上报链路。权限、保留策略和部署说明见 [日志与审计](docs/observability.md)。

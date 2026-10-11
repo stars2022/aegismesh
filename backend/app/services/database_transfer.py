@@ -23,6 +23,7 @@ from ..models import (
     WebSearchConfig,
 )
 from ..schemas import WebSearchSettings
+from .structured_io import validate_schema
 
 
 DATA_MODELS = [
@@ -118,6 +119,18 @@ def import_database(db: Session, payload: dict[str, Any], mode: str) -> dict[str
                     else:
                         for key, value in validated.items():
                             setattr(existing_search, key, value)
+                elif model is Agent:
+                    # Import cannot bypass the same contract checks as edits.
+                    if "structured_io_enabled" in values and not isinstance(values["structured_io_enabled"], bool):
+                        raise ValueError("结构化输入输出开关必须为布尔值")
+                    validate_schema(values.get("input_schema"))
+                    validate_schema(values.get("output_schema"))
+                    for skill in values.get("skills") or []:
+                        if not isinstance(skill, dict):
+                            raise ValueError("智能体技能必须为对象")
+                        validate_schema(skill.get("input_schema"))
+                        validate_schema(skill.get("output_schema"))
+                    db.merge(model(**values))
                 elif model is ProviderConfig:
                     required = {"id", "name", "kind", "base_url", "default_model"}
                     if not required.issubset(values):

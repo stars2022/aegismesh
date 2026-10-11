@@ -87,6 +87,7 @@ from .schemas import (
     WebSearchRead,
     WebSearchUpdate,
 )
+from .services.structured_io import StructuredInputError, resolve_contract
 from .seed import seed_database
 from .services.tools import ToolRegistry
 from .account_api import account_router
@@ -219,6 +220,15 @@ def initialize_schema() -> None:
                         text("ALTER TABLE invocations ADD COLUMN owner_id VARCHAR(128) DEFAULT ''")
                     )
     with engine.begin() as connection:
+        if "agents" in inspect(connection).get_table_names():
+            agent_columns = {c["name"] for c in inspect(connection).get_columns("agents")}
+            for column, declaration in {
+                "structured_io_enabled": "BOOLEAN DEFAULT FALSE",
+                "input_schema": "JSON",
+                "output_schema": "JSON",
+            }.items():
+                if column not in agent_columns:
+                    connection.execute(text(f"ALTER TABLE agents ADD COLUMN {column} {declaration}"))
         if "user_accounts" in inspect(connection).get_table_names():
             if "role" not in {c["name"] for c in inspect(connection).get_columns("user_accounts")}:
                 connection.execute(text("ALTER TABLE user_accounts ADD COLUMN role VARCHAR(24) DEFAULT 'member'"))
@@ -322,6 +332,11 @@ async def audited_http_exception(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(ConversationOwnershipError)
 async def ownership_error(request: Request, exc: ConversationOwnershipError):
     return JSONResponse({"detail": str(exc)}, status_code=404)
+
+
+@app.exception_handler(StructuredInputError)
+async def structured_input_error(request: Request, exc: StructuredInputError):
+    return JSONResponse({"detail": str(exc)}, status_code=422)
 
 
 @app.exception_handler(quotas.QuotaExceeded)
@@ -1280,6 +1295,8 @@ def _chat_response(invocation, ranked, selected, db: Session) -> ChatResponse:
             "completion_tokens": invocation.completion_tokens,
         },
         result_data=invocation.result_data,
+        structured_output=(invocation.result_data or {}).get("structured_output")
+        if invocation.status == "completed" and ((invocation.result_data or {}).get("structured_io") or {}).get("status") == "validated" else None,
     )
 
 
@@ -1383,6 +1400,7 @@ async def _launch_chat_task(payload: ChatRequest, user_id: str, is_admin: bool =
     session_id = payload.session_id or f"ses-{uuid.uuid4().hex}"
     payload.session_id = session_id
     with SessionLocal() as db:
+        payload._io_contract = resolve_contract(db, payload)
         bind_conversation(db, session_id, user_id)
     task_id = f"task_{uuid.uuid4().hex[:12]}"
     controller = AdaptiveDeadlineController(

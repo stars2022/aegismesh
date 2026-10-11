@@ -46,6 +46,9 @@ from .canvas import (
 )
 from .tools import ToolRegistry
 from .transport import PartnerResult, StreamCallback, TransportRegistry, clean_model_output
+from .structured_io import (
+    StructuredOutputError, input_message, parse_output, resolve_contract, wire_request,
+)
 from .web_search import WEB_SEARCH_SCHEMA, configured_search
 from .source_pages import READ_WEB_PAGE_SCHEMA, SourcePageReader
 from .amp_service import amp_service
@@ -336,6 +339,14 @@ class ReliableOrchestrator:
     ) -> tuple[Invocation, list[ScoredCandidate], Agent | None]:
         from .identity import bind_conversation
         from . import quotas
+        # Freeze the selected contract before quota reservation. Turning a
+        # module off later affects new tasks, not the contract already accepted.
+        contract = request._io_contract if (
+            request.structured_io and request._io_contract is not None
+            and request._io_contract.agent_id == request.agent_id
+        ) else resolve_contract(self.db, request)
+        request = request.model_copy(update={"message": input_message(request.message, request.input_data, contract)})
+        request._io_contract = contract
         session_id = request.session_id or f"ses-{uuid.uuid4().hex}"
         request = request.model_copy(update={"session_id": session_id})
         invocation_id = f"inv-{uuid.uuid4().hex[:12]}"
@@ -980,6 +991,25 @@ class ReliableOrchestrator:
         if target_controller:
             kwargs["controller"] = target_controller
 
+        contract = request._io_contract if (
+            request.structured_io and request.agent_id == agent.id
+            and request._io_contract is not None and request._io_contract.agent_id == agent.id
+        ) else None
+        if contract is not None:
+            kwargs["structured_request"] = wire_request(request)
+        if contract is not None and contract.output_schema is not None:
+            kwargs["structured_output"] = True
+            kwargs["history"] = [*kwargs.get("history", []),
+                                  {"role": "system", "content": contract.output_instruction()}]
+            # Keep progress/deadline instrumentation, but never publish an
+            # unvalidated partial JSON answer as a successful business result.
+            if target_controller:
+                async def _structured_progress(text: str) -> None:
+                    target_controller.record_tokens(text)
+                kwargs["on_text"] = _structured_progress
+            else:
+                kwargs.pop("on_text", None)
+
         sig = inspect.signature(transport.execute)
         safe_kwargs = {
             k: v
@@ -1000,7 +1030,36 @@ class ReliableOrchestrator:
             if canvas_snapshot:
                 await self._apply_external_canvas_result(agent, invocation, res, canvas_snapshot)
             if result_handler:
-                res = await result_handler(res)
+                try:
+                    res = await result_handler(res)
+                except StructuredOutputError:
+                    # A later synthesis can fail validation after the first
+                    # model response was paid for. Account for both responses.
+                    invocation.llm_calls += res.llm_calls
+                    invocation.prompt_tokens += res.prompt_tokens
+                    invocation.completion_tokens += res.completion_tokens
+                    raise
+            # This namespace is ours to attest, not a claim trusted from a
+            # remote partner, tool response or ordinary-chat transport.
+            res.data = {key: value for key, value in (res.data or {}).items()
+                        if key not in {"structured_output", "structured_io"}}
+            if contract is not None and contract.output_schema is not None:
+                try:
+                    output = parse_output(res.text, contract.output_schema)
+                except StructuredOutputError as exc:
+                    # Generation already consumed resources. Preserve that
+                    # usage even though it cannot be accepted as a result.
+                    invocation.llm_calls += res.llm_calls
+                    invocation.prompt_tokens += res.prompt_tokens
+                    invocation.completion_tokens += res.completion_tokens
+                    invocation.result_data = {**(invocation.result_data or {}),
+                                              "structured_io": {"status": "rejected", "reason": str(exc)}}
+                    self._event(invocation, "STRUCTURED_OUTPUT_REJECTED", {"agentId": agent.id, "reason": str(exc)})
+                    raise
+                res.text = json.dumps(output, ensure_ascii=False, allow_nan=False, indent=2)
+                res.data = {**(res.data or {}), "structured_output": output,
+                            "structured_io": {"status": "validated", "skill_id": contract.skill_id}}
+                self._event(invocation, "STRUCTURED_OUTPUT_VALIDATED", {"agentId": agent.id})
             return res
         except asyncio.TimeoutError as err:
             elapsed = time.monotonic() - invoke_started
@@ -1278,7 +1337,7 @@ class ReliableOrchestrator:
 
             # 协调模式失败时，尝试由 leader 直接自执行生成答复兜底
             try:
-                if not self.allow_coordination_fallback:
+                if request.structured_io or not self.allow_coordination_fallback:
                     raise RuntimeError(error_msg)
                 self._event(
                     invocation,
@@ -2618,6 +2677,10 @@ class ReliableOrchestrator:
                             "delegation_depth": len(next_chain) - 1,
                             "delegation_path": current_chain,
                             "root_invocation_id": invocation.id,
+                            # A parent's contract never silently constrains a
+                            # different agent's independently delegated task.
+                            "structured_io": False,
+                            "input_data": None,
                         }
                     )
                     # Only the caller's explicitly reviewed selection crosses the handoff.
@@ -3217,7 +3280,8 @@ class ReliableOrchestrator:
         )
         turns: list[tuple[str, str]] = []
         for item in reversed(previous):
-            clean_ans = clean_model_output(item.result_text or "")
+            validated = ((item.result_data or {}).get("structured_io") or {}).get("status") == "validated"
+            clean_ans = (item.result_text or "") if validated else clean_model_output(item.result_text or "")
             turns.append((item.query, clean_ans))
         if len(turns) <= HISTORY_VERBATIM_TURNS:
             return [

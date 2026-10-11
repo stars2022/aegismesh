@@ -1,3 +1,22 @@
+export type JsonSchema = {
+  type: string | string[]
+  title?: string
+  description?: string
+  properties?: Record<string, JsonSchema>
+  required?: string[]
+  additionalProperties?: boolean
+  items?: JsonSchema
+  enum?: unknown[]
+  default?: unknown
+  [key: string]: unknown
+}
+
+export type StructuredTaskOptions = {
+  structured_io: true
+  input_data?: Record<string, unknown>
+  requested_skill?: string
+}
+
 export type Skill = {
   id: string
   name: string
@@ -8,6 +27,8 @@ export type Skill = {
   input_modes?: string[]
   output_modes?: string[]
   system_prompt?: string
+  input_schema?: JsonSchema | null
+  output_schema?: JsonSchema | null
 }
 
 export type Provider = {
@@ -39,6 +60,9 @@ export type Agent = {
   health: string
   input_modes: string[]
   output_modes: string[]
+  structured_io_enabled?: boolean
+  input_schema?: JsonSchema | null
+  output_schema?: JsonSchema | null
   security_schemes: string[]
   skills: Skill[]
   tools: string[]
@@ -213,6 +237,7 @@ export type SharedCollaborationContextData = {
 }
 
 export type ChatResult = {
+  structured_output?: Record<string, unknown> | null
   invocation_id: string
   session_id: string
   status: string

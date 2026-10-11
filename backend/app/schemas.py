@@ -4,7 +4,9 @@ from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+
+from .services.structured_io import validate_schema
 
 
 def _valid_http_url(value: str) -> bool:
@@ -22,6 +24,10 @@ class Skill(BaseModel):
     examples: list[str] = Field(default_factory=list)
     input_modes: list[str] = Field(default_factory=lambda: ["text/plain"])
     output_modes: list[str] = Field(default_factory=lambda: ["application/json"])
+    input_schema: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None
+
+    _validate_schemas = field_validator("input_schema", "output_schema")(validate_schema)
 
 
 class AgentBase(BaseModel):
@@ -40,6 +46,11 @@ class AgentBase(BaseModel):
     health: str = "unknown"
     input_modes: list[str] = Field(default_factory=lambda: ["text/plain"])
     output_modes: list[str] = Field(default_factory=lambda: ["application/json"])
+    structured_io_enabled: bool = False
+    input_schema: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None
+
+    _validate_schemas = field_validator("input_schema", "output_schema")(validate_schema)
     security_schemes: list[str] = Field(default_factory=list)
     skills: list[Skill] = Field(default_factory=list)
     tools: list[str] = Field(default_factory=list)
@@ -101,12 +112,24 @@ class AgentUpdate(BaseModel):
     active: bool | None = None
     input_modes: list[str] | None = None
     output_modes: list[str] | None = None
+    structured_io_enabled: bool | None = None
+    input_schema: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None
+
+    _validate_schemas = field_validator("input_schema", "output_schema")(validate_schema)
     security_schemes: list[str] | None = None
     skills: list[Skill] | None = None
     tools: list[str] | None = None
     model_provider: str | None = None
     model_name: str | None = None
     estimated_cost_per_1k: float | None = None
+
+    @field_validator("structured_io_enabled")
+    @classmethod
+    def validate_structured_switch(cls, value: bool | None) -> bool:
+        if value is None:
+            raise ValueError("结构化输入输出开关必须为 true 或 false")
+        return value
 
     @field_validator("endpoint_url")
     @classmethod
@@ -211,6 +234,9 @@ class ChatRequest(BaseModel):
     requested_skill: str | None = None
     input_mode: str = "text/plain"
     output_mode: str = "application/json"
+    structured_io: bool = False
+    input_data: dict[str, Any] | None = None
+    _io_contract: Any = PrivateAttr(default=None)
     required_security: str | None = None
     required_transport: str | None = None
     mode: Literal["route", "collaborate", "bounty"] = "route"
@@ -386,6 +412,7 @@ class ChatResponse(BaseModel):
     latency_ms: float
     usage: dict[str, int]
     result_data: dict[str, Any] | None = None
+    structured_output: dict[str, Any] | None = None
 
 
 class TraceRead(BaseModel):

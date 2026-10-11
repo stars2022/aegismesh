@@ -1,0 +1,21 @@
+.structured-schema-editors { display: grid; gap: 16px; min-width: 0; }
+.structured-schema-editors label { display: grid; gap: 8px; }
+.structured-schema-editors textarea { box-sizing: border-box; width: 100%; min-width: 0; font: 12px/1.6 "DM Mono", monospace; resize: vertical; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-control); padding: 10px; }
+.structured-skill-editors { margin-top: 16px; }
+.structured-skill-editors > summary { color: var(--muted); font-size: 13px; cursor: pointer; margin-bottom: 12px; }
+.structured-task-controls { border-top: 1px solid var(--line); padding: 12px 16px; min-width: 0; max-height: min(45dvh, 360px); overflow: auto; }
+.structured-task-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.structured-task-toggle input { width: 15px; height: 15px; margin: 0; accent-color: var(--ink); }
+.structured-task-controls fieldset { border: 0; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 12px; min-width: 0; }
+.structured-input-field { display: grid; align-content: start; gap: 6px; min-width: 0; font-size: 12px; color: var(--ink); }
+.structured-input-field input, .structured-input-field select, .structured-input-field textarea { box-sizing: border-box; width: 100%; min-width: 0; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-control); padding: 8px 10px; font: inherit; }
+.structured-input-field small { color: var(--muted); overflow-wrap: anywhere; }
+.structured-output-schema { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+.structured-output-schema summary { cursor: pointer; }
+.structured-output-schema pre, .structured-result pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 440px; overflow: auto; margin: 12px 0 0; font: 12px/1.7 "DM Mono", monospace; }
+.structured-result { background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 14px 16px; min-width: 0; }
+.structured-result-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }
+.structured-result-heading > span, .structured-result-heading > div { display: flex; align-items: center; gap: 8px; }
+.structured-result-heading button { display: grid; place-items: center; border: 0; border-radius: 6px; padding: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.structured-result-heading button:hover { background: var(--control-hover); color: var(--ink); }
+.structured-result small { display: block; color: var(--muted); margin-top: 8px; }

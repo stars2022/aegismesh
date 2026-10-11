@@ -96,6 +96,9 @@ import {
   Switch,
 } from "./components";
 import { AgentPicker } from "./AgentPicker";
+import { SchemaEditors, StructuredTaskControls, StructuredResult } from "./StructuredIO";
+import { buildStructuredTask, inputValues, parseSchemaText, schemaText, taskSchemas } from "./structuredIOModel";
+import type { StructuredTaskOptions } from "./types";
 import { SidebarToggle, useCompactSidebar } from "./SidebarToggle";
 import { WebSearchSettings } from "./WebSearchSettings";
 import { AccountAdministration, QuotaAdministration } from "./AccountAdministration";
@@ -2096,6 +2099,8 @@ function SkillSubModal({
   const [outputModesStr, setOutputModesStr] = useState(
     (skill.output_modes || ["application/json", "text/markdown"]).join(", "),
   );
+  const [inputSchema, setInputSchema] = useState(schemaText(skill.input_schema));
+  const [outputSchema, setOutputSchema] = useState(schemaText(skill.output_schema));
   const [error, setError] = useState("");
 
   const handleSave = (e: FormEvent) => {
@@ -2122,7 +2127,11 @@ function SkillSubModal({
       .map((m: string) => m.trim())
       .filter(Boolean);
 
+    let parsedInput, parsedOutput;
+    try { parsedInput = parseSchemaText(inputSchema); parsedOutput = parseSchemaText(outputSchema); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Schema 格式不正确"); return; }
     onSave({
+      ...skill,
       id: cleanId,
       name: name.trim(),
       version: version.trim() || "1.0.0",
@@ -2132,6 +2141,8 @@ function SkillSubModal({
       input_modes: input_modes.length > 0 ? input_modes : ["text/plain"],
       output_modes:
         output_modes.length > 0 ? output_modes : ["application/json"],
+      input_schema: parsedInput,
+      output_schema: parsedOutput,
     });
   };
 
@@ -2245,8 +2256,11 @@ function SkillSubModal({
                 />
               </label>
             </div>
+            <details className="structured-skill-editors">
+              <summary>结构化字段（可选）</summary>
+              <SchemaEditors input={inputSchema} output={outputSchema} onInput={setInputSchema} onOutput={setOutputSchema} inherited/>
+            </details>
           </div>
-
           <div className="preview-modal-footer">
             <button
               type="button"
@@ -2300,11 +2314,15 @@ function AgentBuilder({
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [structuredEnabled, setStructuredEnabled] = useState(agent?.structured_io_enabled ?? false);
+  const [inputSchema, setInputSchema] = useState(schemaText(agent?.input_schema));
+  const [outputSchema, setOutputSchema] = useState(schemaText(agent?.output_schema));
   const [toolsSubmenuOpen, setToolsSubmenuOpen] = useState(true);
   const [customToolInput, setCustomToolInput] = useState("");
   const [skills, setSkills] = useState<Skill[]>(() => {
     if (agent?.skills && agent.skills.length > 0) {
       return agent.skills.map((s) => ({
+        ...s,
         id: s.id || "",
         name: s.name || "",
         version: s.version || "1.0.0",
@@ -2418,6 +2436,9 @@ function AgentBuilder({
       return "";
     }
     if (index === 2) {
+      try { parseSchemaText(inputSchema); parseSchemaText(outputSchema); }
+      catch (reason) { return reason instanceof Error ? reason.message : "Schema 格式不正确"; }
+      if (structuredEnabled && !inputSchema.trim() && !outputSchema.trim() && !skills.some(skill => skill.input_schema || skill.output_schema)) return "请配置至少一个输入或输出 Schema";
       if (form.transport === "provider")
         return form.model_provider ? "" : "请选择模型供应商";
       if (!form.endpoint_url.trim()) return "请填写 AIP 端点";
@@ -2499,11 +2520,15 @@ function AgentBuilder({
       transport: form.transport,
       usage_mode: form.identity_mode === "local" ? "internal" : form.usage_mode,
       streaming_enabled: form.streaming_enabled,
+      structured_io_enabled: structuredEnabled,
+      input_schema: parseSchemaText(inputSchema),
+      output_schema: parseSchemaText(outputSchema),
       endpoint_url: form.endpoint_url,
       input_modes: ["text/plain", "application/json"],
       output_modes: ["application/json", "text/markdown"],
       security_schemes: ["mtls"],
       skills: skills.map((s) => ({
+        ...s,
         id: s.id.trim() || s.name.trim().toLowerCase().replace(/\s+/g, "-"),
         name: s.name.trim(),
         version: s.version?.trim() || "1.0.0",
@@ -2963,6 +2988,11 @@ function AgentBuilder({
                   label="实时流式输出"
                 />
               </div>
+              <div className="switch-row stream-switch">
+                <strong>提供结构化输入输出</strong>
+                <Switch checked={structuredEnabled} onChange={setStructuredEnabled} label="提供结构化输入输出"/>
+              </div>
+              {structuredEnabled && <SchemaEditors input={inputSchema} output={outputSchema} onInput={setInputSchema} onOutput={setOutputSchema}/>}
               {form.transport === "provider" ? (
                 <>
                   <label>
@@ -4241,7 +4271,7 @@ type ChatMessage = {
   taskId?: string;
   recoveryInvocationId?: string;
 };
-type QueuedTask = { id: string; text: string; agentId: string; attachments?: Attachment[]; mode?: 'route' | 'bounty' };
+type QueuedTask = { id: string; text: string; agentId: string; attachments?: Attachment[]; mode?: 'route' | 'bounty'; structuredOptions?: StructuredTaskOptions };
 type Conversation = {
   id: string;
   title: string;
@@ -6471,6 +6501,20 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const [feedbackBusy, setFeedbackBusy] = useState("");
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentId, setAgentId] = useState(initialActive?.agentId || activeMeta?.agentId || "");
+  const [structuredEnabled, setStructuredEnabled] = useState(false);
+  const [structuredSkill, setStructuredSkill] = useState('');
+  const [structuredValues, setStructuredValues] = useState<Record<string, string>>({});
+  const [structuredError, setStructuredError] = useState('');
+  const structuredDraftRef = useRef<StructuredTaskOptions | undefined>(undefined);
+  const structuredAgent = agents.find(agent => agent.id === agentId);
+  useEffect(() => {
+    const draft = structuredDraftRef.current;
+    structuredDraftRef.current = undefined;
+    setStructuredEnabled(Boolean(draft) && Boolean(structuredAgent?.structured_io_enabled));
+    setStructuredSkill(draft?.requested_skill || '');
+    setStructuredValues(inputValues(draft?.input_data, taskSchemas(structuredAgent, draft?.requested_skill).input));
+    setStructuredError('');
+  }, [agentId, activeId, structuredAgent?.structured_io_enabled]);
   const [bountyEnabled, setBountyEnabled] = useState(false);
   const [executionMode, setExecutionMode] = useState<'route' | 'bounty'>('route');
   const [pendingAgentSwitch, setPendingAgentSwitch] = useState<{
@@ -7721,6 +7765,7 @@ ${cleanHistory}
     taskAgentId: string,
     messageAttachments?: Attachment[],
     taskMode: 'route' | 'bounty' = 'route',
+    structuredOptions?: StructuredTaskOptions,
   ) => {
     const currentConv = loadConversationData(activeId);
     if (currentConv?.isGroup && currentConv?.groupConfig) {
@@ -7743,7 +7788,7 @@ ${cleanHistory}
     streamTextRef.current = "";
     setMessages((items) => [
       ...items,
-      { role: "user", text: message, attachments: messageAttachments },
+      { role: "user", text: structuredOptions?.input_data ? `${message}\n\n\`\`\`json\n${JSON.stringify(structuredOptions.input_data, null, 2)}\n\`\`\`` : message, attachments: messageAttachments },
     ]);
     let receivedDelta = false;
     const abortCtrl = new AbortController();
@@ -7855,6 +7900,7 @@ ${cleanHistory}
         messageAttachments,
         isCanvasConv,
         taskMode,
+        structuredOptions,
       );
       if (activeIdRef.current === taskConvId) {
         setSession(result.session_id);
@@ -7917,7 +7963,7 @@ ${cleanHistory}
         const next = queueRef.current[0];
         if (next) {
           setQueue(queueRef.current.slice(1));
-void runMessage(next.text, next.agentId, next.attachments, next.mode);
+          void runMessage(next.text, next.agentId, next.attachments, next.mode, next.structuredOptions);
         }
       }
     }
@@ -7949,6 +7995,11 @@ void runMessage(next.text, next.agentId, next.attachments, next.mode);
     event?.preventDefault();
     const message = input.trim();
     if (!message && attachments.length === 0) return;
+    let structuredOptions: StructuredTaskOptions | undefined;
+    try {
+      structuredOptions = buildStructuredTask(agents.find(agent => agent.id === agentId), structuredEnabled && !isCanvasConv && !activeMeta?.isGroup, structuredSkill, structuredValues);
+      setStructuredError('');
+    } catch (reason) { setStructuredError(reason instanceof Error ? reason.message : '输入格式不正确'); return; }
     const currentAttachments = [...attachments];
     setAttachments([]);
     setInput("");
@@ -7966,11 +8017,12 @@ void runMessage(next.text, next.agentId, next.attachments, next.mode);
           agentId,
           attachments: currentAttachments,
           mode: executionMode,
+          structuredOptions,
         },
       ]);
       return;
     }
-    void runMessage(finalMsg, agentId, currentAttachments, executionMode);
+    void runMessage(finalMsg, agentId, currentAttachments, executionMode, structuredOptions);
   };
 
   const groupConfig = activeMeta?.isGroup ? loadConversationData(activeId)?.groupConfig : null;
@@ -8088,14 +8140,19 @@ void runMessage(next.text, next.agentId, next.attachments, next.mode);
   const handlePromoteTask = async (item: QueuedTask) => {
     setQueue((items) => items.filter((entry) => entry.id !== item.id));
     await handleStopTask();
-    void runMessage(item.text, item.agentId || agentId, item.attachments || [], item.mode);
+    void runMessage(item.text, item.agentId || agentId, item.attachments || [], item.mode, item.structuredOptions);
   };
 
   const handleEditTask = (item: QueuedTask) => {
     setQueue((items) => items.filter((entry) => entry.id !== item.id));
     setInput(item.text);
+    if (item.agentId !== agentId) structuredDraftRef.current = item.structuredOptions;
     setAgentId(item.agentId);
     setExecutionMode(bountyEnabled ? item.mode || 'route' : 'route');
+    setStructuredEnabled(Boolean(item.structuredOptions));
+    setStructuredSkill(item.structuredOptions?.requested_skill || '');
+    setStructuredValues(inputValues(item.structuredOptions?.input_data, taskSchemas(agents.find(agent => agent.id === item.agentId), item.structuredOptions?.requested_skill).input));
+    setStructuredError('');
     if (item.attachments) {
       setAttachments(item.attachments);
     }
@@ -8706,7 +8763,9 @@ void runMessage(next.text, next.agentId, next.attachments, next.mode);
                           )}
                         </div>
                       )}
-                      <MarkdownText text={message.text} streaming={message.streaming} />
+                      {message.result?.structured_output && message.result.status === 'completed'
+                        ? <StructuredResult value={message.result.structured_output}/>
+                        : <MarkdownText text={message.text} streaming={message.streaming} />}
                       {message.streaming && (
                         <>
                           {Object.values(liveSubagents)
@@ -8935,6 +8994,12 @@ void runMessage(next.text, next.agentId, next.attachments, next.mode);
                 ))}
               </div>
             )}
+            {!activeMeta?.isGroup && !isCanvasConv && agents.find(agent => agent.id === agentId)?.structured_io_enabled && <StructuredTaskControls
+              agent={agents.find(agent => agent.id === agentId)!} enabled={structuredEnabled} skillId={structuredSkill} values={structuredValues}
+              onEnabled={value => { setStructuredEnabled(value); setStructuredError(''); }}
+              onSkill={value => { setStructuredSkill(value); setStructuredValues({}); setStructuredError(''); }}
+              onValues={value => { setStructuredValues(value); setStructuredError(''); }}/>}
+            {structuredError && <p className="builder-error" role="alert">{structuredError}</p>}
             <textarea
               ref={composerTextareaRef}
               value={input}

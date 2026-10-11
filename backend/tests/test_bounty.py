@@ -307,6 +307,41 @@ async def test_bounty_runtime_workers_choose_and_leader_only_reviews(db):
     assert all(not entry.exempt for entry in usage)
 
 
+@pytest.mark.parametrize("invalid_output", [False, True])
+async def test_bounty_optional_structured_output_belongs_only_to_leader(db, monkeypatch, invalid_output):
+    import json
+    o, transport = runtime(db)
+    leader = db.get(Agent, "leader")
+    leader.structured_io_enabled = True
+    leader.output_schema = {"type":"object", "properties":{"summary":{"type":"string"}},
+                            "required":["summary"], "additionalProperties":False}
+    db.commit()
+    execute = transport.execute
+
+    async def checked(agent, *args, **kwargs):
+        if agent.role == "leader":
+            assert kwargs["structured_output"] is True
+        else:
+            assert "structured_output" not in kwargs and "structured_request" not in kwargs
+        result = await execute(agent, *args, **kwargs)
+        if agent.role == "leader":
+            result.text = "invalid JSON" if invalid_output else json.dumps({"summary":"2+3=5"})
+        return result
+
+    monkeypatch.setattr(transport, "execute", checked)
+    inv, _, _ = await o.run(ChatRequest(message="核验加法", agent_id="leader", mode="bounty", structured_io=True))
+    assert inv.status == ("failed" if invalid_output else "completed"), inv.result_text
+    assert transport.called.count("leader") == 1
+    assert inv.llm_calls == 3 and inv.prompt_tokens == 90 and inv.completion_tokens == 15
+    assert inv.result_data["structured_io"]["status"] == ("rejected" if invalid_output else "validated")
+    if not invalid_output:
+        assert inv.result_data["structured_output"] == {"summary":"2+3=5"}
+    else:
+        assert not any(event.event_type == "TASK_COMPLETED" for event in inv.events)
+    assert inv.result_data["bounty"]["closed"]
+    assert all(agent.active_tasks == 0 for agent in db.scalars(select(Agent)))
+
+
 async def test_bounty_disabled_before_run_never_calls_a_model(db):
     o, transport = runtime(db, enabled=False)
     with pytest.raises(NoEligibleAgentError, match="尚未启用"):

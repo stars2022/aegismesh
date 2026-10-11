@@ -19,6 +19,7 @@ from ..models import Agent, HostedTask, RoutingPolicy
 from ..schemas import ChatRequest
 from .orchestrator import MAX_CALL_CHAIN_DEPTH, ReliableOrchestrator
 from .transport import PartnerResult
+from .structured_io import read_wire_request
 
 
 EXECUTION_KIND = "aegismesh.aip-execution.v1"
@@ -191,7 +192,8 @@ async def execute_inbound_task(db, agent: Agent, task: HostedTask, *, on_text=No
     request = ChatRequest(message=task.query, session_id=session, agent_id=agent.id,
                           interface="harness",
                           delegation_path=ancestors, delegation_depth=len(ancestors),
-                          hard_deadline_seconds=context.remaining(), task_profile="research")
+                          hard_deadline_seconds=context.remaining(), task_profile="research",
+                          **read_wire_request((task.command_history or [{}])[0]))
     owner = "aip:" + hashlib.sha256(f"{agent.aic}\0{task.owner_peer_aic}".encode()).hexdigest()
     orchestrator = InboundAipOrchestrator(db, context, stream_callback=on_text)
     invocation, _, _ = await orchestrator.run(request, owner_id=owner)

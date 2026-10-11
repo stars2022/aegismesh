@@ -233,7 +233,8 @@ class OpenAICompatibleTransport:
         prompt_tokens = 0
         completion_tokens = 0
         llm_calls = 0
-        max_retries = 2
+        structured_output = bool(kwargs.get("structured_output"))
+        max_retries = 0 if structured_output else 2
         async with httpx.AsyncClient(timeout=make_transport_timeout(timeout_seconds)) as client:
             for round_index in range(max_rounds + 1):
                 if round_index >= max_rounds and executions:
@@ -361,9 +362,9 @@ class OpenAICompatibleTransport:
                 tool_calls = message.get("tool_calls") or []
                 if not tool_calls:
                     raw_answer = str(message.get("content") or "").strip()
-                    answer = clean_model_output(raw_answer)
+                    answer = raw_answer if structured_output else clean_model_output(raw_answer)
 
-                    if executions and (has_unexecuted_tool_markers(raw_answer) or not answer):
+                    if not structured_output and executions and (has_unexecuted_tool_markers(raw_answer) or not answer):
                         if controller and hasattr(controller, "record_synthesizing"):
                             controller.record_synthesizing()
                         tool_summaries = []
@@ -533,6 +534,7 @@ def build_aip_start_command(
     task_text: str,
     history: list[dict[str, str]] | None,
     execution_context: dict[str, Any] | None = None,
+    structured_request: dict[str, Any] | None = None,
 ):
     """Task text stays the first item. Context is a second text item plus structured data."""
     try:
@@ -559,6 +561,8 @@ def build_aip_start_command(
     if execution_context is not None:
         items.append(StructuredDataItem(data=execution_context,
                                        metadata={"role": "execution-context"}))
+    if structured_request is not None:
+        items.append(StructuredDataItem(data=structured_request, metadata={"role": "structured-input"}))
     return TaskCommand(
         id=f"cmd-{uuid.uuid4()}",
         sentAt=datetime.now(timezone.utc).isoformat(),
@@ -665,6 +669,7 @@ class AipSdkTransport:
         caller_aic: str | None = None,
         interop_compatibility: bool = False,
         execution_context: dict[str, Any] | None = None,
+        structured_request: dict[str, Any] | None = None,
     ) -> PartnerResult:
         if not agent.endpoint_url:
             raise ValueError(f"AIP endpoint is missing for {agent.name}")
@@ -675,7 +680,7 @@ class AipSdkTransport:
         rpc_client_cls, stream_client_cls, task_state = _load_aip_sdk()
         user_input = compose_aip_user_input(query, history)
         session_id = session_id or f"session-{uuid.uuid4()}"
-        command = build_aip_start_command(leader_aic, session_id, query, history, execution_context)
+        command = build_aip_start_command(leader_aic, session_id, query, history, execution_context, structured_request)
         ssl_context = _aip_ssl_context(agent.endpoint_url, settings)
         if interop_compatibility:
             from .interop import identity_context
@@ -767,7 +772,12 @@ class AipSdkTransport:
         task_id = getattr(command, "taskId", "") or ""
         last_seq: int | None = None
         reconnects = 0
-        structured = command is not None and context_document(history) and hasattr(client, "open_stream")
+        structured = command is not None and hasattr(client, "open_stream") and (
+            context_document(history) or any(
+                (getattr(item, "metadata", None) or {}).get("role") == "structured-input"
+                for item in (getattr(command, "dataItems", None) or [])
+            )
+        )
         iterator = (
             client.open_stream(command).__aiter__()
             if structured
