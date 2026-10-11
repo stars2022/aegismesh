@@ -17,6 +17,7 @@ const mockMe = { owner_id: 'sidebar-motion-fixture', account: signedIn ? { id: '
   quota: { mode: mockConfig.quota_mode, tasks: { used: 0, reserved: 0, limit: 100 }, concurrency: { used: 0, reserved: 0, limit: 3 }, upload_bytes: { used: 0, reserved: 0, limit: 104857600 }, note: '本地隔离样例' } }
 window.fetch = async (input, init) => {
   const path = String(input)
+  if (path.startsWith('/api/account/history')) return Response.json({ items: [], next_offset: null })
   if (init?.method && init.method !== 'GET') throw new Error('Fixture must not modify accounts')
   if (path === '/api/account/config') return Response.json(mockConfig)
   if (path === '/api/account/me') return Response.json(mockMe)

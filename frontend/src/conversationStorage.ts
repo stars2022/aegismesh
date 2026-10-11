@@ -2,6 +2,8 @@
 // email, display name, or the rotating login cookie. Legacy keys stay untouched.
 let owner = ''
 
+export function getConversationOwner() { return owner }
+
 export function setConversationOwner(value: string) {
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(value)) throw new Error('会话身份无效')
   owner = value

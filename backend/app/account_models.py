@@ -59,6 +59,17 @@ class Conversation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ConversationHistory(Base):
+    """Browser transcript snapshots. Deletion hides history, never task/audit evidence."""
+    __tablename__ = "conversation_histories"
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(128), index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class QuotaBucket(Base):
     __tablename__ = "quota_buckets"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)

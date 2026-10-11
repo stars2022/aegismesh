@@ -78,6 +78,9 @@
   .settings-dialog-header { padding-block: 10px 8px; }
 }
 @keyframes settings-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+.history-sync-error { display: flex; align-items: center; gap: 8px; margin: 8px 14px; font-size: 12px; color: var(--text-muted); }
+.history-sync-error span { min-width: 0; overflow-wrap: anywhere; }
+.history-sync-error button { flex: none; font: inherit; color: inherit; background: none; border: 0; text-decoration: underline; cursor: pointer; }
 @keyframes settings-overlay-out { to { opacity: 0; } }
 @keyframes settings-panel-in { from { opacity: 0; translate: 0 8px; } to { opacity: 1; translate: none; } }
 @keyframes settings-panel-out { to { opacity: 0; translate: 0 6px; } }

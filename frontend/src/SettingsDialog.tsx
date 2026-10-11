@@ -6,6 +6,29 @@ import { Dropdown, DropdownPortalContext, Switch } from './components'
 import { COMPRESSION_STRATEGIES, CONTEXT_WINDOWS, type CompressionStrategy, type UserSettings } from './settings'
 import './SettingsDialog.css'
 import type { SettingsSection } from './accountNavigation'
+import { legacyConversations, type ConversationSync } from './conversationSync'
+import { copyLegacyHistory } from './historyDocument'
+
+function HistoryControls({ sync }: { sync: ConversationSync }) {
+  const [legacy] = useState(() => legacyConversations(localStorage))
+  const [confirm, setConfirm] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState('')
+  const [deleted, setDeleted] = useState<Awaited<ReturnType<ConversationSync['cloudIndex']>>>([])
+  useEffect(() => { void sync.cloudIndex().then(items => setDeleted(items.filter(item => item.deleted))).catch(() => undefined) }, [sync])
+  const run = async (work: () => Promise<unknown>) => {
+    setBusy(true); setNotice('')
+    try { await work(); setNotice('已完成'); setConfirm(false) }
+    catch (error) { setNotice(error instanceof Error ? error.message : '操作失败') }
+    finally { setBusy(false) }
+  }
+  return <>
+    <section className="settings-dialog-section"><h3>云端会话</h3><button className="secondary-button" type="button" disabled={busy} onClick={() => { void run(() => sync.retry()) }}>重新同步</button></section>
+    {legacy.length > 0 && <section className="settings-dialog-section"><h3>旧浏览器记录 · {legacy.length}</h3>{confirm ? <div className="settings-clear-confirm"><p>复制到当前身份，原件保留。不会转移旧任务或自动执行排队任务。</p><div><button className="secondary-button" type="button" disabled={busy} onClick={() => setConfirm(false)}>取消</button><button className="secondary-button" type="button" disabled={busy} onClick={() => { void run(() => sync.importLegacy(legacy, copyLegacyHistory)) }}>{busy ? '正在导入…' : '确认导入'}</button></div></div> : <button className="secondary-button" type="button" onClick={() => setConfirm(true)}>导入旧会话</button>}</section>}
+    {deleted.length > 0 && <section className="settings-dialog-section"><h3>最近删除</h3>{deleted.map(item => <div className="settings-dialog-row" key={item.session}><span>{item.title}</span><button className="secondary-button" type="button" disabled={busy} onClick={() => { void run(async () => { await sync.restore(item); setDeleted(old => old.filter(row => row.session !== item.session)) }) }}>恢复</button></div>)}</section>}
+    {notice && <p className="settings-dialog-note" role="status">{notice}</p>}
+  </>
+}
 
 export type { SettingsSection } from './accountNavigation'
 const sections = [
@@ -21,9 +44,10 @@ const themes = [
   { id: 'system', label: '跟随系统', icon: Monitor },
 ] as const
 
-export function SettingsDialog({ settings, onChange, onClose, onClear, initialSection = 'general' }: {
+export function SettingsDialog({ settings, onChange, onClose, onClear, initialSection = 'general', historySync }: {
   settings: UserSettings; onChange: (patch: Partial<UserSettings>) => void
   onClose: () => void; onClear: () => void; initialSection?: SettingsSection
+  historySync?: ConversationSync
 }) {
   const [section, setSection] = useState<SettingsSection>(initialSection)
   const features = useAccountFeatures()
@@ -98,7 +122,7 @@ export function SettingsDialog({ settings, onChange, onClose, onClear, initialSe
             </>}
             {activeSection === 'account' && <AccountPanel standalone showQuota={false} embedded managementOnly/>}
             {activeSection === 'quota' && <QuotaPanel/>}
-            {activeSection === 'data' && <section className="settings-dialog-section"><h3>本地会话记录</h3><p className="settings-dialog-note">仅清空此浏览器中当前身份的会话记录，不会删除服务器上的任务和审计记录。</p>{confirmClear ? <div className="settings-clear-confirm" role="alert"><p>清空后无法在此浏览器恢复，确定继续？</p><div><button type="button" className="secondary-button" onClick={() => setConfirmClear(false)}>取消</button><button type="button" className="secondary-button danger" onClick={onClear}>确认清空</button></div></div> : <button type="button" className="secondary-button danger" onClick={() => setConfirmClear(true)}>清空本地会话记录</button>}</section>}
+            {activeSection === 'data' && <>{historySync && <HistoryControls sync={historySync}/>}<section className="settings-dialog-section"><h3>浏览器缓存</h3><p className="settings-dialog-note">已同步的会话可从云端恢复。不会删除服务器任务、审计或旧浏览器原件。</p>{confirmClear ? <div className="settings-clear-confirm" role="alert"><p>未同步的草稿将被清除，确定继续？</p><div><button type="button" className="secondary-button" onClick={() => setConfirmClear(false)}>取消</button><button type="button" className="secondary-button danger" onClick={onClear}>确认清空</button></div></div> : <button type="button" className="secondary-button danger" onClick={() => setConfirmClear(true)}>清空浏览器缓存</button>}</section></>}
             {activeSection === 'about' && <section className="settings-dialog-section settings-about"><Network size={30}/><h3>AegisMesh</h3><p className="settings-dialog-note">请勿提交密码、密钥或其他敏感资料。AI 生成内容可能有误，重要结论请核实。</p></section>}
           </div>
         </DropdownPortalContext.Provider>

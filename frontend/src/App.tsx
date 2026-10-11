@@ -105,8 +105,10 @@ import { AccountAdministration, QuotaAdministration } from "./AccountAdministrat
 import { SidebarAccount } from "./SidebarAccount";
 import { SettingsDialog, type SettingsSection } from "./SettingsDialog";
 import { requestedSettings, workbenchAfterSettings } from "./accountNavigation";
-import { conversationStorage } from "./conversationStorage";
+import { conversationStorage, conversationStorageForOwner, getConversationOwner } from "./conversationStorage";
 import { mergeConversationMeta, type ConversationMeta } from "./conversationHistory";
+import { ConversationSync } from "./conversationSync";
+import { mergeHistory, type Conversation, type ChatMessage, type QueuedTask, type GroupConfig } from "./historyDocument";
 import { BountyBoardView } from "./BountyBoard";
 import { defaultCoordinatorId } from "./agentMenu";
 import { collaborationKey, mergeCollaborations, mergeSessionResults, mergeTools } from "./collaborationActivity";
@@ -4258,40 +4260,13 @@ function AccessControl() {
   );
 }
 
-type GroupConfig = {
-  name: string;
-  members: string[]; // agent IDs
-  hostAgentId?: string | null; // agent ID or null for user host
-  backendId?: string; // 平台群聊会话 ID（本地黑板 / 国标 MQ 群组）
-  transport?: "local" | "aip-mq";
-};
-
-type ChatMessage = {
-  role: "user" | "assistant";
-  text: string;
-  result?: ChatResult;
-  streaming?: boolean;
-  attachments?: Attachment[];
-  feedback?: "positive" | "negative";
-  senderAgentId?: string;
-  senderName?: string;
-  isHost?: boolean;
-  createdAt?: number;
-  taskId?: string;
-  recoveryInvocationId?: string;
-};
-type QueuedTask = { id: string; text: string; agentId: string; attachments?: Attachment[]; mode?: 'route' | 'bounty'; structuredOptions?: StructuredTaskOptions };
-type Conversation = {
-  id: string;
-  title: string;
-  session?: string;
-  agentId?: string;
-  messages: ChatMessage[];
-  queue?: QueuedTask[];
-  isGroup?: boolean;
-  groupConfig?: GroupConfig;
-  isCanvas?: boolean;
-};
+let historySync: ConversationSync | undefined;
+function currentHistorySync() {
+  const owner = getConversationOwner();
+  if (!owner) return undefined;
+  if (historySync?.owner !== owner) historySync = new ConversationSync(owner, conversationStorageForOwner(owner), mergeHistory);
+  return historySync;
+}
 
 function loadConversationIndex(): ConversationMeta[] {
   try {
@@ -4359,9 +4334,16 @@ function loadConversationData(id: string): Conversation | null {
 }
 
 function saveConversationData(conv: Conversation): void {
+  conv.session ||= `ses-${conv.id}`;
+  const previous = loadConversationData(conv.id)?.messages || [];
+  conv.messages = conv.messages.map((message, index) => message.historyId ? message : {
+    ...message, historyId: previous[index]?.role === message.role && previous[index]?.createdAt === message.createdAt
+      ? previous[index].historyId || crypto.randomUUID() : crypto.randomUUID(),
+  });
   try {
     conversationStorage.setItem(`aegismesh-conv-${conv.id}`, JSON.stringify(conv));
-  } catch {}
+  } catch { /* Cloud persistence below is independent of localStorage capacity. */ }
+  currentHistorySync()?.enqueue(conv);
 }
 
 function formatTokensZh(num: number): string {
@@ -6493,6 +6475,8 @@ function CanvasFloatingAssistant({
 }
 
 export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
+  const sync = currentHistorySync();
+  const [historyError, setHistoryError] = useState('');
   const [conversations, setConversations] =
     useState<ConversationMeta[]>(loadConversationIndex);
   const [activeId, setActiveId] = useState(
@@ -6929,7 +6913,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     const conversation: Conversation = {
       id: activeId,
       title,
-      session,
+      session: session || existing?.session,
       agentId,
       messages,
       queue,
@@ -6947,14 +6931,14 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
       const meta = mergeConversationMeta(items.find(item => item.id === activeId), {
         id: activeId,
         title,
-        session,
+        session: conversation.session,
         agentId,
         messageCount: messages.length,
         isGroup: existing?.isGroup,
         groupMemberCount: existing?.groupConfig?.members?.length,
         isCanvas: !existing?.isGroup && isCanvasConv,
       }, hasNewActivity ? Date.now() : undefined);
-      const next = [meta, ...items.filter((item) => item.id !== activeId)].slice(0, 50);
+      const next = [meta, ...items.filter((item) => item.id !== activeId)];
       saveConversationIndex(next);
       return next;
     });
@@ -7069,13 +7053,55 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     setMobileHistoryOpen(false);
     setDetail(target.isGroup ? "members" : canvasConversation ? "canvas" : "route");
     if (canvasConversation) setInspectorCollapsed(false);
+    if (sync && target.session && !taskStillRunning) {
+      void sync.load(target).then(fresh => {
+        if (!fresh || activeIdRef.current !== target.id || sendingRef.current) return;
+        setMessages(fresh.messages);
+        setInspector(latestResult(fresh.messages));
+        setSession(fresh.session); sessionRef.current = fresh.session;
+        setQueue(fresh.queue || []);
+        const canvas = latestResult(fresh.messages)?.result_data?.canvas;
+        if (canvas) setCanvasData(canvas);
+      });
+    }
   };
+  useEffect(() => {
+    if (!sync) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const list = await sync.refresh();
+        if (cancelled) return;
+        setConversations(list); setHistoryError('');
+        const target = list.find(item => item.id === activeIdRef.current) || (!loadConversationData(activeIdRef.current) ? list[0] : undefined);
+        if (target && !sendingRef.current) openConversation(target);
+      } catch (error) {
+        if (!cancelled) setHistoryError(error instanceof Error ? error.message : '历史同步失败');
+      }
+    };
+    const unsubscribe = sync.subscribe((error, indexChanged) => {
+      if (cancelled) return;
+      setHistoryError(error || '');
+      if (indexChanged) setConversations(sync.index());
+    });
+    void refresh().then(() => {
+      if (cancelled) return;
+      for (const meta of loadConversationIndex()) {
+        const data = loadConversationData(meta.id);
+        if (data) sync.enqueue(data);
+      }
+    });
+    const resume = () => { void sync.retry().then(refresh).catch(error => setHistoryError(String(error))); };
+    const storage = (event: StorageEvent) => { if (event.key?.includes(`aegismesh-owner:${sync.owner}:`)) void refresh(); };
+    window.addEventListener('focus', resume); window.addEventListener('online', resume); window.addEventListener('storage', storage);
+    return () => { cancelled = true; unsubscribe(); window.removeEventListener('focus', resume); window.removeEventListener('online', resume); window.removeEventListener('storage', storage); };
+  }, [sync]);
   const createConversation = (targetAgentId?: string, isCanvas = false) => {
     setExecutionMode('route');
     setLiveSubagents({});
     setLiveBlackboardMessages([]);
     const newId = crypto.randomUUID();
-    const canvasSession = isCanvas ? `ses-${crypto.randomUUID()}` : undefined;
+    const canvasSession = `ses-${crypto.randomUUID()}`;
     const defaultAgentId = targetAgentId || defaultCoordinatorId(agents, isCanvas);
     setActiveId(newId);
     activeIdRef.current = newId;
@@ -7096,9 +7122,9 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
       saveConversationData(canvasConversation);
       setConversations((items) => {
         const next = [
-          { id: newId, title: "未命名画布", agentId: defaultAgentId, messageCount: 0, isCanvas: true, updatedAt: Date.now() },
+          { id: newId, session: canvasSession, title: "未命名画布", agentId: defaultAgentId, messageCount: 0, isCanvas: true, updatedAt: Date.now() },
           ...items,
-        ].slice(0, 50);
+        ];
         saveConversationIndex(next);
         return next;
       });
@@ -7136,6 +7162,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     const newId = crypto.randomUUID();
     const newMeta: ConversationMeta = {
       id: newId,
+      session: `ses-${newId}`,
       title: config.name || "智能体协作讨论群",
       isGroup: true,
       groupMemberCount: config.members.length,
@@ -7143,6 +7170,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
 
     const newConv: Conversation = {
       id: newId,
+      session: `ses-${newId}`,
       title: config.name || "智能体群聊",
       messages: [],
       isGroup: true,
@@ -7158,8 +7186,8 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     setLiveBlackboardMessages([]);
     setMessages([]);
     setShowAllMessages(false);
-    setSession(undefined);
-    sessionRef.current = undefined;
+    setSession(newConv.session);
+    sessionRef.current = newConv.session;
     setAgentId(config.hostAgentId || config.members[0] || "");
     setIsCanvasConv(false);
     setCanvasData(null);
@@ -7199,7 +7227,11 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     });
     setGroupModalOpen(false);
   };
-  const deleteConversation = (id: string) => {
+  const deleteConversation = async (id: string) => {
+    const meta = conversations.find(item => item.id === id);
+    if (sendingRef.current && taskConvRef.current === id) { setHistoryError('请先等待或停止该会话的任务'); return; }
+    try { if (meta && sync) await sync.remove(meta); }
+    catch (error) { setHistoryError(error instanceof Error ? error.message : '删除失败，请重试'); return; }
     try {
       conversationStorage.removeItem(`aegismesh-conv-${id}`);
     } catch {}
@@ -8349,6 +8381,7 @@ ${cleanHistory}
             </div>
           )}
         </div>
+        {historyError && <div className="history-sync-error" role="status"><span>{historyError}</span><button type="button" onClick={() => { void sync?.retry().then(list => { setConversations(list); setHistoryError(''); }).catch(error => setHistoryError(String(error))); }}>重试</button></div>}
         <nav>
           {(() => {
             const sorted = [...conversations].sort(
@@ -9385,6 +9418,7 @@ ${cleanHistory}
       )}
       {settingsOpen && (
         <SettingsDialog
+          historySync={sync}
           initialSection={settingsSection}
           settings={settings}
           onChange={updateSettings}

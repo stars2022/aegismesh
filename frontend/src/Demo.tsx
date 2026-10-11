@@ -33,7 +33,7 @@ export default function Demo() {
     <div className="demo-shell">
       <main className="demo-main">
         <Suspense fallback={<LoadingFlow label="正在加载工作台…" fullPage />}>
-          <ChatDemo onComplete={async () => undefined} />
+          <ChatDemo key={session.owner_id} onComplete={async () => undefined} />
         </Suspense>
       </main>
     </div>

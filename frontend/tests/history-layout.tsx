@@ -12,6 +12,7 @@ const query = new URLSearchParams(location.search)
 applyTheme({ ...DEFAULT_SETTINGS, theme: query.get('theme') === 'dark' ? 'dark' : 'light' })
 setConversationOwner('history-layout-fixture')
 window.fetch = async input => {
+  if (String(input).startsWith('/api/account/history')) return Response.json({ detail: 'Fixture uses local history' }, { status: 404 })
   if (String(input) === '/api/account/config') return Response.json({ enabled: false, quota_mode: 'off', providers: [] })
   if (String(input) === '/api/account/me') return Response.json({ owner_id: 'history-layout-fixture', account: null })
   throw new Error('Live requests are blocked: ' + String(input))

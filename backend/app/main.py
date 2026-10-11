@@ -1300,6 +1300,10 @@ def _chat_response(invocation, ranked, selected, db: Session) -> ChatResponse:
     )
 
 
+from .conversation_api import conversation_router
+app.include_router(conversation_router(require_demo, _chat_response))
+
+
 def extract_user_id(request: Request) -> str:
     owner = getattr(request.state, "owner_id", None)
     if not owner:
