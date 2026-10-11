@@ -7078,7 +7078,15 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
         setConversations(list); setHistoryError('');
         if (sync.isDeleted(sessionRef.current) && !sendingRef.current) { createConversation(); return; }
         const target = list.find(item => item.id === activeIdRef.current) || (!loadConversationData(activeIdRef.current) ? list[0] : undefined);
-        if (target && !sendingRef.current) openConversation(target);
+        if (target && !sendingRef.current) {
+          if (target.id !== activeIdRef.current || !loadConversationData(target.id)) openConversation(target);
+          else {
+            const fresh = await sync.load(target);
+            if (!cancelled && fresh && activeIdRef.current === target.id && !sendingRef.current) {
+              setMessages(fresh.messages); setInspector(latestResult(fresh.messages));
+            }
+          }
+        }
       } catch (error) {
         if (!cancelled) setHistoryError(error instanceof Error ? error.message : '历史同步失败');
       }

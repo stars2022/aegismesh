@@ -6,6 +6,7 @@ Only the API is restarted; AIP listeners, credentials and quota policies stay in
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import sqlite3
@@ -128,8 +129,27 @@ def main():
                 if error.code != 401:
                     raise
         shutil.copytree(stage / 'frontend/dist/assets', web / 'assets', dirs_exist_ok=True)
+        # Private staging may be 0700/0600. Published static files must be
+        # readable/traversable by nginx, without changing any private source/config.
+        (web / 'assets').chmod(0o755)
+        for source in (stage / 'frontend/dist/assets').rglob('*'):
+            target = web / 'assets' / source.relative_to(stage / 'frontend/dist/assets')
+            if not target.is_symlink():
+                target.chmod(0o755 if source.is_dir() else 0o644)
         shutil.copy2(stage / 'frontend/dist/index.html', web / 'index.history-stage.html')
+        (web / 'index.history-stage.html').chmod(0o644)
         (web / 'index.history-stage.html').replace(web / 'index.html')
+        # Check through nginx too: loopback API health cannot detect unreadable
+        # static files, and a cached browser can hide a publication-time 403.
+        def public_file(path):
+            request = urllib.request.Request('http://127.0.0.1' + path, headers={'Host': 'demmo.cc.cd'})
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.read()
+        published = public_file('/')
+        if hashlib.sha256(published).hexdigest() != manifest['index_sha256']:
+            raise RuntimeError('nginx served the wrong frontend entry')
+        for asset in re.findall(r'(?:src|href)="(/assets/[a-zA-Z0-9_.-]+)"', published.decode()):
+            public_file(asset)
         audit_id = 'history-deploy-' + uuid.uuid4().hex
         run(str(RELEASE / '.venv/bin/python'), '-c',
             "import sys; from dotenv import load_dotenv; load_dotenv('public-aip.env',override=True); "
@@ -149,6 +169,7 @@ def main():
             elif (RELEASE / name).is_file():
                 (RELEASE / name).unlink()
         shutil.copy2(rollback / 'index.html', web / 'index.html')
+        (web / 'index.html').chmod(0o644)
         if restarted:
             run('sudo', '-n', 'systemctl', 'restart', 'aegismesh.service')
         raise

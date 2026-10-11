@@ -164,7 +164,10 @@ export class ConversationSync {
     try {
       const cloud = await this.request<{ revision: number; conversation: Conversation }>('/' + encodeURIComponent(meta.session))
       this.revisions.set(meta.session, cloud.revision)
-      const document = local ? this.merge(cloud.conversation, local) : { ...cloud.conversation, queue: [] }
+      // A task may finish while the GET is in flight. Merge with the latest
+      // cache, not the pre-request snapshot, or its new turns would disappear.
+      const latest = this.cached(meta.id) || local
+      const document = latest ? this.merge(cloud.conversation, latest) : { ...cloud.conversation, queue: [] }
       document.id = meta.id
       this.cache(document)
       return document

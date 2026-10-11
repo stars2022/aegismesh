@@ -87,3 +87,16 @@ test('a full browser cache cannot discard a restored group configuration or mess
   assert.equal(sync.cached('local').messages[0].text, 'retained')
   assert.equal(sync.cached('local').groupConfig.backendId, 'owned-group')
 })
+
+test('a late history response cannot erase a turn completed while it was loading', async () => {
+  const sync = new ConversationSync('account-a', store(), mergeHistory)
+  sync.remember(doc('initial'))
+  let finish
+  globalThis.fetch = () => new Promise(resolve => { finish = resolve })
+  const loading = sync.load({ id: 'local', session: 'ses-local' })
+  const latest = doc('initial'); latest.messages.push({ role: 'assistant', text: 'just completed' })
+  sync.remember(latest)
+  finish(Response.json({ revision: 1, conversation: doc('initial') }))
+  const loaded = await loading
+  assert.deepEqual(loaded.messages.map(message => message.text), ['initial', 'just completed'])
+})
