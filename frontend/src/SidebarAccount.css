@@ -1,13 +1,15 @@
 .sidebar-account { position: relative; margin-top: 4px; flex: none; font-size: 13px; }
-.sidebar-account-trigger { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 8px 11px; border: 0; border-radius: var(--radius-control); color: var(--ink); background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.sidebar-account-trigger { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px var(--sidebar-row-padding, 10px); border: 0; border-radius: var(--sidebar-row-radius, 8px); color: var(--ink); background: transparent; font: inherit; text-align: left; cursor: pointer; }
 .sidebar-account-trigger:hover, .sidebar-account-trigger[aria-expanded="true"] { background: var(--control-hover); }
 .sidebar-account-trigger > svg { flex: none; color: var(--muted); }
 .sidebar-account-trigger > svg:last-child { transition: rotate 160ms ease; }
 .sidebar-account-trigger > svg.is-open { rotate: 180deg; }
-.sidebar-account-avatar { display: grid; place-items: center; flex: none; width: 32px; height: 32px; border-radius: 50%; background: var(--green-soft); color: var(--green); font-size: 15px; font-weight: 600; }
+.sidebar-account-avatar { display: grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--green-soft); color: var(--green); font-size: 13px; font-weight: 600; }
 .sidebar-account-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.sidebar-account-guest { color: var(--muted); font-size: 11px; margin-right: 33px; }
-.sidebar-guest-settings { position: absolute; right: 5px; top: 9px; display: grid; place-items: center; height: 34px; width: 34px; border: 0; border-radius: var(--radius-item); color: var(--muted); background: transparent; cursor: pointer; }
+/* 访客状态的名称很短，不参与收缩，避免"登录账号"被截成"登…"。 */
+.sidebar-account-trigger:has(.sidebar-account-guest) .sidebar-account-name { flex: 0 0 auto; }
+.sidebar-account-guest { margin-left: auto; margin-right: 34px; color: var(--muted); font-size: 11px; }
+.sidebar-guest-settings { position: absolute; right: 6px; top: 50%; translate: 0 -50%; display: grid; place-items: center; height: 32px; width: 32px; border: 0; border-radius: var(--radius-item); color: var(--muted); background: transparent; cursor: pointer; }
 .sidebar-guest-settings:hover { background: var(--control-hover); color: var(--ink); }
 .sidebar-account-menu { position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 20; width: 100%; min-width: 180px; padding: 6px; border: 1px solid var(--control-border); border-radius: var(--radius-menu); background: var(--paper); box-shadow: 0 8px 30px rgb(0 0 0 / 12%); animation: sidebar-account-in 130ms ease-out; }
 .sidebar-account-menu button { width: 100%; display: flex; align-items: center; gap: 11px; min-height: 42px; padding: 10px; border: 0; border-radius: var(--radius-item); color: var(--ink); background: transparent; font: inherit; text-align: left; cursor: pointer; }

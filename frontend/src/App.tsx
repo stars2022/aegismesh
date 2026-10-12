@@ -14,6 +14,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  ClipboardCheck,
   Activity,
   ArrowLeft,
   ArrowRight,
@@ -144,6 +145,7 @@ import {
   type TurnActionBlock,
 } from "./conciseGrouping";
 import { LogCenter } from "./LogCenter";
+import { ErrorBoundary } from "./ErrorBoundary";
 
 type View =
   | "overview"
@@ -478,8 +480,8 @@ function App({ onLogout }: { onLogout?: () => void }) {
             >
               {loading ? <FlowMark className="flow-mark-compact" /> : <RefreshCw size={17} />}
             </button>
-            <a className="primary-small" href="/" aria-label="打开聊天" title="打开聊天">
-              <Play size={15} fill="currentColor" />
+            <a className="primary-small is-quiet" href="/" aria-label="打开聊天" title="打开聊天">
+              <Play size={15} />
               <span>打开聊天</span>
             </a>
           </div>
@@ -491,6 +493,7 @@ function App({ onLogout }: { onLogout?: () => void }) {
           </div>
         )}
         <div className="page-content">
+          <ErrorBoundary key={view} label={navigation.find((item) => item.id === view)?.label || "当前页面"}>
           {view === "overview" && (
             <Overview
               dashboard={dashboard}
@@ -517,6 +520,7 @@ function App({ onLogout }: { onLogout?: () => void }) {
           {view === "accounts" && <AccountAdministration refreshKey={accountsRefresh} />}
           {view === "quotas" && <QuotaAdministration refreshKey={accountsRefresh} />}
           {view === "access" && <AccessControl />}
+          </ErrorBoundary>
         </div>
       </main>
     </div>
@@ -1109,6 +1113,7 @@ function Studio({
           <div className={`adp-feed-control ${showAdpFeed ? "active" : ""}`}>
             <Switch
               checked={showAdpFeed}
+              ariaLabel="全网发现池"
               onChange={(val) => handleToggleFeed(val)}
             />
             <button
@@ -1361,6 +1366,14 @@ function Studio({
           </article>
         ))}
       </div>
+
+      {!showAdpFeed && role !== "adp" && localFiltered.length === 0 && (
+        <EmptyState>
+          {agents.length === 0
+            ? "还没有智能体，点击右上角“创建智能体”开始"
+            : "没有匹配的智能体，换个关键词或筛选条件试试"}
+        </EmptyState>
+      )}
 
       {(role === "adp" || showAdpFeed) && adpFiltered.length === 0 && (
         <div style={{ padding: "40px 20px", textAlign: "center", color: "var(--muted)" }}>
@@ -3970,6 +3983,7 @@ function Traces({ traces }: { traces: Trace[] }) {
           <Search size={15} />
           <input
             placeholder="搜索运行记录"
+            aria-label="搜索运行记录"
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
           />
@@ -4845,7 +4859,7 @@ function SubagentConversationView({
           <div className="subagent-msg-role" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
             <span>{collab.caller_id ? `派发来源 [${collab.caller_id}] · 任务指令` : "协调主智能体 · 任务派发"}</span>
             {collab.call_chain && collab.call_chain.length > 1 && (
-              <span style={{ fontSize: "11px", fontWeight: 500, opacity: 0.85, background: "rgba(99, 102, 241, 0.1)", padding: "1px 6px", borderRadius: 4 }}>
+              <span style={{ fontSize: "11px", fontWeight: 500, opacity: 0.85, background: "rgb(var(--accent-rgb) / 0.1)", padding: "1px 6px", borderRadius: 4 }}>
                 调用链: {collab.call_chain.join(" → ")}
               </span>
             )}
@@ -4857,11 +4871,11 @@ function SubagentConversationView({
 
         {/* 实时工具调用状态 */}
         {collab.current_tool && (
-          <div className="subagent-msg-bubble current-tool-live" style={{ padding: "8px 12px", background: "rgba(99, 102, 241, 0.06)", border: "1px dashed rgba(99, 102, 241, 0.25)", borderRadius: 8 }}>
+          <div className="subagent-msg-bubble current-tool-live" style={{ padding: "8px 12px", background: "rgb(var(--accent-rgb) / 0.06)", border: "1px dashed rgb(var(--accent-rgb) / 0.25)", borderRadius: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: "var(--accent)" }}>
               <FlowMark className="flow-mark-compact" />
               <span>正在调用工具：</span>
-              <code style={{ fontSize: 11, background: "rgba(99, 102, 241, 0.12)", padding: "2px 6px", borderRadius: 4 }}>
+              <code style={{ fontSize: 11, background: "rgb(var(--accent-rgb) / 0.12)", padding: "2px 6px", borderRadius: 4 }}>
                 {toolNames[collab.current_tool] || collab.current_tool}
               </code>
             </div>
@@ -4946,7 +4960,7 @@ function WorkflowGroupView({
           <span>返回会话列表</span>
         </button>
         <div className="subagent-header-identity">
-          <div className="collab-bot-avatar" style={{ background: "rgba(99, 102, 241, 0.12)", color: "#4f46e5" }}>
+          <div className="collab-bot-avatar" style={{ background: "rgb(var(--accent-rgb) / 0.12)", color: "var(--accent)" }}>
             <GitBranch size={15} />
           </div>
           <div className="collab-name-box">
@@ -4993,7 +5007,7 @@ function SwarmGroupView({
           <span>返回会话列表</span>
         </button>
         <div className="subagent-header-identity">
-          <div className="collab-bot-avatar" style={{ background: "rgba(99, 102, 241, 0.12)", color: "#4f46e5" }}>
+          <div className="collab-bot-avatar" style={{ background: "rgb(var(--accent-rgb) / 0.12)", color: "var(--accent)" }}>
             <Users size={15} />
           </div>
           <div className="collab-name-box">
@@ -5022,8 +5036,8 @@ function SwarmGroupView({
               <div
                 className="collab-chat-avatar"
                 style={{
-                  backgroundColor: isLeader ? "rgba(99, 102, 241, 0.12)" : palette.bg,
-                  color: isLeader ? "#4f46e5" : palette.color,
+                  backgroundColor: isLeader ? "rgb(var(--accent-rgb) / 0.12)" : palette.bg,
+                  color: isLeader ? "var(--accent)" : palette.color,
                 }}
               >
                 <Icon size={14} />
@@ -5427,7 +5441,7 @@ function GroupCollaborationPanel({
       {thoughtItems.length > 0 && (
         <div className="collab-section">
           <div className="collab-section-title">
-            <Sparkles size={14} color="#6366f1" />
+            <Sparkles size={14} style={{ color: "var(--accent-bright)" }} />
             <span>智能体内部推理与心理活动 ({thoughtItems.length})</span>
           </div>
           <div className="collab-thought-stack">
@@ -5467,7 +5481,7 @@ function GroupCollaborationPanel({
       {/* 多智能体接力协同流 */}
       <div className="collab-section">
         <div className="collab-section-title">
-          <GitBranch size={14} color="#4f46e5" />
+          <GitBranch size={14} style={{ color: "var(--accent)" }} />
           <span>发言顺序</span>
         </div>
         <div className="group-collab-timeline">
@@ -6368,7 +6382,7 @@ function CanvasFloatingAssistant({
             {activeDispatches.length > 0 && (
               <div className="route-section-group">
                 <div className="route-section-title">
-                  <GitBranch size={13} color="#6366f1" />
+                  <GitBranch size={13} style={{ color: "var(--accent-bright)" }} />
                   <span>本轮实时调度智能体 ({activeDispatches.length})</span>
                 </div>
                 <div className="route-dispatches-list">
@@ -8402,16 +8416,19 @@ ${cleanHistory}
             const sorted = [...conversations].sort(
               (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0),
             );
-            const day = 86_400_000;
-            const now = Date.now();
+            // 按本地自然日分组：昨晚的会话不应出现在“今天”。
+            const todayStart = new Date().setHours(0, 0, 0, 0);
+            const yesterdayStart = new Date(todayStart).setDate(new Date(todayStart).getDate() - 1);
+            const weekStart = new Date(todayStart).setDate(new Date(todayStart).getDate() - 6);
             const groups: { key: string; label: string; items: ConversationMeta[] }[] = [
               { key: "today", label: "今天", items: [] },
+              { key: "yesterday", label: "昨天", items: [] },
               { key: "week", label: "近 7 天", items: [] },
               { key: "earlier", label: "更早", items: [] },
             ];
             for (const meta of sorted) {
               const t = meta.updatedAt || 0;
-              const key = t && now - t < day ? "today" : t && now - t < 7 * day ? "week" : "earlier";
+              const key = !t ? "earlier" : t >= todayStart ? "today" : t >= yesterdayStart ? "yesterday" : t >= weekStart ? "week" : "earlier";
               groups.find((g) => g.key === key)!.items.push(meta);
             }
             return groups
@@ -8685,8 +8702,10 @@ ${cleanHistory}
                           <Database size={17} />
                         ) : index === 1 ? (
                           <Search size={17} />
-                        ) : (
+                        ) : index === 2 ? (
                           <GitBranch size={17} />
+                        ) : (
+                          <ClipboardCheck size={17} />
                         )}
                       </span>
                       {suggestion}
@@ -9059,6 +9078,7 @@ ${cleanHistory}
             {structuredError && <p className="builder-error" role="alert">{structuredError}</p>}
             <textarea
               ref={composerTextareaRef}
+              aria-label="输入消息"
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleInputKeyDown}
@@ -9103,7 +9123,8 @@ ${cleanHistory}
                   onChange={value => setExecutionMode(value as 'route' | 'bounty')} />}
               </div>
               <div className="composer-bottom-right">
-                {settings.showContextMeter && (
+                {/* 空会话不显示容量圆环：只有系统提示词占用时，它看起来像加载中的转圈 */}
+                {settings.showContextMeter && messages.length > 0 && (
                   <div className="context-menu-anchor" ref={contextMenuRef}>
                     <button
                       type="button"
@@ -9312,7 +9333,7 @@ ${cleanHistory}
               {activeDispatches.length > 0 && (
                 <div className="route-section-group">
                   <div className="route-section-title">
-                    <GitBranch size={13} color="#6366f1" />
+                    <GitBranch size={13} style={{ color: "var(--accent-bright)" }} />
                     <span>本轮实时调度智能体 ({activeDispatches.length})</span>
                   </div>
                   <div className="route-dispatches-list">

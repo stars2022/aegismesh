@@ -101,11 +101,11 @@ export function Dropdown({ value, options, onChange, placeholder, className, ali
   )
 }
 
-export function Switch({ checked, onChange, label, disabled = false }: { checked: boolean; onChange: (value: boolean) => void; label?: string; disabled?: boolean }) {
+export function Switch({ checked, onChange, label, ariaLabel, disabled = false }: { checked: boolean; onChange: (value: boolean) => void; label?: string; ariaLabel?: string; disabled?: boolean }) {
   return (
     <label className="switch-row">
       {label && <span>{label}</span>}
-      <button type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} className={`switch ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)}>
+      <button type="button" role="switch" aria-checked={checked} aria-label={ariaLabel || label} disabled={disabled} className={`switch ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)}>
         <span className="knob" />
       </button>
     </label>

@@ -128,7 +128,7 @@ export function AccountPanel({ standalone = false, showQuota = true, embedded = 
         {needsVerification && !config.turnstile?.ready && <p role="alert">人机验证尚未配置完成，请稍后重试。</p>}
         <div className="account-actions"><button className="primary-button" disabled={busy || (needsVerification && !turnstileToken) || (['register', 'forgot'].includes(mode) && !config.email_registration_ready)}>{busy ? '处理中…' : ({login: '登录', register: '注册', verify: '验证邮箱', forgot: '发送重置邮件', reset: '重置密码'} as Record<string,string>)[mode]}</button>
           <button type="button" className="secondary-button" disabled={busy} onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setPassword(''); setError('') }}>{mode === 'login' ? '注册邮箱账号' : '返回登录'}</button>
-          {mode === 'login' && <button type="button" className="secondary-button" disabled={busy} onClick={() => setMode('forgot')}>忘记密码</button>}</div>
+          {mode === 'login' && <button type="button" className="account-link-button" disabled={busy} onClick={() => setMode('forgot')}>忘记密码？</button>}</div>
         {!config.email_registration_ready && <p className="settings-note">邮件通道尚未接入，暂不能注册或重置密码。</p>}
       </form>}
       <a className="account-text-link" href="/">先以访客身份体验 <ArrowRight size={15}/></a>

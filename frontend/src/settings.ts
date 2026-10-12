@@ -47,7 +47,12 @@ export function loadSettings(): UserSettings {
 }
 
 export function saveSettings(settings: UserSettings): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+  // 存储已满或被禁用（无痕模式）时只在本次会话生效，不能让设置变更打断界面。
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+  } catch {
+    /* 设置仍保留在内存中 */
+  }
 }
 
 export function resolveTheme(theme: ThemeChoice): 'light' | 'dark' {
