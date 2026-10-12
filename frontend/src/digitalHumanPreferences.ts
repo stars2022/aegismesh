@@ -1,6 +1,6 @@
-export type DigitalHumanPreferences = { largeText: boolean; voiceId: string; voiceRate: number }
+export type DigitalHumanPreferences = { largeText: boolean; voiceId: string; voiceRate: number; voiceOn: boolean }
 
-/** Preferences share the same account-scoped storage as consultations; audio is opt-in each visit. */
+/** Preferences share the same account-scoped storage as consultations. 播报默认开启，用户手动关闭后会被记住。 */
 export function readDigitalHumanPreferences(raw: string | null): DigitalHumanPreferences {
   let value: Partial<DigitalHumanPreferences> | null = null
   try { value = JSON.parse(raw || 'null') } catch { /* Invalid saved preferences use defaults. */ }
@@ -8,6 +8,7 @@ export function readDigitalHumanPreferences(raw: string | null): DigitalHumanPre
     largeText: value?.largeText === true,
     voiceId: typeof value?.voiceId === 'string' ? value.voiceId.slice(0, 256) : '',
     voiceRate: [.8, .9, 1].includes(value?.voiceRate as number) ? value!.voiceRate! : .9,
+    voiceOn: value?.voiceOn !== false,
   }
 }
 

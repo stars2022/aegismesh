@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, ArrowLeft, BookOpen, ChevronRight, MessageCircle, Newspaper, Plus, Send, Settings2, Square, Volume2, VolumeX, MapPin, Network } from 'lucide-react'
+import { ArrowDown, ArrowLeft, BookOpen, ChevronRight, MessageCircle, Newspaper, Plus, Send, Settings2, Square, Volume2, VolumeX, MapPin, Mic, MicOff, Network } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from './api'
@@ -8,6 +8,7 @@ import { conversationStorageForOwner } from './conversationStorage'
 import { conversationCacheKeysOldestFirst, setWithEviction } from './conversationSync'
 import { assistantFailure, assistantWasCancelled, finishAssistantReply, newAssistantSession, readAssistantSession, speechText, type AssistantSession } from './assistantConversation'
 import { createAssistantSpeech } from './assistantSpeech'
+import { createSpeechInput, speechInputSupported, type SpeechInput } from './speechInput'
 import { SettingsDialog } from './SettingsDialog'
 import { DigitalHumanAvatar } from './DigitalHumanAvatar'
 import { isNearConversationEnd, readDigitalHumanPreferences } from './digitalHumanPreferences'
@@ -46,7 +47,11 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
   const [busy, setBusy] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [notice, setNotice] = useState('')
-  const [voiceOn, setVoiceOn] = useState(false)
+  // 播报默认开启；用户手动关闭后记在偏好里
+  const [voiceOn, setVoiceOn] = useState(() => {
+    try { return readDigitalHumanPreferences(storage.getItem('human-preferences')).voiceOn } catch { return true }
+  })
+  const [listening, setListening] = useState(false)
   const [speaking, setSpeaking] = useState(false)
   const [readingId, setReadingId] = useState<string | null>(null)
   const [preferences] = useState(() => {
@@ -69,7 +74,10 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
   const operationRef = useRef(0)
   const mounted = useRef(false)
   const busyRef = useRef(false)
-  const voiceEnabled = useRef(false)
+  const voiceEnabled = useRef(voiceOn)
+  const speechInputRef = useRef<SpeechInput | null>(null)
+  const dictationBase = useRef('')
+  const canDictate = useMemo(speechInputSupported, [])
   const controllerRef = useRef<AbortController | null>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -170,12 +178,28 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
     else setShowLatest(true)
   }, [session.messages])
   useEffect(() => {
-    try { storage.setItem('human-preferences', JSON.stringify({ largeText, voiceId, voiceRate })) }
+    try { storage.setItem('human-preferences', JSON.stringify({ largeText, voiceId, voiceRate, voiceOn })) }
     catch { /* Unavailable storage must not prevent reading or speaking. */ }
-  }, [storage, largeText, voiceId, voiceRate])
+  }, [storage, largeText, voiceId, voiceRate, voiceOn])
+  useEffect(() => () => speechInputRef.current?.cancel(), [])
+  const toggleDictation = () => {
+    if (speechInputRef.current) { speechInputRef.current.stop(); return }
+    silence(); setNotice('')
+    dictationBase.current = input.trim()
+    const recognizer = createSpeechInput({
+      onText: text => setInput(dictationBase.current + text),
+      onEnd: () => { speechInputRef.current = null; setListening(false); inputRef.current?.focus() },
+      onError: message => setNotice(message),
+    })
+    if (!recognizer) return
+    speechInputRef.current = recognizer
+    setListening(true)
+    try { recognizer.start() } catch { speechInputRef.current = null; setListening(false); setNotice('语音识别没有成功，请再试一次。') }
+  }
   const send = () => {
     const text = input.trim()
     if (!text || busyRef.current || text.length > 50000) return
+    speechInputRef.current?.cancel()
     silence(); setNotice(''); setInput('')
     followReplies.current = true; setShowLatest(false)
     const replyId = crypto.randomUUID()
@@ -224,7 +248,7 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
           <section className="dh-history"><ConsoleFrame/><label htmlFor="dh-history">咨询记录</label><select id="dh-history" disabled={busy} value={session.id} onChange={event => { const next = readAssistantSession(storage.getItem(event.target.value)); if (next) changeSession(next) }}><option value={session.id}>{session.title}</option>{history.filter(r => r.id !== session.id).map(r => <option key={r.id} value={r.id}>{r.title}</option>)}</select></section>
           <div className="dh-directory-circuit" aria-hidden="true"><Network size={48}/><i/><i/><i/></div>
         </aside>
-        <section className={`dh-host${speaking ? ' is-speaking' : ''}`} aria-label="虚拟助手麦溪">
+        <section className={`dh-host${speaking || listening ? ' is-speaking' : ''}`} aria-label="虚拟助手麦溪">
             <ConsoleFrame/>
             <div className="dh-host-caption"><h2>数字人服务</h2><span className="dh-voice-level" aria-hidden="true">{[0,1,2,3,4].map(n => <i key={n}/>)}</span></div>
             <div className="dh-avatar-chamber">
@@ -241,9 +265,12 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
               <div className="dh-host-floor" aria-hidden="true"/>
             </div>
             <div className="dh-host-name"><strong>麦溪</strong><span>Mesh</span></div>
-            <p className="dh-host-status" role="status"><span aria-hidden="true"/>{speaking ? '正在为您播报' : busy ? '正在整理答复' : '请问有什么可以帮您？'}</p>
+            <p className="dh-host-status" role="status"><span aria-hidden="true"/>{listening ? '正在聆听，请说话' : speaking ? '正在为您播报' : busy ? '正在整理答复' : '请问有什么可以帮您？'}</p>
             <div className="dh-host-controls">
               <button disabled={!voice} title={voice ? '使用设备本地中文声音' : '当前设备没有可用的本地中文声音'} aria-pressed={voiceOn} onClick={() => { const enabled = !voiceOn; voiceEnabled.current = enabled; setVoiceOn(enabled); if (!enabled) silence(); else speak('您好，我是麦溪，请问有什么可以帮您？') }}>{voiceOn ? <Volume2 size={20}/> : <VolumeX size={20}/>} {voice ? voiceOn ? '关闭播报' : '开启播报' : '语音不可用'}</button>
+              <button className={`dh-dictate${listening ? ' is-listening' : ''}`} disabled={!canDictate || (busy && !listening)} aria-pressed={listening}
+                title={canDictate ? '说完一句话会自动停止，识别出的文字填入下方输入框，确认后再发送' : '当前浏览器不支持语音识别，请使用 Chrome、Edge 或 Safari'}
+                onClick={toggleDictation}>{listening ? <MicOff size={20}/> : <Mic size={20}/>} {listening ? '结束语音' : canDictate ? '语音提问' : '语音不可用'}</button>
               {speaking && <button onClick={silence}><Square size={18}/>停止播报</button>}
             </div>
             {voice && <details className="dh-voice-settings"><summary>声音设置</summary>{voices.length > 1 && <label>音色<select aria-label="播报音色" value={voice.voiceURI} onChange={e => { silence(); setVoiceId(e.target.value) }}>{voices.map(v => <option value={v.voiceURI} key={v.voiceURI}>{v.name}</option>)}</select></label>}<label>语速<select aria-label="播报语速" value={voiceRate} onChange={e => { silence(); setVoiceRate(Number(e.target.value)) }}><option value={0.8}>慢速</option><option value={0.9}>舒缓</option><option value={1}>正常</option></select></label></details>}

@@ -96,6 +96,10 @@
 .dh-host-status > span { width: 6px; height: 6px; background: #40c5d4; transform: rotate(45deg); box-shadow: 0 0 5px #15bdd459; }
 .dh-host-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; padding: 7px 0 10px; }
 .dh-host-controls button, .dh-chat-heading button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 7px 12px; color: var(--dh-ink); background: var(--dh-glass); border: 1px solid #397fa9; border-radius: 2px; box-shadow: inset 0 0 0 1px #57b6e218, inset 0 1px #88cdff38, 0 1px 6px #01091480; }
+/* 语音提问：与播报按钮同一套玻璃面板，聆听时青色呼吸光 */
+.dh-host-controls .dh-dictate.is-listening { color: #fff; border-color: var(--dh-cyan); background: linear-gradient(#1f6d96, #0f3e62); animation: dh-listen 1.3s ease-in-out infinite; }
+.dh-host-controls .dh-dictate.is-listening svg { color: #ffda8b; }
+@keyframes dh-listen { 0%, 100% { box-shadow: inset 0 0 0 1px #6fe3ff40, 0 0 4px #43d9ff40; } 50% { box-shadow: inset 0 0 0 1px #6fe3ff80, 0 0 0 3px #43d9ff2e, 0 0 16px #43d9ffa0; } }
 .dh-voice-settings { text-align: left; padding: 0 8px; border-top: 1px solid #2e6688; }
 .dh-voice-settings summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--dh-ink); font-size: 16px; }
 .dh-voice-settings summary::after { content: '+'; margin-left: auto; }
