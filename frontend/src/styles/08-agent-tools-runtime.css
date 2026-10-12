@@ -1,0 +1,492 @@
+/* 智能体工具子菜单、运行时任务与队列控制 */
+
+/* ===== 智能体抽屉：可用工具管理子菜单 ===== */
+.tools-subgroup-panel {
+  background: var(--cffffff);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.tools-subgroup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.tools-header-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tools-header-icon {
+  color: var(--ink);
+  flex-shrink: 0;
+}
+.tools-header-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.tools-header-subtitle {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--c85857f);
+}
+.tools-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tools-count-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--cefefeb);
+  color: var(--c555550);
+  border: 1px solid var(--ce0e0da);
+}
+.tools-count-pill.has-active {
+  background: var(--green-soft);
+  color: var(--green);
+  border-color: var(--green);
+}
+.tools-submenu-toggle {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--c74746e);
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.tools-submenu-toggle:hover {
+  background: var(--cefefeb);
+  border-color: var(--c898983);
+}
+.tools-active-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--soft-line);
+}
+.tool-active-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  background: var(--cefefeb);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-family: "DM Mono", monospace;
+  font-size: 11px;
+  color: var(--ink);
+}
+.tool-active-pill button {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--c85857f);
+}
+.tool-active-pill button:hover {
+  color: var(--red);
+}
+.tools-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tool-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+.tool-card:hover {
+  border-color: var(--c898983);
+  background: var(--cffffff);
+}
+.tool-card.active {
+  border-color: var(--green);
+  background: var(--green-soft);
+}
+.tool-card .switch-row {
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+.tool-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.tool-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tool-card-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.tool-card-category {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: var(--cefefeb);
+  color: var(--c686862);
+  border: 1px solid var(--ce0e0da);
+}
+.tool-card-code {
+  font-family: "DM Mono", monospace;
+  font-size: 11px;
+  color: var(--c686862);
+}
+.tool-card-desc {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--c74746e);
+}
+.tools-custom-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.tools-custom-add input {
+  flex: 1;
+  height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--cffffff);
+}
+.tools-custom-add button {
+  height: 34px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+/* ===== 运行时任务与队列主动停止控制 ===== */
+.stop-button-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.stop-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--c783c38);
+  background: var(--red-soft);
+  border: 1px solid var(--ceccfcb);
+  cursor: pointer;
+  transition: all .16s ease;
+}
+.stop-button:hover {
+  background: var(--red);
+  color: var(--cffffff);
+  border-color: var(--red);
+}
+.stop-all-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--c74746e);
+  background: var(--cefefeb);
+  border: 1px solid var(--ce0e0da);
+  cursor: pointer;
+  transition: all .16s ease;
+}
+.stop-all-button:hover {
+  background: var(--red-soft);
+  color: var(--c783c38);
+  border-color: var(--ceccfcb);
+}
+.queue-add-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--cffffff);
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  cursor: pointer;
+  transition: all .16s ease;
+}
+.queue-add-button:hover {
+  background: var(--c30302d);
+}
+.turn-stop-inline-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  margin-left: 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--c783c38);
+  background: var(--red-soft);
+  border: 1px solid var(--ceccfcb);
+  cursor: pointer;
+  transition: all .16s ease;
+}
+.turn-stop-inline-btn:hover {
+  background: var(--red);
+  color: var(--cffffff);
+  border-color: var(--red);
+}
+.queue-dock .queue-dock-header {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 8px;
+  min-height: 28px;
+}
+.queue-dock .queue-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.queue-dock .queue-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--cefefeb);
+  color: var(--ink);
+  border: 1px solid var(--ce0e0da);
+}
+.queue-dock .queue-clear-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: auto !important;
+  height: auto !important;
+  padding: 3px 8px !important;
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--c74746e);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--ce0e0da);
+  transition: all .15s ease;
+}
+.queue-dock .queue-clear-btn:hover {
+  background: var(--red-soft) !important;
+  color: var(--c783c38) !important;
+  border-color: var(--ceccfcb) !important;
+}
+
+/* ==========================================================================
+   Composer Attachments & Upload Styles
+   ========================================================================== */
+.composer-bottom-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.composer-upload-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: all 0.16s ease;
+  white-space: nowrap;
+}
+
+.composer-upload-btn:hover:not(:disabled) {
+  background: var(--control-hover);
+  color: var(--ink);
+}
+
+.composer-upload-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px 0;
+}
+
+.composer-attachment-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--ink);
+  max-width: 260px;
+  transition: all 0.15s ease;
+}
+
+.composer-attachment-pill:hover {
+  border-color: var(--muted);
+}
+
+.attachment-pill-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.attachment-pill-size {
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.attachment-remove-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.attachment-remove-btn:hover {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+/* ==========================================================================
+   Message Attachments Display
+   ========================================================================== */
+.message-attachments-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.message-attachment-image-link {
+  display: block;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  max-width: 280px;
+  max-height: 220px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.message-attachment-image-link:hover {
+  transform: scale(1.02);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.message-attachment-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.message-attachment-doc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--ink);
+  text-decoration: none;
+  transition: all 0.15s ease;
+  max-width: 320px;
+}
+
+.message-attachment-doc-chip:hover {
+  background: var(--line);
+  border-color: var(--muted);
+  text-decoration: none;
+}
+
+.doc-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.doc-chip-meta {
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}

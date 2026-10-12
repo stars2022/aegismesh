@@ -6,7 +6,7 @@ import { ServiceUnavailable, useServiceSession } from './sessionGate'
 import { setConversationOwner } from './conversationStorage'
 import { LoginPage } from './AccountPanel'
 
-const ChatDemo = lazy(() => import('./App').then(({ ChatDemo }) => ({ default: ChatDemo })))
+const ChatDemo = lazy(() => import('./chat/ChatDemo').then(({ ChatDemo }) => ({ default: ChatDemo })))
 const DigitalHuman = lazy(() => import('./DigitalHuman'))
 
 export default function Demo() {

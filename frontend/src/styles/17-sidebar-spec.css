@@ -1,0 +1,115 @@
+/* 侧边栏统一规格（聊天与管理后台共用） */
+
+/* ===== 侧边栏统一规格（聊天工作台与管理后台共用） =====
+   取值来自 :root 的 --sidebar-* 令牌。此前同一元素在多处被反复覆盖，
+   这里是两套侧边栏行高、圆角、字号、分组标题和折叠按钮的最终定义。 */
+
+/* 品牌行 */
+.chat-layout .chat-brand { height: 40px; gap: 8px; margin: 0 0 12px; padding-left: var(--sidebar-row-padding); }
+.chat-layout .chat-brand > span,
+.design-next .brand-mark { width: 28px; height: 28px; border-radius: var(--sidebar-row-radius); }
+.chat-layout .chat-brand strong,
+.design-next .brand strong { font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+.design-next .brand { padding: 0 var(--sidebar-row-padding); }
+@media (min-width: 821px) {
+  .chat-layout .chat-brand { padding-right: calc(var(--control-height-compact) + 6px); }
+  /* 折叠按钮右缘与侧栏内容右缘对齐，给品牌名留出空间 */
+  .chat-layout > .chat-side-toggle.left { left: max(12px, calc(var(--history-track) - var(--control-height-compact) - 10px)); }
+}
+
+/* 主操作按钮：浅色描边，不再是整块纯黑 */
+.chat-layout .new-chat-split-container {
+  height: var(--sidebar-row-height);
+  color: var(--ink);
+  background: var(--white);
+  border: 1px solid var(--control-border);
+  border-radius: var(--sidebar-row-radius);
+}
+.chat-layout .new-chat-main {
+  gap: 10px;
+  padding: 0 calc(var(--sidebar-row-padding) - 1px);
+  color: var(--ink);
+  font-size: var(--sidebar-font-size);
+  border-radius: var(--sidebar-row-radius) 0 0 var(--sidebar-row-radius);
+}
+.chat-layout .new-chat-main:hover { opacity: 1; background: var(--control-hover); }
+.chat-layout .new-chat-split-trigger {
+  color: var(--muted);
+  border-left-color: var(--control-border);
+  border-radius: 0 var(--sidebar-row-radius) var(--sidebar-row-radius) 0;
+}
+.chat-layout .new-chat-split-trigger:hover { color: var(--ink); background: var(--control-hover); }
+.design-next .new-agent-button {
+  height: var(--sidebar-row-height);
+  margin: 14px 0 18px;
+  padding: 0 calc(var(--sidebar-row-padding) - 1px);
+  gap: 10px;
+  color: var(--ink);
+  background: var(--white);
+  border: 1px solid var(--control-border);
+  border-radius: var(--sidebar-row-radius);
+  font-size: var(--sidebar-font-size);
+}
+.design-next .new-agent-button:hover { background: var(--control-hover); }
+.design-next .new-agent-button > span { color: var(--muted); font-size: 11px; }
+
+/* 分组标题 */
+.chat-layout .history-group-label,
+.design-next .nav-label {
+  color: var(--muted);
+  font-size: var(--sidebar-label-size);
+  font-weight: 500;
+  letter-spacing: .02em;
+  text-transform: none;
+}
+.chat-layout .history-group-label { padding: 14px var(--sidebar-row-padding) 6px; }
+.chat-layout .history-group:first-child .history-group-label { padding-top: 4px; }
+.design-next .nav-label { margin: 0 var(--sidebar-row-padding) 6px; }
+
+/* 列表行 */
+.chat-layout .history-item {
+  min-height: var(--sidebar-row-height);
+  padding: 0 var(--sidebar-row-padding);
+  border-radius: var(--sidebar-row-radius);
+}
+.chat-layout .history-item > button:first-child { height: var(--sidebar-row-height); font-size: var(--sidebar-font-size); }
+@media (hover: hover) {
+  /* 操作按钮悬停时才出现且自带渐隐底色，平时不必为它预留宽度 */
+  .chat-layout .history-item > button:first-child { padding-right: 0; }
+}
+.chat-layout .api-entry {
+  height: var(--sidebar-row-height);
+  gap: 10px;
+  margin-top: 2px;
+  padding: 0 var(--sidebar-row-padding);
+  border-radius: var(--sidebar-row-radius);
+  font-size: var(--sidebar-font-size);
+}
+.chat-layout .api-entry:first-of-type { margin-top: 8px; }
+.chat-layout .history-sidebar nav { padding-right: 0; }
+.design-next .sidebar nav { gap: 2px; }
+.design-next .sidebar nav button {
+  height: var(--sidebar-row-height);
+  gap: 10px;
+  padding: 0 var(--sidebar-row-padding);
+  border-radius: var(--sidebar-row-radius);
+  font-size: var(--sidebar-font-size);
+}
+.design-next .sidebar nav button:hover { transform: none; }
+
+/* 侧栏展开时，折叠按钮是侧栏里的普通图标按钮，不再带底色和边框 */
+.chat-layout:not(.history-collapsed) > .chat-side-toggle.left,
+.chat-layout:not(.inspector-collapsed) > .chat-side-toggle.right,
+.app-shell:not(.sidebar-collapsed) .brand .sidebar-toggle {
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--sidebar-row-radius);
+}
+.chat-layout:not(.history-collapsed) > .chat-side-toggle.left:hover,
+.chat-layout:not(.inspector-collapsed) > .chat-side-toggle.right:hover,
+.app-shell:not(.sidebar-collapsed) .brand .sidebar-toggle:hover {
+  color: var(--ink);
+  background: var(--control-hover);
+  border-color: transparent;
+}

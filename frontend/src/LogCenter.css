@@ -66,7 +66,7 @@
   .log-event-copy { grid-row: 2; grid-column: 1 / -1; }
   .log-event > summary > .log-chevron { grid-column: 4; grid-row: 1; }
 }
-@media (max-width: 650px) {
+@media (max-width: 600px) {
   .log-center-intro, .log-control-row { align-items: stretch; flex-direction: column; }
   .log-center-intro h2 { font-size: 16px; }
   .log-tabs, .log-live-controls { align-self: flex-start; }

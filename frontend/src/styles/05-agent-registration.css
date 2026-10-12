@@ -1,0 +1,565 @@
+/* 智能体注册、提审、凭据、技能管理与切换弹窗 */
+
+/* ===== 智能体注册状态 ===== */
+.agent-card-reg { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--cffffff); }
+.reg-pill { flex: none; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+.reg-pill.local, .reg-pill.draft { color: var(--c686862); background: var(--cecece7); }
+.reg-pill.pending { color: var(--amber); background: var(--amber-soft); }
+.reg-pill.approved, .reg-pill.imported { color: var(--green); background: var(--green-soft); }
+.reg-pill.rejected { color: var(--red); background: var(--red-soft); }
+.certificate-ready { display: inline-flex; align-items: center; gap: 3px; color: var(--green); font-size: 11px; }
+.reg-actions { display: flex; gap: 6px; }
+.reg-actions button { display: inline-flex; align-items: center; gap: 4px; padding: 5px 8px; color: var(--c555550); background: var(--cefefeb); border: 1px solid var(--ce0e0da); border-radius: 5px; cursor: pointer; font-size: 11px; }
+.reg-actions button:hover:not(:disabled) { color: var(--c161614); }
+.reg-actions button:disabled { opacity: .55; cursor: default; }
+
+/* ===== 智能体提审概览与合规核验弹窗 ===== */
+.preview-modal-dialog {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(680px, 92vw);
+  max-height: 88vh;
+  background: var(--cf8f8f5);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px var(--rgb-00012);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modal-fade-in .2s ease-out;
+}
+@keyframes modal-fade-in {
+  from { transform: translate(-50%, -46%); opacity: 0; }
+  to { transform: translate(-50%, -50%); opacity: 1; }
+}
+.preview-modal-header {
+  padding: 18px 24px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  background: var(--cffffff);
+}
+.preview-modal-header h3 { margin: 0; font-size: 16px; color: var(--ink); }
+.preview-modal-sub { margin: 4px 0 0; color: var(--c969690); font-size: 11px; line-height: 1.4; }
+.preview-modal-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 24px;
+  color: var(--c969690);
+  font-size: 12px;
+}
+.preview-modal-body {
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.preview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  background: var(--cffffff);
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.preview-item { display: flex; flex-direction: column; gap: 4px; }
+.preview-item.full { grid-column: span 2; }
+.preview-label { color: var(--c969690); font-size: 11px; font-weight: 500; }
+.preview-value { color: var(--ink); font-size: 12px; }
+.preview-value.role-tag {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 2px 8px;
+  background: var(--ceeeeea);
+  border-radius: 4px;
+  font-size: 11px;
+}
+.preview-value.mono, .preview-code, .skill-id { font-family: "DM Mono", monospace; }
+.preview-code {
+  font-size: 11px;
+  color: var(--c454541);
+  background: var(--ceeeeea);
+  padding: 6px 10px;
+  border-radius: 6px;
+  word-break: break-all;
+}
+.preview-skills-list { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.preview-skill-box {
+  background: var(--ceeeeea);
+  padding: 10px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--cd9d9d3);
+}
+.skill-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.skill-head strong { font-size: 12px; color: var(--ink); }
+.skill-id { font-size: 11px; color: var(--c969690); }
+.skill-desc { margin: 4px 0 6px; font-size: 11px; color: var(--c5f5f5a); line-height: 1.4; }
+.skill-tag-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-pill {
+  font-size: 11px;
+  padding: 1px 6px;
+  background: var(--cffffff);
+  border: 1px solid var(--cd8d8d2);
+  border-radius: 4px;
+  color: var(--c454541);
+}
+.empty-hint { font-size: 11px; color: var(--c999993); font-style: italic; }
+.acs-code-section {
+  background: var(--cffffff);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 12px 16px;
+}
+.acs-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.preview-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 0;
+  color: var(--c555550);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 0;
+}
+.preview-toggle-btn:hover { color: var(--ink); }
+.preview-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--cefefeb);
+  border: 1px solid var(--ce0e0da);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--c555550);
+}
+.json-code-block {
+  margin: 10px 0 0;
+  padding: 12px;
+  background: #18181b;
+  color: #a1a1aa;
+  font-family: "DM Mono", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  border-radius: 6px;
+  overflow-x: auto;
+  max-height: 240px;
+}
+.preview-modal-footer {
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  background: var(--cffffff);
+}
+
+/* ===== 自定义注册与审核账号凭据输入区 ===== */
+.registry-card-box {
+  background: var(--cffffff);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.registry-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.registry-card-header svg {
+  color: var(--c15845f);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.registry-card-header strong {
+  display: block;
+  font-size: 12px;
+  color: var(--ink);
+}
+.registry-card-header p {
+  margin: 3px 0 0;
+  font-size: 11px;
+  color: var(--c85857f);
+  line-height: 1.4;
+}
+.registry-grid-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.registry-grid-inputs label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--c666660);
+}
+.registry-grid-inputs input {
+  height: 36px;
+  padding: 0 10px;
+  font-size: 11px;
+  background: var(--cf8f8f5);
+  border: 1px solid var(--cd8d8d2);
+  border-radius: 6px;
+  color: var(--ink);
+  outline: 0;
+}
+.registry-grid-inputs input:focus {
+  border-color: var(--c797973);
+  box-shadow: 0 0 0 2px var(--rgb-0004);
+}
+.pwd-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.pwd-input-wrap input {
+  width: 100%;
+  padding-right: 52px;
+}
+.pwd-toggle {
+  position: absolute;
+  right: 6px;
+  background: none;
+  border: 0;
+  font-size: 11px;
+  color: var(--c85857f);
+  cursor: pointer;
+  padding: 4px 6px;
+}
+.pwd-toggle:hover {
+  color: var(--ink);
+}
+
+/* ===== 智能体技能管理与二级菜单配置 ===== */
+.skills-mgr-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.skills-mgr-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.skills-mgr-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--c969690);
+  line-height: 1.4;
+}
+.add-skill-btn {
+  height: 32px !important;
+  padding: 0 12px !important;
+  font-size: 11px !important;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.skills-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+.skill-mgr-card {
+  background: var(--cffffff);
+  border: 1px solid var(--cd8d8d2);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.15s ease;
+}
+.skill-mgr-card:hover {
+  border-color: var(--c969690);
+}
+.skill-mgr-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.skill-mgr-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.skill-mgr-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.skill-badge-id {
+  font-family: "DM Mono", monospace;
+  font-size: 11px;
+  color: var(--c85857f);
+  background: var(--ceeeeea);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.skill-badge-ver {
+  font-family: "DM Mono", monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c15845f);
+  background: var(--green-soft);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.skill-mgr-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.text-link-btn {
+  background: none;
+  border: 0;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--c555550);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.text-link-btn:hover {
+  background: var(--ceeeeea);
+  color: var(--ink);
+}
+.text-link-btn.danger {
+  color: var(--red);
+}
+.text-link-btn.danger:hover {
+  background: var(--red-soft);
+  color: var(--red);
+}
+.skill-mgr-desc {
+  font-size: 11px;
+  color: var(--c5f5f5a);
+  line-height: 1.4;
+}
+.skill-mgr-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--c969690);
+  margin-top: 2px;
+}
+.skill-mgr-tags {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.skill-mgr-tag {
+  background: var(--cefefeb);
+  color: var(--c686862);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+.skill-mgr-examples-count {
+  background: var(--ceeeeea);
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--c666660);
+}
+.skill-mgr-io-hint {
+  font-family: "DM Mono", monospace;
+  font-size: 11px;
+  color: var(--c9a9a94);
+}
+
+/* ===== 技能二级弹窗 (SkillSubModal) ===== */
+.skill-sub-dialog {
+  max-width: 620px;
+  width: min(620px, 94vw);
+}
+.skill-modal-form {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-height: calc(88vh - 65px);
+}
+.skill-modal-form .preview-modal-body {
+  gap: 14px;
+}
+.skill-modal-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--c5e5e59);
+  font-weight: 500;
+}
+.skill-modal-form input,
+.skill-modal-form textarea {
+  width: 100%;
+  color: var(--ink);
+  background: var(--cffffff);
+  border: 1px solid var(--cd8d8d2);
+  border-radius: 7px;
+  outline: 0;
+  font-size: 11px;
+}
+.skill-modal-form input {
+  height: 38px;
+  padding: 0 10px;
+}
+.skill-modal-form textarea {
+  padding: 8px 10px;
+  resize: vertical;
+  line-height: 1.45;
+}
+.skill-modal-form input:focus,
+.skill-modal-form textarea:focus {
+  border-color: var(--c797973);
+  box-shadow: 0 0 0 2px var(--rgb-0004);
+}
+
+/* ===== 智能体切换确认弹窗 ===== */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--rgb-0004);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-modal);
+  animation: backdrop-fade-in 0.15s ease-out;
+}
+@keyframes backdrop-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.modal-agent-switch {
+  width: min(480px, 92vw);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px var(--rgb-00012);
+  overflow: hidden;
+  animation: modal-pop-in 0.18s ease-out;
+}
+@keyframes modal-pop-in {
+  from { transform: scale(0.96); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+.modal-agent-switch .modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--soft-line);
+  background: var(--white);
+}
+.modal-title-with-icon {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--ink);
+}
+.modal-title-with-icon .warn-icon {
+  color: var(--amber);
+}
+.modal-agent-switch .modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--c454541);
+}
+.modal-warn-text {
+  padding: 10px 14px;
+  background: var(--amber-soft);
+  border: 1px solid var(--cc98735);
+  border-radius: 8px;
+  color: var(--c805a20);
+  font-size: 12px;
+}
+.modal-close {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--c888882);
+  cursor: pointer;
+  transition: all .16s ease;
+}
+.modal-close:hover {
+  background: var(--soft-line);
+  color: var(--ink);
+}
+.modal-agent-switch .modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 14px 20px;
+  border-top: 1px solid var(--soft-line);
+  background: var(--white);
+}
+.modal-agent-switch .modal-footer button {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .16s ease;
+}
+.modal-agent-switch .modal-footer .secondary-button,
+.modal-agent-switch .modal-footer .btn-secondary {
+  color: var(--ink);
+  background: var(--cffffff);
+  border: 1px solid var(--line);
+}
+.modal-agent-switch .modal-footer .secondary-button:hover,
+.modal-agent-switch .modal-footer .btn-secondary:hover {
+  background: var(--cefefeb);
+  border-color: var(--c898983);
+}
+.modal-agent-switch .modal-footer .primary-button,
+.modal-agent-switch .modal-footer .btn-primary {
+  color: var(--cffffff);
+  background: var(--ink);
+  border: 1px solid var(--ink);
+}
+.modal-agent-switch .modal-footer .primary-button:hover,
+.modal-agent-switch .modal-footer .btn-primary:hover {
+  background: var(--c30302d);
+  border-color: var(--c30302d);
+}

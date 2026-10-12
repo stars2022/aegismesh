@@ -79,7 +79,7 @@
 .admin-usage-row summary span { min-width: 0; overflow-wrap: anywhere; }
 .admin-usage-row summary small { display: block; color: var(--muted); margin-top: 7px; }
 .admin-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-@media (max-width: 650px) {
+@media (max-width: 600px) {
   .admin-surface { padding: 16px; }
   .admin-tabs { width: 100%; }
   .admin-tabs button { padding: 10px 12px; }

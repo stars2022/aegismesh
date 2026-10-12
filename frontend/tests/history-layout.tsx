@@ -1,5 +1,5 @@
 import { createRoot } from 'react-dom/client'
-import { ChatDemo } from '../src/App'
+import { ChatDemo } from '../src/chat/ChatDemo'
 import { api } from '../src/api'
 import type { Agent, ChatResult } from '../src/types'
 import { conversationStorage, setConversationOwner } from '../src/conversationStorage'

@@ -1,6 +1,6 @@
 // Real chat/canvas components, isolated owner + origin, and no live API calls.
 import { createRoot } from 'react-dom/client'
-import { ChatDemo } from '../src/App'
+import { ChatDemo } from '../src/chat/ChatDemo'
 import { api, type CanvasDocument } from '../src/api'
 import { setConversationOwner, conversationStorage } from '../src/conversationStorage'
 import { applyTheme, DEFAULT_SETTINGS } from '../src/settings'

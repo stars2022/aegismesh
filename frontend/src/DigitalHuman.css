@@ -255,6 +255,73 @@
   .dh-bubble { max-width: 100%; }
   .dh-host-controls button { font-size: 15px; }
 }
+/* 一屏布局：整页固定为视口高度，三栏底边对齐，只有对话记录在内部滚动。
+   窗口矮于 560px 时退回整页滚动，避免内容被裁掉。 */
+@media (min-height: 560px) {
+  .digital-human { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 8px; }
+  .dh-masthead, .dh-navigation, .dh-footer { flex: none; }
+  .dh-navigation { width: 100%; margin-bottom: clamp(10px, 1.8dvh, 20px); }
+  .dh-layout { flex: 1 1 auto; min-height: 0; width: 100%; margin: 0 auto; align-items: stretch; grid-template-rows: minmax(0, 1fr); }
+  .dh-consultation { height: auto; min-height: 0; max-height: none; }
+  .dh-conversation-body { min-height: 0; }
+  .dh-footer { width: 100%; margin-top: 8px; padding-block: 7px 5px; font-size: 13px; }
+  .dh-service-column { min-height: 0; overflow-y: auto; gap: clamp(12px, 2dvh, 24px); }
+  .dh-guide button { min-height: clamp(58px, 8.5dvh, 90px); }
+  .dh-directory-circuit { flex: 1 1 0; min-height: 0; height: auto; overflow: hidden; }
+  /* 展开声音设置等内容超出时，只在这一栏内部滚动，不撑高整页 */
+  .dh-host { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+  .dh-avatar-chamber { flex: 1 0 auto; padding-block: clamp(8px, 2.4dvh, 26px); }
+  .dh-host-stage { height: clamp(150px, calc(100dvh - 560px), 390px); }
+  .dh-composer textarea { min-height: clamp(64px, 9dvh, 102px); }
+}
+@media (min-height: 560px) and (max-width: 72rem) {
+  .dh-layout { grid-template-rows: auto minmax(0, 1fr); }
+  .dh-service-column { overflow: visible; }
+  .dh-guide button { min-height: 60px; }
+  .dh-host-stage { height: clamp(140px, calc(100dvh - 660px), 360px); }
+}
+@media (min-height: 560px) and (max-width: 52rem) {
+  /* 单列：形象信息条 / 对话 / 服务目录，对话区占满剩余高度 */
+  .dh-layout { grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; }
+  .dh-navigation { margin-bottom: 10px; }
+  .dh-host { display: grid; overflow: visible; padding-block: 6px; }
+  .dh-avatar-chamber { padding-block: 2px; }
+  .dh-host-stage { height: clamp(84px, calc(100dvh - 700px), 150px); }
+  .dh-host-status { display: none; }
+  .dh-service-column { gap: 8px; }
+  .dh-guide button { flex-direction: row; min-height: 44px; padding: 6px 8px; gap: 6px; }
+  .dh-guide button strong { font-size: 15px; }
+  .dh-topic-icon { width: 26px; height: 28px; }
+  .dh-topic-icon svg { width: 18px; height: 18px; }
+  .dh-history select { min-height: 40px; }
+  .dh-chat-heading { min-height: 0; }
+  .dh-composer { padding: 10px; }
+  .dh-composer textarea { height: 56px; min-height: 56px; resize: none; }
+  .dh-composer-footer { margin-top: 8px; }
+  .dh-send { min-height: 44px; }
+  .dh-footer { margin-top: 6px; padding-block: 5px 3px; justify-content: center; font-size: 12px; }
+  .dh-footer > span:first-child { display: none; }
+}
+@media (min-height: 560px) and (max-height: 740px) and (max-width: 52rem) {
+  /* 矮屏手机：把高度让给对话区 */
+  .dh-voice-settings, .dh-footer { display: none; }
+  .dh-host-controls { padding-block: 3px 0; }
+}
+@media (min-height: 560px) and (max-width: 42rem) {
+  .dh-masthead { min-height: 70px; }
+  .dh-title-plaque { min-height: 62px; padding-block: 4px 9px; }
+  .dh-masthead::before { bottom: 10px; }
+  .dh-emblem { width: 34px; height: 36px; }
+  .dh-emblem svg { width: 22px; }
+  .dh-brand { font-size: 15px; }
+  .dh-masthead h1 { font-size: 21px; }
+  .dh-host { grid-template-columns: 76px minmax(0, 1fr); }
+  .dh-host-name { min-height: 30px; }
+  .dh-host-name strong { font-size: 19px; }
+  .dh-chat-heading { padding: 6px 8px; }
+  .dh-chat-heading h2 { font-size: 17px; }
+  .dh-messages { padding: 12px 8px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .digital-human *, .digital-human *::before, .digital-human *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

@@ -16,7 +16,7 @@
 .canvas-wysiwyg-toolbar button:disabled { opacity: .36; cursor: default; }
 .canvas-wysiwyg-divider { flex: none; width: 1px; height: 18px; margin: 0 5px; background: var(--line); }
 .canvas-wysiwyg-menu-wrap { position: relative; flex: none; }
-.canvas-wysiwyg-menu { position: fixed; z-index: 90; display: flex; flex-direction: column; gap: 3px; min-width: 150px; padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); box-shadow: 0 14px 32px rgb(0 0 0 / 18%); }
+.canvas-wysiwyg-menu { position: fixed; z-index: var(--z-editor-menu); display: flex; flex-direction: column; gap: 3px; min-width: 150px; padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); box-shadow: 0 14px 32px rgb(0 0 0 / 18%); }
 .canvas-wysiwyg-menu button { justify-content: flex-start; width: 100%; padding: 8px 10px; color: var(--ink); }
 .canvas-wysiwyg-actions { flex: none; }
 .canvas-wysiwyg-actions .canvas-wysiwyg-save { color: var(--ink); background: color-mix(in srgb, var(--ink) 8%, transparent); }
@@ -53,7 +53,7 @@
 .canvas-prose ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 8px; }
 .canvas-prose ul[data-type="taskList"] li > label { flex: none; margin-top: 3px; }
 .canvas-prose ul[data-type="taskList"] li > div { flex: 1; }
-.canvas-wysiwyg-selection-actions { position: fixed; z-index: 80; display: flex; align-items: center; gap: 2px; max-width: calc(100vw - 16px); padding: 5px; border: 1px solid var(--line); border-radius: 11px; color: var(--ink); background: var(--paper); box-shadow: var(--floating-menu-shadow, 0 12px 28px rgb(0 0 0 / 16%)); animation: floating-menu-in 170ms cubic-bezier(.2,.75,.25,1) both; }
+.canvas-wysiwyg-selection-actions { position: fixed; z-index: var(--z-editor-actions); display: flex; align-items: center; gap: 2px; max-width: calc(100vw - 16px); padding: 5px; border: 1px solid var(--line); border-radius: 11px; color: var(--ink); background: var(--paper); box-shadow: var(--floating-menu-shadow, 0 12px 28px rgb(0 0 0 / 16%)); animation: floating-menu-in 170ms cubic-bezier(.2,.75,.25,1) both; }
 .canvas-wysiwyg-selection-actions > svg { flex: none; margin: 0 6px; color: var(--muted); }
 .canvas-wysiwyg-selection-actions button { flex: none; padding: 6px 8px; border: 0; border-radius: var(--radius-item); color: var(--ink); background: transparent; cursor: pointer; font-size: 12px; white-space: nowrap; }
 .canvas-wysiwyg-selection-actions button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
@@ -106,7 +106,7 @@
 .canvas-review-separator { flex: none; height: 20px; border-left: 1px solid var(--line); }
 .canvas-review-position { padding: 0 5px; color: var(--muted); font-size: 11px; }
 .canvas-review-error { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: #d36d6d; font-size: 11px; }
-.canvas-url-backdrop { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: 20px; background: rgb(0 0 0 / 42%); }
+.canvas-url-backdrop { position: fixed; inset: 0; z-index: var(--z-canvas-overlay); display: grid; place-items: center; padding: 20px; background: rgb(0 0 0 / 42%); }
 .canvas-url-dialog { display: flex; flex-direction: column; gap: 16px; width: min(100%, 390px); padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
 .canvas-url-dialog > div { display: flex; align-items: center; justify-content: space-between; }
 .canvas-url-dialog > div button { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
@@ -126,8 +126,8 @@
   .canvas-wysiwyg.is-reading .canvas-wysiwyg-context { grid-column: 1; }
   .canvas-wysiwyg.is-reading .canvas-wysiwyg-actions { grid-column: 2; grid-row: 1; }
   .canvas-wysiwyg-body.with-outline { grid-template-columns: minmax(0, 1fr); }
-  .canvas-sidebar-backdrop { display: block; position: absolute; inset: 0; z-index: 109; border: 0; padding: 0; background: rgb(0 0 0 / 32%); }
-  .canvas-wysiwyg-outline { position: absolute; z-index: 110; right: 8px; top: 8px; bottom: max(8px, env(safe-area-inset-bottom, 0px)); width: min(340px, calc(100% - 24px)); min-height: 0; padding: 16px; border: 1px solid var(--shell-divider, var(--line)); border-radius: var(--radius-panel, 16px); overscroll-behavior: contain; }
+  .canvas-sidebar-backdrop { display: block; position: absolute; inset: 0; z-index: var(--z-canvas-panel-backdrop); border: 0; padding: 0; background: rgb(0 0 0 / 32%); }
+  .canvas-wysiwyg-outline { position: absolute; z-index: var(--z-canvas-panel); right: 8px; top: 8px; bottom: max(8px, env(safe-area-inset-bottom, 0px)); width: min(340px, calc(100% - 24px)); min-height: 0; padding: 16px; border: 1px solid var(--shell-divider, var(--line)); border-radius: var(--radius-panel, 16px); overscroll-behavior: contain; }
   .canvas-wysiwyg-outline nav button { min-height: 44px; padding: 10px; font-size: 14px; }
   .canvas-wysiwyg-review-header button { width: 40px; height: 40px; border-radius: var(--radius-control); }
   .canvas-wysiwyg-paper { width: 100%; margin: 12px auto; padding: 15px 18px 120px; }

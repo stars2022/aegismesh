@@ -1,6 +1,6 @@
 // Dedicated origin: never overwrite a real user's conversation storage.
 import { createRoot } from 'react-dom/client'
-import { ChatDemo } from '../src/App'
+import { ChatDemo } from '../src/chat/ChatDemo'
 import { api, type CanvasDocument } from '../src/api'
 import type { Agent, ChatResult } from '../src/types'
 import { applyTheme, DEFAULT_SETTINGS } from '../src/settings'

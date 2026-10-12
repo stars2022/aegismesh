@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { CanvasDocument } from "./api";
 import { api } from "./api";
+import { confirmDialog } from "./dialog";
 import { FlowMark } from "./LoadingFlow";
 import { canvasReviewEdits, resolveCanvasReview } from "./canvasMerge";
 import "./CanvasWorkspace.css";
@@ -292,8 +293,8 @@ export function CanvasWorkspace({
     }
   };
 
-  const cancelEdit = () => {
-    if (dirty && !window.confirm("放弃尚未保存的画布修改？")) return;
+  const cancelEdit = async () => {
+    if (dirty && !(await confirmDialog({ title: "放弃修改", message: "放弃尚未保存的画布修改？", confirmLabel: "放弃", danger: true }))) return;
     editor?.commands.setContent(baseline.current.content, { contentType: "markdown", emitUpdate: false });
     setDraft(baseline.current.content);
     setError("");
@@ -491,7 +492,7 @@ export function CanvasWorkspace({
           {reviewError ? <p role="alert">{reviewError}</p> : reviewedRevision ? <p>{reviewEdits.length ? `${reviewEdits.length} 处改动` : "这一版没有可见内容变化"}</p> : <p>{document.version < 2 ? "尚无上一版可供对比。" : "正在读取上一版…"}</p>}
           {pendingReview && <p>在正文中查看高亮；用底部工具栏接受或撤销。冲突处默认保留手工内容。</p>}
           {dirty && <p>手工草稿已保留。</p>}
-          {!pendingReview && priorRevision && <button type="button" className="canvas-wysiwyg-restore" disabled={dirty} onClick={() => { if (!window.confirm("将上一版载入编辑器？需要再次保存才会生效。")) return; setEditing(true); editor?.commands.setContent(priorRevision.content, { contentType: "markdown" }); setReviewOpen(false); }}>载入上一版到编辑器</button>}
+          {!pendingReview && priorRevision && <button type="button" className="canvas-wysiwyg-restore" disabled={dirty} onClick={async () => { if (!(await confirmDialog({ title: "载入上一版", message: "将上一版载入编辑器？需要再次保存才会生效。", confirmLabel: "载入" }))) return; setEditing(true); editor?.commands.setContent(priorRevision.content, { contentType: "markdown" }); setReviewOpen(false); }}>载入上一版到编辑器</button>}
         </aside> : outlineOpen && <aside id="canvas-document-outline" className="canvas-wysiwyg-outline" aria-label="文档大纲侧边栏">
           <div className="canvas-wysiwyg-review-header"><strong>大纲</strong><button type="button" aria-label="关闭文档大纲" onClick={() => setOutlineOpen(false)}><X size={16} /></button></div>
           <strong className="canvas-wysiwyg-doc-title">{title}</strong>

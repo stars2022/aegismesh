@@ -13,7 +13,7 @@
 .web-search-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .web-search-test-result { overflow-wrap: anywhere; font-size: 13px; line-height: 1.8; }
 .web-search-test-result a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
-@media (max-width: 540px) {
+@media (max-width: 600px) {
   .web-search-settings .web-search-limits { grid-template-columns: 1fr; }
   .web-search-settings summary span { max-width: 45%; text-align: right; }
 }

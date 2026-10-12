@@ -1,0 +1,951 @@
+/* 子智能体状态卡片、协同面板与协作记录 */
+
+/* ===== 正在执行的子智能体状态卡片 ===== */
+.live-subagent-card {
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: var(--cffffff);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--green);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  animation: live-fade-in 0.2s ease-out;
+}
+@keyframes live-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.live-subagent-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.live-subagent-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse-ring 1.5s infinite;
+}
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(21, 132, 95, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(21, 132, 95, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(21, 132, 95, 0); }
+}
+.live-subagent-tag {
+  font-size: 11px;
+  padding: 2px 6px;
+  background: var(--green-soft);
+  color: var(--green);
+  border-radius: 4px;
+  font-weight: 500;
+}
+.live-subagent-name {
+  font-size: 12px;
+  color: var(--ink);
+}
+.live-subagent-id {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: "DM Mono", monospace;
+}
+.live-subagent-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--amber);
+  background: var(--amber-soft);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.live-subagent-task {
+  font-size: 11px;
+  color: var(--c555550);
+  background: var(--cf8f8f5);
+  padding: 6px 10px;
+  border-radius: 6px;
+  display: flex;
+  gap: 4px;
+}
+.live-subagent-task span {
+  flex-shrink: 0;
+  font-weight: 500;
+  color: var(--muted);
+}
+.live-subagent-task p {
+  margin: 0;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* ===== 主聊天页：已连接智能体状态条 ===== */
+.connected-agent-banner {
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  animation: live-fade-in 0.2s ease-out;
+  flex-wrap: wrap;
+}
+
+.connected-agent-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ink);
+  flex-wrap: wrap;
+}
+
+.connected-icon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.connected-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.connected-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.connected-id {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: "DM Mono", monospace;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.connected-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 6px;
+  background: var(--green-soft);
+  color: var(--green);
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.connected-tool-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 6px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.view-collab-btn {
+  font-size: 11px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 3px 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.view-collab-btn:hover {
+  background: var(--soft-line);
+  border-color: var(--muted);
+}
+
+/* ===== 右侧协同面板：正在运行中的实时卡片 ===== */
+.collab-live-card {
+  padding: 12px 14px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--green);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  animation: live-fade-in 0.2s ease-out;
+}
+
+.collab-live-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.collab-live-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--green-soft);
+  color: var(--green);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.collab-live-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.collab-live-meta strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.collab-live-meta code {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: "DM Mono", monospace;
+}
+
+.collab-live-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--amber);
+  background: var(--amber-soft);
+  padding: 6px 10px;
+  border: 1px solid rgba(224, 160, 74, 0.25);
+  border-radius: 6px;
+  flex-wrap: wrap;
+}
+
+.collab-live-tool-preview {
+  margin: 4px 0 0 0;
+  width: 100%;
+  font-size: 11px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 6px 8px;
+  border-radius: 5px;
+  max-height: 80px;
+  overflow-y: auto;
+  font-family: "DM Mono", monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.collab-live-task {
+  font-size: 11px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.collab-live-task-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.collab-live-task p {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.5;
+  font-size: 11px;
+}
+
+/* ===== 协作智能体列表与详细记录 ===== */
+.collab-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px;
+}
+.collab-overview-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--c555550);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--soft-line);
+}
+.collab-mode-tag {
+  font-size: 11px;
+  padding: 2px 7px;
+  background: var(--ce9e9e5);
+  border-radius: 10px;
+  color: var(--ink);
+  font-weight: 500;
+}
+.collab-scope-switch {
+  display: inline-flex;
+  align-items: center;
+  background: var(--line, #e2e8f0);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+.collab-scope-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-weight: 500;
+}
+.collab-scope-btn:hover {
+  color: var(--ink, #0f172a);
+}
+.collab-scope-btn.active {
+  background: var(--white, #ffffff);
+  color: var(--ink, #0f172a);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.collab-agent-card {
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px var(--rgb-0004);
+  transition: border-color 0.15s ease;
+}
+.collab-agent-card:hover {
+  border-color: var(--c969690);
+}
+.collab-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  background: var(--paper);
+  transition: background 0.12s ease;
+}
+.collab-card-header:hover {
+  background: var(--line);
+}
+.collab-agent-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.collab-bot-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--white);
+  border: 1px solid var(--soft-line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink);
+}
+.collab-name-box {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.collab-name-box strong {
+  font-size: 12px;
+  color: var(--ink);
+}
+.collab-name-box code {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: "DM Mono", monospace;
+}
+.collab-card-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+.status-pill.completed {
+  background: var(--green-soft);
+  color: var(--green);
+}
+.status-pill.failed {
+  background: var(--red-soft);
+  color: var(--red);
+}
+.pill-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+.pill-dot.completed { background: var(--green); }
+.pill-dot.failed { background: var(--red); }
+.collab-latency {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: "DM Mono", monospace;
+}
+.collab-tools-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  padding: 2px 6px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  border-radius: 4px;
+}
+.collab-phase-pill,
+.collab-phase-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  padding: 2px 6px;
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+  border-radius: 4px;
+  font-weight: 500;
+}
+.collab-speed-pill,
+.collab-speed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  padding: 2px 6px;
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+  border-radius: 4px;
+  font-family: "DM Mono", monospace;
+}
+.collab-eta-pill,
+.collab-elapsed-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  padding: 2px 6px;
+  background: rgba(100, 116, 139, 0.1);
+  color: #475569;
+  border-radius: 4px;
+  font-family: "DM Mono", monospace;
+}
+.collab-progress-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border: 1px solid var(--soft-line);
+  border-radius: 6px;
+  font-size: 11px;
+}
+.collab-metric-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.collab-metric-label {
+  color: var(--muted);
+}
+.collab-metric-val {
+  font-weight: 600;
+  color: #1e293b;
+  font-family: "DM Mono", monospace;
+}
+.collab-chevron {
+  color: var(--muted);
+  transition: transform 0.2s ease;
+}
+.collab-chevron.rotated {
+  transform: rotate(90deg);
+}
+.collab-card-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border-top: 1px solid var(--soft-line);
+  background: var(--white);
+}
+.collab-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.collab-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.collab-count-pill {
+  font-size: 11px;
+  padding: 1px 6px;
+  background: var(--paper);
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  color: var(--muted);
+}
+.collab-task-box {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.collab-tools-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.collab-tool-item {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+}
+.collab-tool-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  cursor: pointer;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+.tool-chip {
+  font-size: 11px;
+  padding: 2px 6px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  border-radius: 4px;
+  font-weight: 500;
+}
+.collab-tool-head code {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: "DM Mono", monospace;
+}
+.collab-tool-args {
+  margin: 0;
+  padding: 6px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-family: "DM Mono", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink);
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.collab-tool-preview {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+  background: var(--white);
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  display: block;
+  min-width: 0;
+  max-height: 240px;
+  overflow: auto;
+  gap: 4px;
+}
+.collab-tool-preview span {
+  flex-shrink: 0;
+  font-weight: 500;
+}
+.collab-tool-preview p {
+  margin: 0;
+  color: var(--ink);
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.collab-tool-status { margin-left: auto; color: var(--muted); font-size: 11px; }
+.collab-tool-item[open] > summary { margin-bottom: 8px; }
+.tool-trace-chevron { flex-shrink: 0; transition: transform .15s ease; }
+.collab-tool-item[open] .tool-trace-chevron { transform: rotate(90deg); }
+.collab-tool-item:hover { background: var(--control-hover); }
+.subagent-dialogue-pane, .subagent-dialogue-messages, .subagent-tools-trajectory,
+.collab-tools-list, .subagent-header-identity, .collab-name-box { min-width: 0; max-width: 100%; }
+.collab-name-box code, .subagent-msg-role { overflow-wrap: anywhere; word-break: break-word; }
+.subagent-msg-role { flex-wrap: wrap; gap: 6px; }
+.collab-overview-bar { gap: 8px; flex-wrap: wrap; }
+/* 与上方"本会话协作"标题同一层级：小号、半粗、自绘箭头，而不是浏览器默认的 ▶ 大字 */
+.session-tool-history { margin-top: 14px; min-width: 0; border-top: 1px solid var(--soft-line); }
+.session-tool-history > summary { display: flex; align-items: center; gap: 6px; padding: 12px 2px 8px; list-style: none; cursor: pointer; color: var(--c555550); font-size: 12px; font-weight: 600; }
+.session-tool-history > summary::-webkit-details-marker { display: none; }
+.session-tool-history > summary:hover { color: var(--ink); }
+.session-tool-history > summary .tool-trace-chevron { flex: none; color: var(--muted); transition: transform .16s ease; }
+.session-tool-history[open] > summary .tool-trace-chevron { transform: rotate(90deg); }
+.session-tool-count { padding: 0 6px; color: var(--muted); background: var(--control-hover); border-radius: var(--radius-pill); font-size: 11px; font-weight: 500; line-height: 18px; }
+.activity-history-control { padding: 12px; margin: 8px; border: 1px solid var(--soft-line); border-radius: 999px; background: var(--paper); color: var(--muted); cursor: pointer; }
+.collab-result-box {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink);
+  max-height: 380px;
+  overflow-y: auto;
+}
+.collab-error-box {
+  background: var(--red-soft);
+  border: 1px solid var(--cb94242);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--cb94242);
+  font-size: 11.5px;
+}
+.collab-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.collab-empty .empty-icon {
+  opacity: 0.35;
+  margin-bottom: 4px;
+}
+.collab-empty p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink);
+  font-weight: 500;
+}
+.collab-empty span {
+  font-size: 11px;
+  line-height: 1.4;
+}
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 7px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--c555550);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.copy-btn:hover {
+  color: var(--ink);
+  border-color: var(--c969690);
+}
+
+.load-more-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px auto;
+  padding: 6px 14px;
+  background: var(--cffffff);
+  border: 1px solid var(--cd8d8d2);
+  border-radius: 16px;
+  color: var(--c6c6c66);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 6%);
+  transition: all 0.15s ease;
+}
+.load-more-btn:hover {
+  background: var(--cf4f4f1);
+  color: var(--ink);
+  border-color: var(--c969690);
+}
+
+/* ===== 用户设置抽屉：底部对齐与结构修复 ===== */
+.settings-drawer {
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+}
+.settings-drawer .drawer-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+.settings-drawer .drawer-footer {
+  margin-top: auto;
+  flex-shrink: 0;
+  background: var(--white);
+  border-top: 1px solid var(--line);
+}
+
+/* ===== 协同对话详情视图 (只读) ===== */
+.subagent-dialogue-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--white);
+  animation: live-fade-in 0.18s ease-out;
+}
+.subagent-dialogue-header {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.subagent-back-btn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--ink);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.subagent-back-btn:hover {
+  border-color: var(--muted);
+  background: var(--line);
+}
+.subagent-header-identity {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+.subagent-header-identity > .collab-bot-avatar { flex-shrink: 0; }
+.subagent-header-identity > .collab-name-box { min-width: 0; }
+.subagent-header-identity .collab-name-box strong { line-height: 1.55; overflow-wrap: anywhere; }
+.subagent-header-identity .collab-name-box code { line-height: 1.5; }
+.subagent-header-status {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 6px;
+}
+.subagent-header-status > span { flex: 0 0 auto; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.subagent-header-status .collab-latency { white-space: nowrap; }
+.subagent-dialogue-messages {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.subagent-msg-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 100%;
+}
+.subagent-msg-role {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.subagent-role-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+}
+.subagent-task-content {
+  padding: 10px 12px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.subagent-task-content p {
+  margin: 0;
+}
+.subagent-tools-trajectory {
+  padding: 10px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.subagent-tools-heading {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--amber);
+}
+.subagent-response-markdown {
+  padding: 12px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--ink);
+}
+.subagent-running-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  background: var(--paper);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.subagent-copy-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.subagent-copy-btn:hover {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+.subagent-readonly-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  padding: 10px 14px;
+  background: var(--paper);
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--muted);
+  user-select: none;
+}
+.subagent-readonly-bar .lock-icon {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.collab-chat-action-btn {
+  width: 100%;
+  margin-top: 10px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.collab-chat-action-btn:hover {
+  background: var(--line);
+  border-color: var(--muted);
+}
+.collab-chat-action-btn.live {
+  border-color: rgba(46, 160, 67, 0.4);
+  background: var(--green-soft);
+  color: var(--green);
+}
+.collab-chat-action-btn.live:hover {
+  background: var(--green-soft);
+  border-color: var(--green);
+}
