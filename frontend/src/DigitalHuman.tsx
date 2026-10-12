@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 import { api } from './api'
 import type { ChatResult } from './types'
 import { conversationStorageForOwner } from './conversationStorage'
+import { conversationCacheKeysOldestFirst, setWithEviction } from './conversationSync'
 import { assistantFailure, assistantWasCancelled, finishAssistantReply, newAssistantSession, readAssistantSession, speechText, type AssistantSession } from './assistantConversation'
 import { createAssistantSpeech } from './assistantSpeech'
 import { SettingsDialog } from './SettingsDialog'
@@ -12,6 +13,8 @@ import { DigitalHumanAvatar } from './DigitalHumanAvatar'
 import { isNearConversationEnd, readDigitalHumanPreferences } from './digitalHumanPreferences'
 import { applyTheme, loadSettings, saveSettings, type UserSettings } from './settings'
 import './DigitalHuman.css'
+
+const STORAGE_FULL = '浏览器存储空间已满，本次对话记录未能保存；当前对话仍可继续。'
 
 type SavedConsultation = { id: string; title: string }
 const topics = [
@@ -82,13 +85,16 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
   const save = (next: AssistantSession) => {
     sessionRef.current = next
     setSession(next)
+    // 登录账号的聊天会话在云端有副本：空间不足时先淘汰最旧的聊天缓存，再保存数字人记录。
+    const evictable = ownerId.startsWith('account_') ? conversationCacheKeysOldestFirst(storage) : []
+    const put = (key: string, value: string) => setWithEviction(storage, key, value, evictable)
     try {
-      storage.setItem(next.id, JSON.stringify(next))
-      storage.setItem('human-active', next.id)
       const index = [{ id: next.id, title: next.title }, ...readIndex().filter(r => r.id !== next.id)]
-      storage.setItem('human-index', JSON.stringify(index))
+      const saved = put(next.id, JSON.stringify(next)) && put('human-active', next.id) && put('human-index', JSON.stringify(index))
+      if (!saved) throw new Error('storage full')
       setHistory(index)
-    } catch { setNotice('浏览器暂时无法保存记录；当前对话仍可继续，请保留重要答复。') }
+      setNotice(current => current === STORAGE_FULL ? '' : current)
+    } catch { setNotice(STORAGE_FULL) }
   }
   const silence = () => {
     playerRef.current?.stop()
@@ -258,7 +264,7 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
           </div>
           <form className="dh-composer" onSubmit={event => { event.preventDefault(); send() }}>{notice && <p role="alert" className="dh-inline-notice">{notice}</p>}<textarea id="dh-input" aria-label="咨询问题" ref={inputRef} rows={3} value={input} onChange={event => setInput(event.target.value)} maxLength={50000} placeholder="请在这里输入您的问题…" onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) { event.preventDefault(); send() } }}/><div className="dh-composer-footer">{busy ? <button type="button" className="dh-send" disabled={stopping} onClick={() => void stop()}><Square size={19}/>{stopping ? '正在停止' : '停止回答'}</button> : <button className="dh-send" disabled={!input.trim()}><Send size={19}/>发送</button>}</div></form>
         </section>
-      </div><footer className="dh-footer"><span>AegisMesh</span><span>AI 虚拟助手 · 重要信息请核实</span></footer>
+      </div><footer className="dh-footer"><span>AegisMesh</span><span>内容由AI生成，可能不准确</span></footer>
     </main>
     {settingsOpen && <SettingsDialog settings={settings} onChange={updateSettings} onClose={() => setSettingsOpen(false)} onClear={clearHistory}/>}
   </>

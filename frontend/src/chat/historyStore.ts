@@ -85,9 +85,13 @@ export function saveConversationData(conv: Conversation): void {
     ...message, historyId: previous[index]?.role === message.role && previous[index]?.createdAt === message.createdAt
       ? previous[index].historyId || crypto.randomUUID() : crypto.randomUUID(),
   });
-  currentHistorySync()?.remember(conv);
-  try {
-    conversationStorage.setItem(`aegismesh-conv-${conv.id}`, JSON.stringify(conv));
-  } catch { /* Cloud persistence below is independent of localStorage capacity. */ }
-  currentHistorySync()?.enqueue(conv);
+  const sync = currentHistorySync();
+  sync?.remember(conv);
+  const value = JSON.stringify(conv);
+  // 账号会话写不下时淘汰最旧的已同步缓存；访客会话只存在本地，不做淘汰。
+  if (sync) sync.storeLocal(`aegismesh-conv-${conv.id}`, value, conv.id);
+  else {
+    try { conversationStorage.setItem(`aegismesh-conv-${conv.id}`, value); } catch { /* 访客本地容量已满 */ }
+  }
+  sync?.enqueue(conv);
 }

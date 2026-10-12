@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { ConversationSync, legacyConversations } from '../src/conversationSync.ts'
+import { ConversationSync, conversationCacheKeysOldestFirst, legacyConversations, setWithEviction } from '../src/conversationSync.ts'
 import { mergeHistory, copyLegacyHistory } from '../src/historyDocument.ts'
 
 function store(initial = {}) {
@@ -100,3 +100,45 @@ test('a late history response cannot erase a turn completed while it was loading
   const loaded = await loading
   assert.deepEqual(loaded.messages.map(message => message.text), ['initial', 'just completed'])
 })
+
+function quotaStore(limit, initial = {}) {
+  const map = new Map(Object.entries(initial))
+  const used = () => [...map].reduce((sum, [k, v]) => sum + k.length + v.length, 0)
+  return { map, getItem: key => map.get(key) ?? null, removeItem: key => map.delete(key),
+    setItem: (key, value) => {
+      const before = map.get(key); map.set(key, value)
+      if (used() > limit) { before === undefined ? map.delete(key) : map.set(key, before); throw new DOMException('full', 'QuotaExceededError') }
+    } }
+}
+
+test('a full browser cache evicts the oldest synced conversations first and keeps protected ones', () => {
+  const index = [{ id: 'new', updatedAt: 30 }, { id: 'old', updatedAt: 10 }, { id: 'mid', updatedAt: 20 }, { id: 'pending', updatedAt: 5 }]
+  const big = 'x'.repeat(400)
+  const s = quotaStore(2000, { 'aegismesh-conversations-index': JSON.stringify(index),
+    'aegismesh-conv-old': big, 'aegismesh-conv-mid': big, 'aegismesh-conv-new': big, 'aegismesh-conv-pending': big })
+  const keys = conversationCacheKeysOldestFirst(s, id => id === 'pending')
+  assert.deepEqual(keys, ['aegismesh-conv-old', 'aegismesh-conv-mid', 'aegismesh-conv-new'])
+  assert.equal(setWithEviction(s, 'aegismesh-conv-current', 'y'.repeat(500), keys), true)
+  assert.equal(s.map.has('aegismesh-conv-old'), false, 'oldest cache evicted first')
+  assert.equal(s.map.has('aegismesh-conv-pending'), true, 'unsynced conversation is never evicted')
+  assert.equal(s.map.has('aegismesh-conv-new'), true, 'only as much as needed is evicted')
+})
+
+test('eviction gives up cleanly when nothing evictable is left and rethrows unrelated errors', () => {
+  const s = quotaStore(100)
+  assert.equal(setWithEviction(s, 'k', 'z'.repeat(200), []), false)
+  const broken = { getItem: () => null, removeItem: () => {}, setItem: () => { throw new TypeError('boom') } }
+  assert.throws(() => setWithEviction(broken, 'k', 'v', ['a']), TypeError)
+})
+
+test('a successful cloud save no longer reports the browser cache as full', async () => {
+  const s = quotaStore(10)
+  const sync = new ConversationSync('account_test', s, mergeHistory)
+  const messages = []
+  sync.subscribe(error => { if (error) messages.push(error) })
+  // cache() runs only after the cloud write succeeded; a full local cache must stay silent.
+  sync['cache'](doc('v'.repeat(50), { id: 'x', session: 'ses-x' }))
+  assert.deepEqual(messages, [])
+  assert.equal(sync.cached('x').messages[0].text.length, 50, 'document remains available from memory')
+})
+

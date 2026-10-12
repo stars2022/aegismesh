@@ -123,7 +123,7 @@ export function SettingsDialog({ settings, onChange, onClose, onClear, initialSe
             {activeSection === 'account' && <AccountPanel standalone showQuota={false} embedded managementOnly/>}
             {activeSection === 'quota' && <QuotaPanel/>}
             {activeSection === 'data' && <>{historySync && <HistoryControls sync={historySync}/>}<section className="settings-dialog-section"><h3>浏览器缓存</h3><p className="settings-dialog-note">已同步的会话可从云端恢复。不会删除服务器任务、审计或旧浏览器原件。</p>{confirmClear ? <div className="settings-clear-confirm" role="alert"><p>未同步的草稿将被清除，确定继续？</p><div><button type="button" className="secondary-button" onClick={() => setConfirmClear(false)}>取消</button><button type="button" className="secondary-button danger" onClick={onClear}>确认清空</button></div></div> : <button type="button" className="secondary-button danger" onClick={() => setConfirmClear(true)}>清空浏览器缓存</button>}</section></>}
-            {activeSection === 'about' && <section className="settings-dialog-section settings-about"><Network size={30}/><h3>AegisMesh</h3><p className="settings-dialog-note">请勿提交密码、密钥或其他敏感资料。AI 生成内容可能有误，重要结论请核实。</p></section>}
+            {activeSection === 'about' && <section className="settings-dialog-section settings-about"><Network size={30}/><h3>AegisMesh</h3><p className="settings-dialog-note">AegisMesh由人工智能技术驱动，生成的内容可能有误，请勿提交密码、密钥或其他敏感资料。</p></section>}
           </div>
         </DropdownPortalContext.Provider>
       </div>

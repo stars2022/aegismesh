@@ -15,6 +15,31 @@ function writeBody(revision: number | undefined, document: Conversation) {
   }) } })
 }
 
+export function isQuotaError(error: unknown): boolean {
+  return error instanceof DOMException && (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED' || error.code === 22 || error.code === 1014)
+}
+
+/** 账号用户的会话在云端有完整副本，本地 `aegismesh-conv-*` 只是缓存。按最后更新时间从旧到新列出可淘汰的缓存键。 */
+export function conversationCacheKeysOldestFirst(store: Store, keep: (id: string) => boolean = () => false): string[] {
+  let index: ConversationMeta[] = []
+  try { const parsed = JSON.parse(store.getItem(INDEX) || '[]'); if (Array.isArray(parsed)) index = parsed } catch { /* 索引损坏时不淘汰任何内容 */ }
+  return index.filter(meta => meta?.id && !keep(meta.id))
+    .sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0))
+    .map(meta => DATA + meta.id)
+}
+
+/** 写入本地存储；空间不足时依次删除 `evictable` 中最旧的缓存后重试。全部删完仍写不下时返回 false。 */
+export function setWithEviction(store: Store, key: string, value: string, evictable: string[]): boolean {
+  for (let next = 0; ; next++) {
+    try { store.setItem(key, value); return true } catch (error) {
+      if (!isQuotaError(error)) throw error
+      while (next < evictable.length && evictable[next] === key) next++
+      if (next >= evictable.length) return false
+      store.removeItem(evictable[next])
+    }
+  }
+}
+
 export class HistoryError extends Error {
   status: number
   constructor(message: string, status: number) { super(message); this.status = status }
@@ -63,10 +88,21 @@ export class ConversationSync {
       if (id !== document.id && (!item.session || !this.pending.has(item.session))) this.documents.delete(id)
     }
   }
+  /** 是否还有尚未写入云端的修改：这类会话的本地缓存不能被淘汰。 */
+  hasPending(id: string) {
+    for (const document of this.pending.values()) if (document.id === id) return true
+    return false
+  }
+  /** 写本地缓存，空间不足时淘汰最旧的已同步会话缓存。 */
+  storeLocal(key: string, value: string, exceptId = ''): boolean {
+    try {
+      return setWithEviction(this.store, key, value, conversationCacheKeysOldestFirst(this.store, id => id === exceptId || this.hasPending(id)))
+    } catch { return false }
+  }
   private cache(document: Conversation) {
     this.remember(document)
-    try { this.store.setItem(DATA + document.id, JSON.stringify(document)) }
-    catch { this.notify('浏览器缓存已满，正在尝试云端保存') }
+    // 只在云端写入成功后调用：本地缓存写不下也不影响历史，不再提示"缓存已满"。
+    this.storeLocal(DATA + document.id, JSON.stringify(document), document.id)
   }
   enqueue(document: Conversation) {
     if (!document.session || this.deleted.has(document.session)) return
@@ -152,7 +188,7 @@ export class ConversationSync {
         else next.push(meta)
       }
       next.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-      try { this.store.setItem(INDEX, JSON.stringify(next)) } catch { this.notify('浏览器缓存已满，云端历史仍可读取') }
+      if (!this.storeLocal(INDEX, JSON.stringify(next))) this.notify('浏览器缓存已满，云端历史仍可读取')
       return next
     })()
     this.listing = job
