@@ -1101,7 +1101,7 @@ def delete_provider(provider_id: str, db: DbSession) -> Response:
     if referenced:
         raise HTTPException(status_code=409, detail="供应商仍被智能体使用")
     search = db.get(WebSearchConfig, 1)
-    if search and search.backend == "deepseek" and search.deepseek_provider_id == provider_id:
+    if search and search.backend in {"deepseek", "deepseek_native"} and search.deepseek_provider_id == provider_id:
         raise HTTPException(status_code=409, detail="供应商仍被联网搜索使用，请先更改搜索设置")
     db.delete(provider)
     db.commit()
@@ -1136,9 +1136,10 @@ async def test_provider(provider_id: str, db: DbSession) -> dict:
 
 def search_config_read(config: WebSearchConfig | None) -> WebSearchRead:
     if config is None:
-        return WebSearchRead()
-    return WebSearchRead(**WebSearchRead.model_validate(config).model_dump(exclude={"exa_key_configured"}),
-                         exa_key_configured=bool(config.exa_api_key_ciphertext))
+        return WebSearchRead(native_daily_limit=get_settings().deepseek_tools_daily_limit)
+    return WebSearchRead(**WebSearchRead.model_validate(config).model_dump(exclude={"exa_key_configured", "native_daily_limit"}),
+                         exa_key_configured=bool(config.exa_api_key_ciphertext),
+                         native_daily_limit=get_settings().deepseek_tools_daily_limit)
 
 
 def prepare_search_config(payload: WebSearchUpdate, db: Session) -> WebSearchConfig:
@@ -1155,7 +1156,7 @@ def prepare_search_config(payload: WebSearchUpdate, db: Session) -> WebSearchCon
             config.exa_api_key_ciphertext = encrypt_api_key(payload.exa_api_key.strip())
         elif payload.clear_exa_api_key:
             config.exa_api_key_ciphertext = ""
-        if config.backend == "deepseek":
+        if config.backend in {"deepseek", "deepseek_native"}:
             provider = db.get(ProviderConfig, config.deepseek_provider_id)
             if not supports_deepseek_search(provider):
                 raise HTTPException(status_code=422, detail="请选择启用且地址为 api.deepseek.com 的独立供应商")
@@ -1180,7 +1181,7 @@ def update_search_settings(payload: WebSearchUpdate, db: DbSession) -> WebSearch
 @app.post("/api/admin/web-search/test", dependencies=[Depends(require_admin)], tags=["search"])
 async def test_search_settings(payload: WebSearchUpdate, db: DbSession) -> dict:
     # Test the draft without saving or changing the active configuration.
-    if payload.backend not in ("exa", "deepseek"):
+    if payload.backend not in ("exa", "deepseek", "deepseek_native"):
         raise HTTPException(status_code=422, detail="请先选择 Exa 或 DeepSeek 进行真实检索测试")
     config = prepare_search_config(payload, db)
     handler = configured_search(db, None, {}, config=config)

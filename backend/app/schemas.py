@@ -333,7 +333,7 @@ class DemoLogin(BaseModel):
 class WebSearchSettings(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    backend: Literal["legacy", "disabled", "exa", "deepseek"] = "legacy"
+    backend: Literal["legacy", "disabled", "exa", "deepseek", "deepseek_native"] = "legacy"
     deepseek_provider_id: str = Field(default="", max_length=64)
     timeout_seconds: float = Field(default=30, ge=5, le=120)
     max_results: int = Field(default=5, ge=1, le=10)
@@ -342,6 +342,7 @@ class WebSearchSettings(BaseModel):
 
 class WebSearchRead(WebSearchSettings):
     exa_key_configured: bool = False
+    native_daily_limit: int = 1000
 
 
 class WebSearchUpdate(WebSearchSettings):

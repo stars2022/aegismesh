@@ -85,6 +85,7 @@ async def test_deepseek_web_search_returns_structured_sources(
     result = await DeepSeekWebSearch(provider())({"query": "测试"})
 
     assert captured["tools"][0]["type"] == "web_search_20250305"
+    assert captured["tools"][0]["max_uses"] == 1
     assert result["sources"] == [
         {
             "url": "https://example.com/report",
@@ -130,3 +131,30 @@ async def test_deepseek_web_search_rejects_prose_only_response(
 
     with pytest.raises(RuntimeError, match="结构化结果"):
         await DeepSeekWebSearch(provider())({"query": "测试"})
+
+
+@pytest.mark.asyncio
+async def test_legacy_tool_errors_are_not_normal_empty_search_results(monkeypatch):
+    original = httpx.AsyncClient
+    monkeypatch.setattr(web_search_module.httpx, "AsyncClient", lambda **_: original(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"content": [{
+            "type": "web_search_tool_result", "content": {
+                "type": "web_search_tool_result_error", "error_code": "rate_limit_error"}}]}))))
+    monkeypatch.setattr(web_search_module, "resolve_api_key", lambda _: "fixture-key")
+    with pytest.raises(RuntimeError, match="工具错误"):
+        await DeepSeekWebSearch(provider())({"query": "test"})
+
+
+@pytest.mark.asyncio
+async def test_legacy_partial_search_does_not_discard_real_sources_after_a_tool_error(monkeypatch):
+    original = httpx.AsyncClient
+    payload = {"content": [{"type": "web_search_tool_result", "content": [{
+        "type": "web_search_result", "url": "https://example.org/paper", "title": "paper"}]},
+        {"type": "web_search_tool_result", "content": {
+            "type": "web_search_tool_result_error", "error_code": "max_uses_exceeded"}}]}
+    monkeypatch.setattr(web_search_module.httpx, "AsyncClient", lambda **_: original(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))))
+    monkeypatch.setattr(web_search_module, "resolve_api_key", lambda _: "fixture-key")
+    result = await DeepSeekWebSearch(provider())({"query": "test"})
+    assert result["partial"] and "工具错误" in result["warning"]
+    assert result["sources"][0]["url"] == "https://example.org/paper"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timezone
 import json
 import re
 from collections.abc import Awaitable, Callable
@@ -7,13 +9,15 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import get_settings
 from ..models import ProviderConfig, WebSearchConfig
 from .provider_secrets import decrypt_api_key, resolve_api_key
 from .model_budget import metered_post
-from .source_pages import remember_sources
+from .deepseek_tools import DeepSeekTools
+from .prompt import fence_untrusted
+from .source_pages import MAX_CHARS, SourcePageReader, _resolve_public, remember_sources
 
 
 WEB_SEARCH_SCHEMA: dict[str, Any] = {
@@ -24,7 +28,7 @@ WEB_SEARCH_SCHEMA: dict[str, Any] = {
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "要检索的完整查询"}
+                "query": {"type": "string", "description": "简短、具体的查询；DeepSeek 原生搜索最多 128 个字符"}
             },
             "required": ["query"],
             "additionalProperties": False,
@@ -99,7 +103,7 @@ class DeepSeekWebSearch:
                 {
                     "type": "web_search_20250305",
                     "name": "web_search",
-                    "max_uses": 5,
+                    "max_uses": 1,
                 }
             ],
         }
@@ -142,11 +146,18 @@ class DeepSeekWebSearch:
         sources: list[dict[str, str]] = []
         seen: set[str] = set()
         found_result_block = False
+        tool_error = False
         for block in blocks:
             if not isinstance(block, dict) or block.get("type") != "web_search_tool_result":
                 continue
             found_result_block = True
-            for item in block.get("content") or []:
+            content = block.get("content")
+            if isinstance(content, dict):
+                tool_error = True
+                continue
+            if not isinstance(content, list):
+                raise RuntimeError("联网检索结果格式无效")
+            for item in content:
                 if not isinstance(item, dict) or item.get("type") != "web_search_result":
                     continue
                 url = item.get("url")
@@ -169,6 +180,8 @@ class DeepSeekWebSearch:
 
         if not found_result_block:
             raise RuntimeError("联网检索未返回结构化结果")
+        if tool_error and not sources:
+            raise RuntimeError("DeepSeek 兼容搜索返回工具错误，不能当作无搜索结果；请检查额度或使用原生 Search 接口")
         limit = self.max_results or settings.web_search_max_results
         usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
         result = {
@@ -182,6 +195,8 @@ class DeepSeekWebSearch:
             },
         }
         result = annotate_evidence(result)
+        if tool_error:
+            result.update(partial=True, warning="部分兼容检索发生工具错误，仅返回已实际取得的来源。")
         remember_sources(self.cache, self.budget_scope, result["sources"])
         self.cache[cache_key] = result
         return result
@@ -192,9 +207,83 @@ def search_http_error(status: int) -> RuntimeError:
         401: "搜索密钥无效，请在后台更新",
         402: "搜索账户额度不足，请检查余额",
         403: "搜索服务拒绝访问，请检查账户权限",
-        429: "搜索服务限流，请稍后重试或配置独立密钥",
+        429: "搜索服务限流，请稍后重试；DeepSeek 按账号限速，更换同账号密钥不会提高额度",
     }.get(status, f"联网搜索服务返回 HTTP {status}")
     return RuntimeError(message)
+
+
+class DeepSeekNativeWebSearch:
+    """Native JSON tools are explicit opt-in; legacy configurations are untouched."""
+    def __init__(self, provider: ProviderConfig, factory, *, timeout_seconds: float = 30,
+                 max_results: int = 5):
+        self.client = DeepSeekTools(provider, factory, timeout_seconds=timeout_seconds)
+        self.max_results = max_results
+
+    async def __call__(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        query = _query(arguments)
+        if len(query) > 128:
+            raise ValueError("DeepSeek 原生搜索 query 最多 128 个字符，请缩短查询；不会拆分为多次付费请求")
+        payload, usage = await self.client.post("search", {
+            "query": query, "count": min(50, max(1, self.max_results)), "need_content": False,
+        })
+        sources, seen = [], set()
+        for item in payload["results"]:
+            if not isinstance(item, dict):
+                continue
+            url = item.get("url")
+            if not _public_url(url) or url in seen:
+                continue
+            seen.add(url)
+            source = {"url": url}
+            for key, field in (("title", "title"), ("published_at", "date"), ("site_name", "site_name")):
+                if isinstance(item.get(field), str) and item[field].strip():
+                    source[key] = item[field][:3000]
+            # A provider summary is a search excerpt, never proof that we read
+            # the original page. Fetch is separately bounded and metered.
+            snippet = item.get("summary") or item.get("snippet")
+            if isinstance(snippet, str) and snippet.strip():
+                source["snippet"] = snippet[:3000]
+            sources.append(source)
+        return {"query": query, "sources": sources[:self.max_results],
+                "truncated": len(sources) > self.max_results, "_usage": usage}
+
+    async def read_page(self, url: str) -> dict:
+        # The reader checks branch provenance first. Validate public DNS/IP as
+        # well, before sending a URL to the provider; no paid fallback on errors.
+        async with asyncio.timeout(min(10, self.client.timeout_seconds)):
+            await asyncio.to_thread(_resolve_public, url)
+        payload, usage = await self.client.post("fetch", {"url": url})
+        text = payload["content"].strip()
+        if not text:
+            raise RuntimeError("DeepSeek 抓取没有返回正文，未取得原文证据")
+        title = payload.get("title")
+        return {"url": url, "title": title[:300] if isinstance(title, str) else "",
+                "content": fence_untrusted("网页原文摘录，仍须核验", text[:MAX_CHARS]),
+                "source_metadata": {}, "metadata_truncated": False,
+                "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                "truncated": len(text) > MAX_CHARS, "evidence_status": "page_excerpt",
+                "notice": "由 DeepSeek Fetch 返回的有限网页摘录，不等于阅读全文或真实性已核实；查询时间不是发布时间。",
+                "_usage": usage}
+
+
+def zero_cached_usage(result: dict) -> dict:
+    return {"llm_calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
+            **{key: 0 for key in result.get("_usage", {})}}
+
+
+def configured_page_reader(db: Session, cache: dict, scope: str, *, max_pages: int | None = None):
+    config = db.get(WebSearchConfig, 1)
+    fetcher = None
+    if config and config.backend == "deepseek_native":
+        provider = db.get(ProviderConfig, config.deepseek_provider_id)
+        if not supports_deepseek_search(provider):
+            async def unavailable(_):
+                raise RuntimeError("原生抓取供应商不可用，未切换到其他抓取服务")
+            fetcher = unavailable
+        else:
+            fetcher = DeepSeekNativeWebSearch(provider, sessionmaker(bind=db.get_bind()),
+                         timeout_seconds=config.timeout_seconds, max_results=config.max_results).read_page
+    return SourcePageReader(cache, scope, max_pages=max_pages, fetcher=fetcher)
 
 
 def _query(arguments: dict[str, Any]) -> str:
@@ -351,18 +440,19 @@ def configured_search(
         return None
     elif config.backend == "exa":
         handler = ExaWebSearch(config)
-    elif config.backend == "deepseek":
+    elif config.backend in {"deepseek", "deepseek_native"}:
         provider = db.get(ProviderConfig, config.deepseek_provider_id)
         if not supports_deepseek_search(provider):
             async def unavailable(_: dict[str, Any]) -> dict[str, Any]:
                 raise RuntimeError("独立 DeepSeek 搜索供应商不可用，请检查后台配置")
             return unavailable
-        handler = DeepSeekWebSearch(
-            provider,
-            timeout_seconds=config.timeout_seconds,
-            max_results=config.max_results,
-            model=provider.default_model,
-        )
+        if config.backend == "deepseek_native":
+            handler = DeepSeekNativeWebSearch(provider, sessionmaker(bind=db.get_bind()),
+                timeout_seconds=config.timeout_seconds, max_results=config.max_results)
+        else:
+            handler = DeepSeekWebSearch(
+                provider, timeout_seconds=config.timeout_seconds,
+                max_results=config.max_results, model=provider.default_model)
     else:
         raise RuntimeError("搜索服务配置无效")
     # A wire/task limit can tighten the saved administrator limit, never raise it.
@@ -384,7 +474,7 @@ def configured_search(
             remember_sources(cache, budget_scope, cache[key].get("sources") or [])
             return {**cache[key], "cached": True,
                     "search_budget": budget_status(),
-                    "_usage": {"llm_calls": 0, "prompt_tokens": 0, "completion_tokens": 0}}
+                    "_usage": zero_cached_usage(cache[key])}
         if budget["used"] >= limit:
             return {"status": "budget_exhausted", "query": query, "sources": [],
                     "message": "当前智能体已用完检索次数，未发起新搜索。请根据已有来源作答，将缺少证据的内容标注为未核实。",

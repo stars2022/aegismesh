@@ -5,18 +5,20 @@ import { WebSearchSettings, type SearchSettings } from '../src/WebSearchSettings
 import type { Provider } from '../src/types'
 import '../src/styles.css'
 
-let settings: SearchSettings = { backend: 'legacy', deepseek_provider_id: '', timeout_seconds: 30, max_results: 5, max_queries: 8, exa_key_configured: false }
+const native = new URLSearchParams(location.search).get('backend') === 'deepseek_native'
+let settings: SearchSettings = { backend: native ? 'deepseek_native' : 'legacy', deepseek_provider_id: native ? 'search' : '', timeout_seconds: 30, max_results: 5, max_queries: 8, exa_key_configured: false, native_daily_limit: 1000 }
 const client = {
   searchSettings: async () => settings,
   updateSearchSettings: async (payload: Parameters<typeof import('../src/api').api.updateSearchSettings>[0]) => {
     settings = { backend: payload.backend, deepseek_provider_id: payload.deepseek_provider_id,
       timeout_seconds: payload.timeout_seconds, max_results: payload.max_results, max_queries: payload.max_queries,
-      exa_key_configured: payload.clear_exa_api_key ? false : Boolean(payload.exa_api_key || settings.exa_key_configured) }
+      exa_key_configured: payload.clear_exa_api_key ? false : Boolean(payload.exa_api_key || settings.exa_key_configured), native_daily_limit: 1000 }
     return settings
   },
-  testSearchSettings: async () => ({ ok: true, latency_ms: 1000, backend: 'exa',
+  testSearchSettings: async (payload: Parameters<typeof import('../src/api').api.testSearchSettings>[0]) => ({ ok: true, latency_ms: 1000, backend: payload.backend,
     sources: [{ title: '示例搜索来源（仅测试数据）', url: 'https://example.org' }],
-    usage: { llm_calls: 0, prompt_tokens: 0, completion_tokens: 0 } }),
+    usage: { llm_calls: 0, prompt_tokens: 0, completion_tokens: 0,
+      ...(payload.backend === 'deepseek_native' ? { search_requests: 1, estimated_cost_cny_micros: 5000 } : {}) } }),
 }
 const providers: Provider[] = [
   { id: 'model', name: 'OpenCode 推理', base_url: 'https://opencode.ai/zen/go/v1', kind: 'openai-chat', default_model: 'mimo-v2.5', active: true, key_configured: true, api_key_env: '', updated_at: '' },

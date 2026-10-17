@@ -49,8 +49,8 @@ from .transport import PartnerResult, StreamCallback, TransportRegistry, clean_m
 from .structured_io import (
     StructuredOutputError, input_message, parse_output, resolve_contract, wire_request,
 )
-from .web_search import WEB_SEARCH_SCHEMA, configured_search
-from .source_pages import READ_WEB_PAGE_SCHEMA, SourcePageReader
+from .web_search import WEB_SEARCH_SCHEMA, configured_page_reader, configured_search
+from .source_pages import READ_WEB_PAGE_SCHEMA
 from .amp_service import amp_service
 from .context_projection import ContextFragment, ContextProjectionEngine, DISPATCH_CONTEXT_SCHEMA, CONTEXT_SELECTION_PROPERTIES
 from .prompt import CANVAS_TOOL_NAMES, fence_untrusted
@@ -2117,7 +2117,7 @@ class ReliableOrchestrator:
                 registry.register("web_search", WEB_SEARCH_SCHEMA, search)
             if page_limit != 0 and search_limit != 0:
                 registry.register("read_web_page", READ_WEB_PAGE_SCHEMA,
-                                  SourcePageReader(self._web_search_cache, search_scope, max_pages=page_limit))
+                                  configured_page_reader(self.db, self._web_search_cache, search_scope, max_pages=page_limit))
         return registry
 
     async def _list_agents(

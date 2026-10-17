@@ -57,7 +57,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-5"
     deepseek_search_base_url: str = "https://api.deepseek.com/anthropic/v1"
-    deepseek_search_model: str = "deepseek-v4-flash"
+    deepseek_search_model: str = "deepseek-flash"
+    # Only applies after explicitly selecting the native, per-request paid tools.
+    # Search + Fetch attempts share this UTC-day cap, including unknown outcomes.
+    deepseek_tools_daily_limit: int = Field(default=1000, ge=1, le=1000000)
     web_search_max_results: int = 8
     web_search_timeout_seconds: float = 60.0
     idle_watchdog_timeout_seconds: float = 60.0

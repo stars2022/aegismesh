@@ -7,6 +7,7 @@ No model/provider credentials, environment proxy or browser cookies are used.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 import ipaddress
@@ -185,11 +186,13 @@ async def _fetch_excerpt(url: str) -> dict:
 
 
 class SourcePageReader:
-    def __init__(self, cache: dict, scope: str, *, max_pages: int | None = None):
+    def __init__(self, cache: dict, scope: str, *, max_pages: int | None = None,
+                 fetcher: Callable[[str], Awaitable[dict]] | None = None):
         if max_pages is not None and (type(max_pages) is not int or not 0 <= max_pages <= MAX_PAGES):
             raise ValueError("任务原文读取上限无效")
         self.cache, self.scope = cache, scope
         self.max_pages = MAX_PAGES if max_pages is None else max_pages
+        self.fetcher = fetcher
 
     async def __call__(self, arguments: dict) -> dict:
         if not isinstance(arguments, dict):
@@ -203,8 +206,13 @@ class SourcePageReader:
                     "remaining": max(0, self.max_pages - budget["used"])}
         key = f"pages:cache:{url}"
         seen = budget.setdefault("seen", [])
+        def cached_result():
+            result = {**self.cache[key], "cached": True, "page_budget": remaining()}
+            if "_usage" in result:
+                result["_usage"] = {name: 0 for name in result["_usage"]}
+            return result
         if key in self.cache and url in seen:
-            return {**self.cache[key], "cached": True, "page_budget": remaining()}
+            return cached_result()
         if budget["used"] >= self.max_pages:
             return {"status": "budget_exhausted", "url": url, "evidence_status": "unread",
                     "notice": "本分支已达到原文读取上限，未发起新请求。", "page_budget": remaining()}
@@ -214,9 +222,9 @@ class SourcePageReader:
         if url not in seen:
             seen.append(url)
         if key in self.cache:
-            return {**self.cache[key], "cached": True, "page_budget": remaining()}
+            return cached_result()
         try:
-            result = await _fetch_excerpt(url)
+            result = await (self.fetcher or _fetch_excerpt)(url)
         except (httpx.HTTPError, TimeoutError, OSError) as exc:
             raise RuntimeError("来源读取失败或超时，未取得正文；不绕过访问限制") from exc
         self.cache[key] = result

@@ -36,6 +36,11 @@ class Scope:
 _scope: ContextVar[Scope | None] = ContextVar("model_budget_scope", default=None)
 
 
+def current_usage_scope() -> Scope | None:
+    """Trusted request attribution for non-token tool ledgers, never tool input."""
+    return _scope.get()
+
+
 @contextmanager
 def usage_scope(owner: str, session: str, invocation: str, factory):
     token = _scope.set(Scope(owner, session, invocation, factory))

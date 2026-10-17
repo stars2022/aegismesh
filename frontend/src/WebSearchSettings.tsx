@@ -6,14 +6,15 @@ import type { Provider } from './types'
 import './WebSearchSettings.css'
 
 export type SearchSettings = {
-  backend: 'legacy' | 'disabled' | 'exa' | 'deepseek'
+  backend: 'legacy' | 'disabled' | 'exa' | 'deepseek' | 'deepseek_native'
   deepseek_provider_id: string
   timeout_seconds: number
   max_results: number
   max_queries: number
   exa_key_configured: boolean
+  native_daily_limit?: number
 }
-export type SearchSettingsUpdate = Omit<SearchSettings, 'exa_key_configured'> & {
+export type SearchSettingsUpdate = Omit<SearchSettings, 'exa_key_configured' | 'native_daily_limit'> & {
   exa_api_key?: string
   clear_exa_api_key?: boolean
 }
@@ -22,13 +23,15 @@ export type SearchTestResult = {
   latency_ms: number
   backend: string
   sources: { url: string; title?: string }[]
-  usage: { llm_calls: number; prompt_tokens: number; completion_tokens: number }
+  usage: { llm_calls: number; prompt_tokens: number; completion_tokens: number;
+    search_requests?: number; fetch_requests?: number; estimated_cost_cny_micros?: number }
 }
 
 const options = [
   { value: 'legacy', label: '沿用旧配置' },
   { value: 'exa', label: 'Exa' },
-  { value: 'deepseek', label: 'DeepSeek（独立供应商）' },
+  { value: 'deepseek', label: 'DeepSeek（兼容接口）' },
+  { value: 'deepseek_native', label: 'DeepSeek Search / Fetch' },
   { value: 'disabled', label: '关闭搜索' },
 ]
 
@@ -115,23 +118,23 @@ export function WebSearchSettings({ providers, client = api }: {
               <p>免密模式适合试用，有速率限制；持续运行建议使用独立密钥。密钥加密保存，不会复用模型供应商的密钥。</p>
               {draft.exa_key_configured && <Switch label="清除 Exa 密钥，恢复免密模式" checked={clearKey} disabled={Boolean(busy)} onChange={value => { setClearKey(value); setApiKey(''); setResult(null) }} />}
             </>}
-            {draft.backend === 'deepseek' && <>
+            {['deepseek', 'deepseek_native'].includes(draft.backend) && <>
               <label>DeepSeek 搜索供应商<Dropdown value={draft.deepseek_provider_id} options={available.map(provider => ({ value: provider.id, label: provider.name }))} placeholder="选择独立 DeepSeek 供应商" title="DeepSeek 搜索供应商" onChange={deepseek_provider_id => update({ deepseek_provider_id })} /></label>
-              <p>在本页添加一条地址为 https://api.deepseek.com、配置独立密钥并启用的供应商，再在此选择。搜索走 Anthropic 兼容接口，会产生 DeepSeek 模型用量；无需改动现有智能体绑定。</p>
+              {draft.backend === 'deepseek' ? <p>使用 DeepSeek 官方供应商的 Anthropic 兼容搜索，产生模型用量；不改动推理模型和智能体绑定。</p> : <p>使用独立 Search / Fetch 接口，不调用搜索模型。成功且有结果按 ¥5 / 千次估算；不能把兼容工具的优惠期当作原生接口免费。全站每日最多 {draft.native_daily_limit ?? 1000} 次请求，失败或结果未知也占保护次数。</p>}
               {!available.some(provider => provider.id === draft.deepseek_provider_id) && <p role="status">尚未选择可用的 DeepSeek 搜索供应商。</p>}
             </>}
-            {(draft.backend === 'exa' || draft.backend === 'deepseek') && <div className="web-search-limits">
+            {['exa', 'deepseek', 'deepseek_native'].includes(draft.backend) && <div className="web-search-limits">
               <label>超时（秒）<input type="number" min={5} max={120} value={draft.timeout_seconds} onChange={event => update({ timeout_seconds: Number(event.target.value) })} /></label>
               <label>每次最多来源<input type="number" min={1} max={10} value={draft.max_results} onChange={event => update({ max_results: Number(event.target.value) })} /></label>
               <label>每个智能体的联网搜索上限<input type="number" min={1} max={20} value={draft.max_queries} onChange={event => update({ max_queries: Number(event.target.value) })} /></label>
             </div>}
           </fieldset>
           <div className="web-search-actions">
-            <button className="secondary-button" disabled={Boolean(busy) || !['exa', 'deepseek'].includes(draft.backend)} onClick={() => void submit(true)}>{busy === 'test' ? '正在检索…' : '测试搜索'}</button>
+            <button className="secondary-button" disabled={Boolean(busy) || !['exa', 'deepseek', 'deepseek_native'].includes(draft.backend)} onClick={() => void submit(true)}>{busy === 'test' ? '正在检索…' : '测试搜索'}</button>
             <button className="primary-button" disabled={Boolean(busy)} onClick={() => void submit(false)}>{busy === 'save' ? '保存中…' : '保存搜索设置'}</button>
           </div>
           {notice && <p role="status">{notice}</p>}
-          {result && <div className="web-search-test-result"><p>{result.sources.length} 个来源 · {result.latency_ms} ms{result.usage.llm_calls > 0 ? ` · ${result.usage.prompt_tokens + result.usage.completion_tokens} tokens` : ''}</p><ul>{result.sources.map(source => <li key={source.url}><a href={source.url} target="_blank" rel="noopener noreferrer">{source.title || source.url}</a></li>)}</ul></div>}
+          {result && <div className="web-search-test-result"><p>{result.sources.length} 个来源 · {result.latency_ms} ms{result.usage.llm_calls > 0 ? ` · ${result.usage.prompt_tokens + result.usage.completion_tokens} tokens` : ''}{result.usage.search_requests ? ` · ${result.usage.search_requests} 次搜索 · 参考费用 ¥${((result.usage.estimated_cost_cny_micros ?? 0) / 1000000).toFixed(3)}` : ''}</p><ul>{result.sources.map(source => <li key={source.url}><a href={source.url} target="_blank" rel="noopener noreferrer">{source.title || source.url}</a></li>)}</ul></div>}
         </>}
       </div>
     </details>
