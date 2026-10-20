@@ -23,6 +23,8 @@ import { FlowMark, LoadingFlow } from "../LoadingFlow";
 import { EmptyState, StatusDot, Switch } from "../components";
 import type { Agent, Provider } from "../types";
 import { AgentBuilder } from "./AgentBuilder";
+import { AgentDesigner, type AgentDraft } from "./AgentDesigner";
+import { NewAgentMenu, type CreationMode, type CreationRequest } from "./NewAgentMenu";
 import { formatMs } from "../format";
 
 function declaredGroup(source: {
@@ -77,16 +79,36 @@ export function Studio({
   agents,
   providers,
   onChanged,
+  creationRequest,
+  onCreationHandled,
 }: {
   agents: Agent[];
   providers: Provider[];
   onChanged: () => Promise<void>;
+  creationRequest?: CreationRequest | null;
+  onCreationHandled?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [role, setRole] = useState<"all" | "leader" | "partner" | "adp">("all");
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [designerOpen, setDesignerOpen] = useState(false);
+  const [initialDraft, setInitialDraft] = useState<AgentDraft | undefined>();
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
   const [selected, setSelected] = useState<Agent | null>(null);
+  const handledRequest = useRef<CreationRequest | null>(null);
+  const openCreation = (mode: CreationMode) => {
+    setSelected(null);
+    setInitialDraft(undefined);
+    setDesignerOpen(mode === "ai");
+    setBuilderOpen(mode === "manual");
+  };
+  useEffect(() => {
+    if (creationRequest && creationRequest !== handledRequest.current) {
+      handledRequest.current = creationRequest;
+      openCreation(creationRequest.mode);
+      onCreationHandled?.();
+    }
+  }, [creationRequest]);
   const [showAdpFeed, setShowAdpFeed] = useState(false);
   const [adpAgents, setAdpAgents] = useState<any[]>([]);
   const [adpLoading, setAdpLoading] = useState(false);
@@ -329,17 +351,7 @@ export function Studio({
               <ShieldCheck size={14} />
               注册提审
             </button>
-            <button
-              type="button"
-              className="primary-button"
-              onClick={() => {
-                setSelected(null);
-                setBuilderOpen(true);
-              }}
-            >
-              <CirclePlus size={16} />
-              创建智能体
-            </button>
+            <NewAgentMenu onCreate={openCreation}/>
           </div>
         </div>
         <div className="studio-toolbar-secondary">
@@ -612,7 +624,7 @@ export function Studio({
       {!showAdpFeed && role !== "adp" && localFiltered.length === 0 && (
         <EmptyState>
           {agents.length === 0
-            ? "还没有智能体，点击右上角“创建智能体”开始"
+            ? "还没有智能体，点击右上角“新建智能体”开始"
             : "没有匹配的智能体，换个关键词或筛选条件试试"}
         </EmptyState>
       )}
@@ -631,9 +643,16 @@ export function Studio({
         </div>
       )}
 
+      {designerOpen && <AgentDesigner providers={providers} onClose={() => setDesignerOpen(false)} onDraft={draft => {
+        setInitialDraft(draft);
+        setSelected(null);
+        setDesignerOpen(false);
+        setBuilderOpen(true);
+      }}/>}
       {builderOpen && (
         <AgentBuilder
           agent={selected}
+          initialDraft={selected ? undefined : initialDraft}
           providers={providers}
           onClose={() => setBuilderOpen(false)}
           onSaved={async () => {

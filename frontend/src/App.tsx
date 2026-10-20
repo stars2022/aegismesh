@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   Bot,
-  CirclePlus,
   Gauge,
   FileText,
   LayoutDashboard,
@@ -21,7 +20,7 @@ import {
 import { api } from "./api";
 import { FlowMark } from "./LoadingFlow";
 import { StatusDot } from "./components";
-import { SidebarToggle } from "./SidebarToggle";
+import { SidebarToggle, useCompactSidebar } from "./SidebarToggle";
 import { AccountAdministration, QuotaAdministration } from "./AccountAdministration";
 import type { Agent, DashboardData, Policy, ProbeResult, Provider, Trace } from "./types";
 import { LogCenter } from "./LogCenter";
@@ -32,6 +31,7 @@ import { Probes } from "./admin/Probes";
 import { Providers } from "./admin/Providers";
 import { Routing } from "./admin/Routing";
 import { Studio } from "./admin/Studio";
+import { NewAgentMenu, type CreationMode, type CreationRequest } from "./admin/NewAgentMenu";
 import { Traces } from "./admin/Traces";
 import type { View } from "./admin/labels";
 
@@ -67,6 +67,12 @@ function App({ onLogout }: { onLogout?: () => void }) {
     const tab = new URLSearchParams(window.location.search).get("tab");
     return navigation.find(item => item.id === tab)?.id || "overview";
   });
+  const [creationRequest, setCreationRequest] = useState<CreationRequest | null>(null);
+  const createAgent = (mode: CreationMode) => {
+    setCreationRequest(previous => ({ mode, sequence: (previous?.sequence || 0) + 1 }));
+    setView("studio");
+    setMobileNav(false);
+  };
   const [logsRefresh, setLogsRefresh] = useState(0);
   const [accountsRefresh, setAccountsRefresh] = useState(0);
   useEffect(() => {
@@ -76,6 +82,10 @@ function App({ onLogout }: { onLogout?: () => void }) {
   }, [view]);
   const [mobileNav, setMobileNav] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const compactViewport = useCompactSidebar();
+  // The narrow-screen drawer is never a desktop icon rail, including after resize.
+  const collapsedRail = sidebarCollapsed && !compactViewport;
+  useEffect(() => { if (!compactViewport) setMobileNav(false); }, [compactViewport]);
   const adminNav = useRef<HTMLElement>(null);
   useEffect(() => {
     adminNav.current?.querySelector("button.active")?.scrollIntoView({ block: "nearest" });
@@ -126,8 +136,9 @@ function App({ onLogout }: { onLogout?: () => void }) {
   }, []);
 
   return (
-    <div className={`app-shell design-next ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
-      <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
+    <div className={`app-shell design-next ${collapsedRail ? "sidebar-collapsed" : ""}`}>
+      <aside id="admin-sidebar" className={`sidebar ${mobileNav ? "open" : ""}`} aria-label="管理导航"
+        inert={compactViewport && !mobileNav}>
         <div className="brand">
           <div className="brand-mark">
             <Network size={18} />
@@ -138,20 +149,13 @@ function App({ onLogout }: { onLogout?: () => void }) {
           <SidebarToggle
             className="sidebar-collapse"
             side="left"
-            expanded={!sidebarCollapsed}
-            label={sidebarCollapsed ? "展开侧栏" : "折叠侧栏"}
-            onClick={() => setSidebarCollapsed((value) => !value)}
+            expanded={compactViewport ? mobileNav : !sidebarCollapsed}
+            label={compactViewport ? "关闭侧栏" : sidebarCollapsed ? "展开侧栏" : "折叠侧栏"}
+            aria-controls="admin-sidebar"
+            onClick={() => compactViewport ? setMobileNav(false) : setSidebarCollapsed((value) => !value)}
           />
         </div>
-        <button
-          className="new-agent-button"
-          onClick={() => {
-            setView("studio");
-            setMobileNav(false);
-          }}
-        >
-          <CirclePlus size={17} /> 新建智能体 <span>⌘ N</span>
-        </button>
+        <NewAgentMenu variant="sidebar" compact={collapsedRail} onCreate={createAgent}/>
         <nav ref={adminNav}>
           <div className="nav-label">工作区</div>
           {navigation.map((item) => {
@@ -200,13 +204,14 @@ function App({ onLogout }: { onLogout?: () => void }) {
           )}
         </div>
       </aside>
-      {mobileNav && (
-        <button className="nav-backdrop" onClick={() => setMobileNav(false)} />
+      {compactViewport && mobileNav && (
+        <button className="nav-backdrop" aria-label="关闭侧栏" onClick={() => setMobileNav(false)} />
       )}
 
       <main className="main-panel">
         <header className="topbar">
-          <button className="mobile-menu" onClick={() => { setSidebarCollapsed(false); setMobileNav(true); }}>
+          <button className="mobile-menu" aria-label="打开侧栏" aria-expanded={mobileNav} aria-controls="admin-sidebar"
+            onClick={() => setMobileNav(true)}>
             <Menu size={20} />
           </button>
           <div>
@@ -244,7 +249,8 @@ function App({ onLogout }: { onLogout?: () => void }) {
             />
           )}
           {view === "studio" && (
-            <Studio agents={agents} providers={providers} onChanged={load} />
+            <Studio agents={agents} providers={providers} onChanged={load} creationRequest={creationRequest}
+              onCreationHandled={() => setCreationRequest(null)}/>
           )}
           {view === "providers" && (
             <Providers providers={providers} agents={agents} onChanged={load} />

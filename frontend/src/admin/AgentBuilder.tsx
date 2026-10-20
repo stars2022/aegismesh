@@ -19,6 +19,7 @@ import { Dropdown, Switch } from "../components";
 import { SchemaEditors, StructuredCapability } from "../StructuredIO";
 import { parseSchemaText, schemaText } from "../structuredIOModel";
 import type { Agent, Provider, Skill } from "../types";
+import type { AgentDraft } from "./AgentDesigner";
 
 function SkillSubModal({
   skill,
@@ -246,27 +247,30 @@ const SYSTEM_AVAILABLE_TOOLS = [
 
 export function AgentBuilder({
   agent,
+  initialDraft,
   providers,
   onClose,
   onSaved,
 }: {
   agent: Agent | null;
+  initialDraft?: AgentDraft;
   providers: Provider[];
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
+  const initial = agent ?? initialDraft;
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
-  const [structuredEnabled, setStructuredEnabled] = useState(agent?.structured_io_enabled ?? false);
+  const [structuredEnabled, setStructuredEnabled] = useState(initial?.structured_io_enabled ?? false);
   const [structuredDetailsOpen, setStructuredDetailsOpen] = useState(false);
-  const [inputSchema, setInputSchema] = useState(schemaText(agent?.input_schema));
-  const [outputSchema, setOutputSchema] = useState(schemaText(agent?.output_schema));
+  const [inputSchema, setInputSchema] = useState(schemaText(initial?.input_schema));
+  const [outputSchema, setOutputSchema] = useState(schemaText(initial?.output_schema));
   const [toolsSubmenuOpen, setToolsSubmenuOpen] = useState(true);
   const [customToolInput, setCustomToolInput] = useState("");
   const [skills, setSkills] = useState<Skill[]>(() => {
-    if (agent?.skills && agent.skills.length > 0) {
-      return agent.skills.map((s) => ({
+    if (initial?.skills && initial.skills.length > 0) {
+      return initial.skills.map((s) => ({
         ...s,
         id: s.id || "",
         name: s.name || "",
@@ -295,20 +299,20 @@ export function AgentBuilder({
   const [editingSkillIndex, setEditingSkillIndex] = useState<number | null>(null);
 
   const [form, setForm] = useState({
-    id: agent?.id || "",
-    name: agent?.name || "",
-    role: agent?.role || "partner",
-    description: agent?.description || "",
-    system_prompt: agent?.system_prompt || "",
-    aic: agent?.aic || "",
-    transport: agent?.transport || "provider",
-    endpoint_url: agent?.endpoint_url || "",
-    identity_mode: agent?.aic ? "trusted" : "local",
-    usage_mode: agent?.usage_mode || "internal",
-    streaming_enabled: agent?.streaming_enabled ?? true,
-    model_provider: agent?.model_provider || "",
-    model_name: agent?.model_name || "",
-    tools: agent?.tools.join(", ") || "",
+    id: initial?.id || "",
+    name: initial?.name || "",
+    role: initial?.role || "partner",
+    description: initial?.description || "",
+    system_prompt: initial?.system_prompt || "",
+    aic: initial?.aic || "",
+    transport: initial?.transport || "provider",
+    endpoint_url: initial?.endpoint_url || "",
+    identity_mode: initial?.aic ? "trusted" : "local",
+    usage_mode: initial?.usage_mode || "internal",
+    streaming_enabled: initial?.streaming_enabled ?? true,
+    model_provider: initial?.model_provider || "",
+    model_name: initial?.model_name || "",
+    tools: initial?.tools?.join(", ") || "",
   });
   const update = (key: string, value: string) => {
     setSaveError("");
@@ -517,7 +521,7 @@ export function AgentBuilder({
       <button className="drawer-backdrop" onClick={onClose} />
       <aside className="builder-drawer">
         <div className="drawer-header">
-          <h2>{agent ? "编辑智能体" : "创建智能体"}</h2>
+          <h2>{agent ? "编辑智能体" : initialDraft ? "预览 AI 草稿" : "创建智能体"}</h2>
           <button className="icon-button" onClick={onClose}>
             <X size={18} />
           </button>

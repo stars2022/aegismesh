@@ -479,6 +479,9 @@ def require_demo_or_admin_or_api_key(
 
 app.include_router(account_router(require_admin))
 
+from .agent_designer_api import agent_designer_router
+app.include_router(agent_designer_router(require_admin))
+
 
 def agent_to_read(agent: Agent) -> AgentRead:
     values = {column.name: getattr(agent, column.name) for column in Agent.__table__.columns}

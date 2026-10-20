@@ -1,0 +1,25 @@
+.agent-create-control { display:flex; position:relative; flex:none; min-height:38px; border:1px solid var(--ink); border-radius:12px; background:var(--ink); color:var(--paper); }
+.agent-create-control--sidebar { margin:18px 0 28px; min-height:44px; }
+.agent-create-main,.agent-create-trigger { display:flex; align-items:center; justify-content:center; gap:8px; border:0; background:transparent; color:inherit; cursor:pointer; }
+.agent-create-main { flex:1; min-width:0; padding:0 13px; border-radius:11px 0 0 11px; white-space:nowrap; }
+.agent-create-main svg { flex:none; }
+.agent-create-trigger { flex:0 0 32px; border-left:1px solid color-mix(in srgb,currentColor 20%,transparent); border-radius:0 11px 11px 0; }
+.agent-create-trigger:hover,.agent-create-main:hover { background:color-mix(in srgb,currentColor 10%,transparent); }
+.agent-create-trigger svg { transition:transform .16s ease; }
+.agent-create-control:not([data-compact=true]) .agent-create-trigger[aria-expanded=true] svg { transform:rotate(180deg); }
+.agent-create-menu { position:fixed; display:grid; gap:3px; z-index:1300; padding:5px; background:var(--paper); color:var(--ink); border:1px solid var(--soft-line); border-radius:12px; box-shadow:0 10px 30px rgb(0 0 0 / 16%); }
+.agent-create-menu button { display:flex; align-items:center; gap:9px; padding:10px; border:0; background:transparent; color:inherit; text-align:left; border-radius:7px; cursor:pointer; }
+.agent-create-menu button:hover,.agent-create-menu button:focus-visible { background:var(--cecece7); outline:none; }
+.agent-create-control button:focus-visible { outline:2px solid var(--muted); outline-offset:2px; }
+.agent-create-control[data-compact=true] { width:40px; height:40px; min-height:40px; align-self:center; margin:14px auto 20px; border-radius:10px; }
+.agent-create-control[data-compact=true] .agent-create-trigger { flex:1; padding:0; border:0; border-radius:9px; }
+.agent-designer-layer { display:flex; align-items:center; justify-content:center; padding:24px; }
+.agent-designer-dialog { position:relative; width:min(680px,100%); max-height:calc(100dvh - 48px); overflow-y:auto; border:1px solid var(--soft-line); border-radius:20px; background:var(--paper); color:var(--ink); box-shadow:0 20px 80px rgb(0 0 0 / 20%); }
+.agent-designer-dialog header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:22px 24px 0; }
+.agent-designer-dialog h2 { display:flex; align-items:center; gap:9px; margin:0; font-size:19px; }
+.agent-designer-dialog form { display:grid; gap:20px; padding:24px; }
+.agent-designer-dialog label { display:grid; gap:9px; font-size:13px; font-weight:500; }
+.agent-designer-dialog textarea { width:100%; resize:vertical; min-height:170px; padding:12px; border:1px solid var(--soft-line); border-radius:10px; color:var(--ink); background:var(--cffffff); font:inherit; line-height:1.7; }
+.agent-designer-dialog footer { display:flex; align-items:center; justify-content:flex-end; }
+@media(max-width:560px) { .agent-designer-layer { padding:12px; } .agent-designer-dialog { max-height:calc(100dvh - 24px); } .agent-designer-dialog header { padding:18px 18px 0; } .agent-designer-dialog form { padding:18px; } }
+@media(prefers-reduced-motion:reduce) { .agent-create-trigger svg { transition:none; } }

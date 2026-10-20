@@ -31,6 +31,7 @@ class Scope:
     session: str
     invocation: str
     factory: Callable[[], Session]
+    admin_designer: bool = False
 
 
 _scope: ContextVar[Scope | None] = ContextVar("model_budget_scope", default=None)
@@ -44,6 +45,20 @@ def current_usage_scope() -> Scope | None:
 @contextmanager
 def usage_scope(owner: str, session: str, invocation: str, factory):
     token = _scope.set(Scope(owner, session, invocation, factory))
+    try:
+        yield
+    finally:
+        _scope.reset(token)
+
+
+@contextmanager
+def admin_designer_scope(actor: str, request_id: str, factory):
+    """Server-only scope for the authenticated admin designer, never wire input.
+
+    Separate principal and exempt ledger rows keep these calls out of account,
+    role and shared-provider budgets without disabling accounting or upstream limits.
+    """
+    token = _scope.set(Scope(f"admin-designer:{actor}"[:128], request_id, "", factory, True))
     try:
         yield
     finally:
@@ -84,6 +99,18 @@ def reserve_model(body: dict, *, output_key="max_tokens", provider_id="default")
     if scope is None:
         return None
     with scope.factory() as db:
+        if scope.admin_designer:
+            # A request bound, not a role quota. Audit even when account quotas
+            # are disabled, and never change the existing AccountPolicy.
+            body[output_key] = max(1, min(int(body.get(output_key) or 4096), 4096))
+            estimated = len(json.dumps(body, ensure_ascii=False).encode("utf-8")) + 512 + 4 * body[output_key]
+            row = ModelUsage(id=secrets.token_hex(16), owner_id=scope.owner,
+                             session_id=scope.session, invocation_id="",
+                             model=str(body.get("model") or "")[:128], provider_id=provider_id,
+                             units=estimated, exempt=True, created_at=now())
+            db.add(row)
+            db.commit()
+            return scope.factory, row.id
         policy = get_policy(db)
         if policy.quota_mode == "off":
             return None

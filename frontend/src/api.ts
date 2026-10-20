@@ -1,6 +1,7 @@
 import type { Agent, Attachment, ChatResult, DashboardData, Policy, ProbeResult, Provider, Trace, UploadResponse, StructuredTaskOptions } from './types'
 import type { LogPage, LogRecord, LogStatus } from './logs'
 import type { SearchSettings, SearchSettingsUpdate, SearchTestResult } from './WebSearchSettings'
+import type { DesignerResult } from './admin/AgentDesigner'
 
 const jsonHeaders = { 'Content-Type': 'application/json' }
 
@@ -193,6 +194,8 @@ export const api = {
   }),
   dashboard: () => request<DashboardData>('/api/dashboard'),
   agents: () => request<Agent[]>('/api/agents'),
+  generateAgentDraft: (payload: { provider_id: string; requirements: string }, signal?: AbortSignal) =>
+    request<DesignerResult>('/api/admin/agent-designer/generate', { method: 'POST', headers: jsonHeaders, body: JSON.stringify(payload), signal }),
   createAgent: (payload: Partial<Agent> & { id: string; aic: string; name: string }) =>
     request<Agent>('/api/agents', { method: 'POST', headers: jsonHeaders, body: JSON.stringify(payload) }),
   updateAgent: (id: string, payload: Partial<Agent>) =>
