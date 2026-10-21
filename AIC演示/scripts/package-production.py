@@ -40,13 +40,16 @@ def download_fonts():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('production_dist', type=Path)
+    parser.add_argument('--source-commit', required=True, help='Exact frontend source commit used to build these assets')
     parser.add_argument('--download-fonts', action='store_true')
     args = parser.parse_args()
     source = args.production_dist.resolve()
     if not (source / 'index.html').is_file() or not (source / 'assets').is_dir():
         parser.error('Expected the actual production frontend/dist')
     target = ROOT / 'dist'
-    manifest = {'production_commit': '552bee014aad859b9b49cd38dd3ef03d47dbd5e8', 'demo': True, 'assets': {}}
+    if not re.fullmatch(r'[0-9a-f]{40}', args.source_commit):
+        parser.error('--source-commit must be a full Git commit SHA')
+    manifest = {'production_commit': args.source_commit, 'demo': True, 'assets': {}}
     for folder in ('assets', 'media'):
         for item in sorted((source / folder).rglob('*')):
             if not item.is_file():

@@ -2,6 +2,7 @@
 // operates the unmodified production DOM. F8 hides all recording controls.
 import { STORE_KEY, OWNER, SCENARIOS } from './fixtures.mjs'
 import { delay } from './runtime.mjs'
+import { RECORDING_PLAN, isRecordOnly, chapterCard } from './recording-plan.mjs'
 
 const SCRIPT_KEY = 'aegismesh-recording-director:v2'
 const visible = node => node && node.getClientRects().length && !node.closest('[hidden], [inert]')
@@ -29,9 +30,12 @@ async function fill(selector, value, signal) {
 const card = name => [...document.querySelectorAll('.agent-card')].find(node => node.querySelector('h3')?.textContent === name)
 
 export function installDirector(runtime) {
-  const host = document.createElement('aegismesh-recording-controls')
+  const recordOnly = isRecordOnly(new URLSearchParams(location.search), sessionStorage)
+  const host = document.createElement(recordOnly ? 'aegismesh-recording-status' : 'aegismesh-recording-controls')
   const shadow = host.attachShadow({ mode: 'open' })
-  shadow.innerHTML = `<style>
+  host.dataset.controlsIsolated = String(recordOnly)
+  if (recordOnly) { host.hidden = true; host.style.setProperty('display', 'none', 'important') }
+  shadow.innerHTML = recordOnly ? '<span id="status" hidden></span>' : `<style>
     :host{position:fixed;right:16px;top:16px;z-index:2147483647;font:13px/1.6 system-ui;color:#20211d;display:none}
     :host([open]){display:block}section{width:min(330px,calc(100vw - 48px));max-height:85vh;overflow:auto;border:1px solid #d7d8d1;border-radius:16px;padding:18px;background:#fbfbf9;box-shadow:0 18px 60px #0003}
     h2{font-size:16px;margin:0 0 5px}p{margin:0 0 12px;color:#73736b}button,select{font:inherit;border:1px solid #deded8;background:#fff;color:inherit;border-radius:9px;padding:8px 10px;cursor:pointer}
@@ -52,9 +56,11 @@ export function installDirector(runtime) {
   document.body.append(host)
   const status = text => { shadow.querySelector('#status').textContent = text }
   const setting = name => shadow.querySelector('#' + name)
-  setting('speed').value = String(runtime.state.settings.speed)
-  setting('channel').value = runtime.state.settings.channel
-  for (const name of ['speed', 'channel']) setting(name).onchange = event => runtime.configure({ [name]: name === 'speed' ? Number(event.target.value) : event.target.value })
+  if (!recordOnly) {
+    setting('speed').value = String(runtime.state.settings.speed)
+    setting('channel').value = runtime.state.settings.channel
+    for (const name of ['speed', 'channel']) setting(name).onchange = event => runtime.configure({ [name]: name === 'speed' ? Number(event.target.value) : event.target.value })
+  }
   let running = null, queue = null, resumeChapter = null
   const navigate = url => { if (location.pathname + location.search !== url) { location.assign(url); return true }; return false }
   const pause = (ms, signal) => delay(ms / runtime.state.settings.speed, signal)
@@ -207,7 +213,7 @@ export function installDirector(runtime) {
     ...Object.fromEntries(['overview', 'providers', 'routing', 'probes', 'accounts', 'quotas', 'access', 'traces', 'logs'].map(key => [key, '/admin?tab=' + key])) }
   const collaboration = ['research-detail', 'bounty-detail', 'group-user', 'group-host', 'canvas-review']
   const remaining = ['discovery', 'first-use', 'news', 'travel', 'structured', 'human']
-  const full = ['create', 'discovery', 'first-use', 'research-detail', 'news', 'travel', 'bounty-detail', 'structured', 'canvas-review', 'group-user', 'group-host', 'human']
+  const full = RECORDING_PLAN.map(item => item.key)
   const stop = () => { running?.abort(); running = null; queue = null; sessionStorage.removeItem(SCRIPT_KEY); host.dataset.recordingState = 'stopped'; status('脚本已停止；界面可继续手动操作。') }
   async function execute() {
     if (!queue?.running || running) return
@@ -228,13 +234,14 @@ export function installDirector(runtime) {
         host.dataset.chapter = chapter; host.dataset.chapterStarted = String(Date.now() / 1000); host.dataset.recordingState = 'running'
         status(`正在演示：${chapter}（${queue.index + 1}/${queue.chapters.length}）`)
         await until(() => document.querySelector(route.startsWith('/admin') ? '.app-shell' : route === '/digital-human' ? '.digital-human' : '.chat-layout'), '正式界面载入', signal)
+        if (recordOnly) await chapterCard(chapter, signal, delay)
         await pause(1000, signal); await actions[chapter](signal); queue.index++; queue.ready = false
         sessionStorage.setItem(SCRIPT_KEY, JSON.stringify(queue))
       }
       sessionStorage.removeItem(SCRIPT_KEY); queue = null; host.dataset.recordingState = 'complete'; status('演示脚本已完成。全部记录仅保存在本机。')
     } catch (error) {
       sessionStorage.removeItem(SCRIPT_KEY); queue = null; host.dataset.recordingState = 'error'
-      if (!signal.aborted) { status(`脚本停在当前界面：${error.message}。可继续手动操作或重置。`); host.setAttribute('open', '') }
+      if (!signal.aborted) { status(`脚本停在当前界面：${error.message}。可继续手动操作或重置。`); if (!recordOnly) host.setAttribute('open', '') }
     } finally { running = null }
   }
   shadow.addEventListener('click', event => {
@@ -254,11 +261,17 @@ export function installDirector(runtime) {
       paced: shadow.querySelector('#paced').checked, ready: true }; host.removeAttribute('open'); void execute()
   })
   window.addEventListener('keydown', event => {
-    if (event.key === 'F8') { event.preventDefault(); host.toggleAttribute('open') }
-    if (event.key === 'F9' && resumeChapter) { event.preventDefault(); resumeChapter() }
+    if (event.key === 'F8') { event.preventDefault(); if (!recordOnly) host.toggleAttribute('open') }
+    if (event.key === 'F9') {
+      event.preventDefault()
+      if (resumeChapter) resumeChapter()
+      else if (recordOnly && !running && host.dataset.recordingState === 'idle') {
+        queue = { running: true, chapters: full, index: 0, paced: true, ready: true }; void execute()
+      }
+    }
     if (event.key === 'Escape' && running) stop()
   }, true)
-  if (new URLSearchParams(location.search).has('director')) host.setAttribute('open', '')
+  if (!recordOnly && new URLSearchParams(location.search).has('director')) host.setAttribute('open', '')
   try { queue = JSON.parse(sessionStorage.getItem(SCRIPT_KEY) || 'null') } catch { /* no active script */ }
   if (queue?.running) void execute()
 }

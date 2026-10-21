@@ -1,25 +1,25 @@
 {
-  "production_commit": "552bee014aad859b9b49cd38dd3ef03d47dbd5e8",
+  "production_commit": "812ccaa83035819d966b3a56935cf25fc128adb6",
   "demo": true,
   "assets": {
     "assets/AccountPanel-02e1YM_S.js": "87b00fdcac7e6a842cc9a9aa06d63a3a0084ea5b0a4059c462f497d9dbcb083b",
-    "assets/Admin-BbjMoNvw.js": "9223d0bf1e11497ce64ad029b7325a08970dc2e8201c634bbea26393ae8989dc",
+    "assets/Admin-B3QBhqxk.js": "1d4382e11e4f008f1ddf9ef6ecb029fd114e9f7141d2a2725890cb4ed92c87c6",
     "assets/App-BXPms6Lh.css": "baa8f775359caf67d06754c8a0c76e0577cc96a1abec745d0dc3cf9805b48e59",
-    "assets/App-CEzY5yu5.js": "9e0716cc55187c776ef8263f89e7b5daad122da9757d8040c438d775e4dcc952",
-    "assets/CanvasWorkspace-BZogsMF5.js": "a9eb7ed5c8a163a300754cae689a630bf3ad1405ff43bf73420e14fb05ac7151",
+    "assets/App-DEvBWXv-.js": "803618e2af33ead34ee34ba7a92c25fb2649ffb78405c792674a113896eb78f8",
     "assets/CanvasWorkspace-CEPMts5V.css": "eaae4cc025598467330f8a667b8272ca02b84f0805864af53ab0efe6ef82abce",
+    "assets/CanvasWorkspace-DXprjGz1.js": "35df67f86aad684948872fdac8de7d62b0f734e98f5af5850bf7fe4e4d180f4e",
     "assets/ChatDemo-CaG6B219.css": "8b05deea6288b7bf996fd379afb3bf20187c954804f07fe44bae518ce3b2406c",
-    "assets/ChatDemo-Dg3oju-T.js": "d9e4c52f0f373448a78057b978a7b8cd0933f5fb6765c9f292260d9192beebdb",
-    "assets/Demo-CEjChxsV.js": "73fb32d4efdd20d3f9aacfca1d30ae4fb9566e1782d2da67e4aac44d11994e43",
+    "assets/ChatDemo-DxuzqN6E.js": "63c7eeaa994e3116ef8b26180558dfeee3d11d2805e28ca08ec6e2de09e6401e",
+    "assets/Demo-DHG4_Lv3.js": "eeef6860fe1b3a458fe024c92b2de604fc7c9c61ba3a95a2a81dbd612131a31d",
     "assets/DigitalHuman-BWdMEO9U.css": "40fbf06a27d451a193c5b10280f5b2242ffda4462228e5e3c33aa996a9fd29ab",
-    "assets/DigitalHuman-cfgmmke2.js": "f5ebca9a1a7a3c0fab344521698fc3508aa21052b7ee61e81056fa590d7424f8",
-    "assets/SettingsDialog-CsOFoc3J.js": "34d014e9430de6e4a857a12bb5b6ab8e2e034d196a3c53a0287deea6c0f7d818",
+    "assets/DigitalHuman-DKcpNcDs.js": "ae81019d383c2876e2f8b7c483814844e101de6e35d24f7a0f6c556f0c3b18aa",
+    "assets/SettingsDialog-DNa9YYAP.js": "3c20a21a2cf64036a511325169dc7f9571c0c4535e324d5ff74a562c23150731",
     "assets/SettingsDialog-DlkGU_6T.css": "8e7b9ec35418e5495d7c16105e17a0e304ddd06f2e551e691b0be9dd57d5db0a",
     "assets/components-BZ9HkKcp.js": "7baa3ccd0cb4f51729800077c35c9f15221f18c59687feaf0ec07037eb09ebd0",
     "assets/createLucideIcon-Bd0rWtEm.js": "b714579425f689f7607d38d36a2209716739faecd21943638bda6880c970bc27",
-    "assets/index-BEfjK2_L.css": "fd32bd88e15600cba56d8725586d81e03a94000f5ed4ab09f3d1139b7a0129b8",
-    "assets/index-xVoQ6-60.js": "928a59a67dd4c91efbb0183b77b3eeda7ae8eed9621f3a70b8721b0d049ce340",
-    "assets/markdown-DNW7_ePT.js": "6c52217cd541224ac1ab656b8237055d582592361634a851b66f41a4ee9c69c8",
+    "assets/index-DcQwmKN5.js": "0444b0944b31b4573c305c0b994d2d15b3ebd96a3f14c88ea061003c27e76b7c",
+    "assets/index-tjCuKVFr.css": "3eab757efbdd82610215e8eeb682ef17ae63bd89c1248501c36c0855eca7e9ac",
+    "assets/markdown-BRz0-j6I.js": "74b5015507839e7238b4256ceaf6fae2049db06d562577e0c731e4166cd4b217",
     "assets/markdown-MhbMJ8Q1.css": "4d4fe9d6c63ae0033743f86e1c5ed62603c24a1098c66b4d88b40e8deef7ac2a",
     "assets/rolldown-runtime-hePW80VL.js": "580ad8c58061a4dde99bde0a56905e382f0568516ee2f5b84dbfb52085709021",
     "assets/sessionGate-DproSRAz.js": "3988f1bb92c122b89e86a70165ccf97d762ffc71776b4e5b93e47067338ae953",
@@ -35,5 +35,5 @@
     "media/digital-human-retro.png": "ba054d9cf2a00c2d622876030fcd4e6c1beb3cde5368a600909596b9e6861f8f",
     "media/digital-human-talk.mp4": "d8d9fcd83f3c179203510766064b92bef7fa0e0c7ce5a33ac10282771e302060"
   },
-  "production_index_sha256": "59a887d5094b2434d8aa68c74505d53deca46c43d0c44420f147919630d157aa"
+  "production_index_sha256": "d172caa458ba7df5b51a043cd7388f2106217d4065c1118897f537ce0fb33e7e"
 }

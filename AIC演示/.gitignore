@@ -1,5 +1,7 @@
 __pycache__/
+.DS_Store
 视频/
 访问数据截图/*.png
 !/dist/
 !/dist/**
+.DS_Store

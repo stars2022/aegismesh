@@ -4,6 +4,10 @@ import { installDirector } from './director.mjs'
 const runtime = installOfflineRuntime(window)
 const params = new URLSearchParams(location.search)
 if (params.has('reset_demo')) runtime.reset()
+if (['dark', 'light'].includes(params.get('theme'))) {
+  const settings = JSON.parse(localStorage.getItem('aegismesh-settings') || '{}')
+  localStorage.setItem('aegismesh-settings', JSON.stringify({ ...settings, theme: params.get('theme') }))
+}
 const entry = document.querySelector('script[data-production-entry]')?.dataset.productionEntry
 if (!entry?.startsWith('/assets/')) throw new Error('正式前端入口未配置')
 document.title = 'AegisMesh · 离线预置演示'
