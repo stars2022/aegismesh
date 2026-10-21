@@ -2,6 +2,7 @@ import importlib.util
 from functools import partial
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+import re
 import threading
 import unittest
 import urllib.error
@@ -25,7 +26,9 @@ class StaticIsolationTest(unittest.TestCase):
         cls.server.shutdown(); cls.server.server_close(); cls.thread.join()
 
     def test_production_routes_and_assets(self):
-        for path in ('/', '/admin?tab=studio', '/login', '/digital-human', '/demo/bootstrap.mjs', '/assets/index-xVoQ6-60.js', '/demo/fonts/fonts.css'):
+        html = (server_module.ROOT / 'index.html').read_text()
+        entry = re.search(r'data-production-entry="(/assets/[^\"]+)"', html).group(1)
+        for path in ('/', '/admin?tab=studio', '/login', '/digital-human', '/demo/bootstrap.mjs', entry, '/demo/fonts/fonts.css'):
             with urllib.request.urlopen(self.base + path) as response:
                 self.assertEqual(response.status, 200)
                 self.assertIn("connect-src 'none'", response.headers['Content-Security-Policy'])
