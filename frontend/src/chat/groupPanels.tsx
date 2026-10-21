@@ -45,22 +45,22 @@ export function BlackboardPanel({
           <BookOpen size={26} />
         </div>
         <h4>暂无黑板交付物</h4>
-        <p>当智能体在群聊中生成详细设计方案、数据表格或分析报告时，将严格按国家标准（GB/T 43444 / GB/T 7714）自动沉淀至此共享资产库。</p>
+        <p>群聊中的方案、数据表格和分析报告会集中保存在这里，便于成员查看和继续协作。</p>
       </div>
     );
   }
 
   return (
     <div className="blackboard-panel">
-      {/* 国家标准认证顶栏 */}
+      {/* Display recorded delivery state, not an unverified certification. */}
       <div className="blackboard-standard-banner">
         <div className="bb-std-badge-row">
-          <span className="bb-std-tag">国家标准规范对齐</span>
-          <span className="bb-std-code">GB/T 43444-2023</span>
-          <span className="bb-std-code">GB/T 7714-2015</span>
+          <span className="bb-std-tag">共享交付物</span>
+          <span className="bb-std-code">成员协作</span>
+          <span className="bb-std-code">来源可查看</span>
         </div>
         <span className="bb-std-desc">
-          符合多智能体协同交互规约 · 学术著录字段与可溯源 DOI 核验通过
+          汇集各成员交付内容 · 请结合原始来源核对结论
         </span>
       </div>
 
@@ -68,7 +68,7 @@ export function BlackboardPanel({
         <div className="bb-header-title">
           <Layers size={15} />
           <strong>协作黑板资产库</strong>
-          <span className="bb-count-pill">{deliverables.length} 份标准案卷</span>
+          <span className="bb-count-pill">{deliverables.length} 份交付物</span>
         </div>
       </div>
 
@@ -80,7 +80,7 @@ export function BlackboardPanel({
             `交付物 #${idx + 1}`
           );
           const isExpanded = expandedIds[item.id] !== false;
-          const artId = `GB-ART-${String(item.timestamp ? Math.floor(item.timestamp) : Date.now()).slice(-6)}-${idx + 1}`;
+          const artId = item.id;
           const handleCopy = () => {
             navigator.clipboard.writeText(item.content);
             setCopiedId(item.id);
@@ -91,7 +91,7 @@ export function BlackboardPanel({
             <article key={item.id} className="blackboard-card">
               <header className="blackboard-card-header" onClick={() => toggleExpand(item.id)}>
                 <div className="bb-card-meta">
-                  <span className="bb-card-tag">GB 审定资产</span>
+                  <span className="bb-card-tag">协作成果</span>
                   <strong className="bb-card-title">{title}</strong>
                   <span className="bb-card-author">{item.nickname || item.sender_name}</span>
                 </div>
@@ -116,11 +116,10 @@ export function BlackboardPanel({
                 </div>
               </header>
 
-              {/* 国家标准审定元数据条 */}
+              {/* Actual source metadata; no inferred review or compliance status. */}
               <div className="bb-card-audit-bar">
-                <span className="bb-audit-chip">流水号: {artId}</span>
-                <span className="bb-audit-chip ok">✓ GB/T 7714 格式符合</span>
-                <span className="bb-audit-chip ok">✓ 版本 v1.0 审定</span>
+                <span className="bb-audit-chip">记录: {artId}</span>
+                <span className="bb-audit-chip">来源: {item.sender_name || item.sender_id}</span>
                 <span className="bb-audit-time">{formatRelative(item.timestamp)}</span>
               </div>
 
