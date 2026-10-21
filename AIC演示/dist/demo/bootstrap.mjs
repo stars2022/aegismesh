@@ -1,9 +1,11 @@
 import { installOfflineRuntime } from './runtime.mjs'
 import { installDirector } from './director.mjs'
+import { seedStructuredExample } from './structured-example.mjs'
 
 const runtime = installOfflineRuntime(window)
 const params = new URLSearchParams(location.search)
 if (params.has('reset_demo')) runtime.reset()
+if (params.get('example') === 'structured') await seedStructuredExample(runtime)
 if (['dark', 'light'].includes(params.get('theme'))) {
   const settings = JSON.parse(localStorage.getItem('aegismesh-settings') || '{}')
   localStorage.setItem('aegismesh-settings', JSON.stringify({ ...settings, theme: params.get('theme') }))

@@ -90,13 +90,12 @@ export function installDirector(runtime) {
       await selectorClick('button[title="将该外部智能体固定到本地协作网"]', signal)
       await pause(1200, signal); await press('全部', signal)
     },
-    async send(signal, scenario = 'research', mode = 'route', canvas = false, structured = false) {
+    async send(signal, scenario = 'research', mode = 'route', canvas = false) {
       if (canvas) { await selectorClick('button[aria-label="更多会话类型"]', signal)
         const target = await until(() => buttons().find(n => n.textContent.includes('画布协作')), '画布协作入口', signal); target.click(); await pause(900, signal)
         await selectorClick('button[aria-label="展开智能协同助手"]', signal)
       } else await selectorClick('button[title="新建普通会话"]', signal)
       if (mode === 'bounty') { await selectorClick('button[title="协作方式"]', signal); await press('竞标模式', signal) }
-      if (structured) await selectorClick('.structured-task-toggle input', signal)
       await fill(canvas ? 'textarea.floating-textarea' : 'textarea[aria-label="输入消息"]', SCENARIOS[scenario].question, signal)
       await pause(900, signal); await selectorClick(canvas ? 'button[title="发送指令"]' : 'button[title="发送"]', signal)
       await until(() => Object.values(runtime.state.tasks).some(t => t.status === 'running'), '任务接收', signal)
@@ -136,7 +135,11 @@ export function installDirector(runtime) {
       const rows = [...document.querySelectorAll('.bounty-item summary')].filter(visible)
       if (rows[1]) { rows[1].click(); rows[1].scrollIntoView({ block: 'center' }); await pause(2500, signal) }
     },
-    async structured(signal) { await actions.send(signal, 'research', 'route', false, true) },
+    async structured(signal) {
+      await press('结构化结果示例', signal)
+      await until(() => document.querySelector('.structured-result'), '已有结构化结果', signal)
+      await pause(8000, signal)
+    },
     async canvas(signal) { await actions.send(signal, 'research', 'route', true) },
     async 'canvas-review'(signal) {
       await actions.send(signal, 'research', 'route', true)
@@ -209,7 +212,7 @@ export function installDirector(runtime) {
     async traces(signal) { await pause(3500, signal) },
     async logs(signal) { await pause(3500, signal) },
   }
-  const chapterRoutes = { create: '/admin?tab=studio', discovery: '/admin?tab=studio', human: '/digital-human',
+  const chapterRoutes = { create: '/admin?tab=studio', discovery: '/admin?tab=studio', structured: '/?example=structured', human: '/digital-human',
     ...Object.fromEntries(['overview', 'providers', 'routing', 'probes', 'accounts', 'quotas', 'access', 'traces', 'logs'].map(key => [key, '/admin?tab=' + key])) }
   const collaboration = ['research-detail', 'bounty-detail', 'group-user', 'group-host', 'canvas-review']
   const remaining = ['discovery', 'first-use', 'news', 'travel', 'structured', 'human']

@@ -21,6 +21,7 @@ def audit(root, output):
         records = json.loads(manifest.read_text())
         chapter = records[0]['chapter']
         assert all(row.get('controls_isolated') and row['theme'] == 'dark' and row['state'] != 'error' for row in records)
+        assert all(row.get('composer_clean') and row.get('counter_absent') for row in records), chapter
         # Manifests are written only after captureRetake observes chapter-ready
         # or complete. A held last image can still carry its earlier frame state.
         # Check every native frame exists, is valid JPEG and has the right size.
@@ -35,7 +36,7 @@ def audit(root, output):
         assert card_end and card_end['time'] - first_card['time'] >= 5.7, chapter
         duration = records[-1]['time'] - records[0]['time']
         chapters.append({'chapter': chapter, 'frames': len(records), 'seconds': duration,
-                         'controls_isolated': True, 'has_native_module_page': True,
+                         'controls_isolated': True, 'composer_clean': True, 'counter_absent': True, 'has_native_module_page': True,
                          'trim_before_file': first_card['file'], 'native_title_seconds': card_end['time'] - first_card['time']})
         # Every two seconds plus final frame, for whole-film visual QA.
         for second in list(range(0, int(duration), 2)) + [duration]:

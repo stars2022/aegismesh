@@ -12,6 +12,10 @@ test('all twelve modules have a readable title page and paired narration', () =>
     assert.ok(row.intro.length <= 24, row.key)
   }
 })
+test('module pages contain only the brand and title, with no counters or decoration', async () => {
+  const source = await readFile(new URL('../dist/demo/recording-plan.mjs', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /recording-chapter-number|recording-chapter-line|padStart|indexOf\(item\)/)
+})
 test('record-only controller isolation survives production route navigation', () => {
   const map = new Map(), storage = { getItem: key => map.get(key), setItem: (key, value) => map.set(key, value) }
   assert.equal(isRecordOnly(new URLSearchParams(''), storage), false)

@@ -4,6 +4,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { createRuntime, installOfflineRuntime } from '../dist/demo/runtime.mjs'
 import { STORE_KEY } from '../dist/demo/fixtures.mjs'
+import { seedStructuredExample } from '../dist/demo/structured-example.mjs'
 
 function setup(options = {}) {
   const memory = new Map()
@@ -15,6 +16,15 @@ function setup(options = {}) {
   }
   return { runtime, call, storage }
 }
+test('the structured chapter restores a preset API result without adding a composer toggle', async () => {
+  const { runtime, call } = setup()
+  await seedStructuredExample(runtime)
+  await seedStructuredExample(runtime)
+  const saved = (await call('/api/account/history/demo-structured-result')).data
+  assert.equal(saved.conversation.title, '结构化结果示例')
+  assert.ok(saved.conversation.messages[1].result.structured_output)
+  assert.equal(runtime.state.traces.length, 1)
+})
 
 test('every production JS/CSS/media asset is byte-for-byte unchanged', async () => {
   const manifest = JSON.parse(await readFile(new URL('../dist/demo/production-manifest.json', import.meta.url)))

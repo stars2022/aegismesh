@@ -169,6 +169,8 @@ def main():
     (output / f'{args.name}-口播字幕.srt').write_text('\n'.join(voice_srt))
     metadata = {'demo': True, 'capture': 'actual shared production frontend UI in local browser; preset API data; editorial module cards', 'source_commit': source_manifest['production_commit'],
                 'controls_isolated': args.submission, 'title_card_seconds': 6,
+                'composer_clean': all(row.get('composer_clean') is True for row in records),
+                'chapter_counters': not all(row.get('counter_absent') is True for row in records),
                 'frames': len(records), 'duration': duration, 'chapters': chapters, 'video': video.name,
                 'format': probe['format'], 'streams': [{key: stream.get(key) for key in ('codec_name', 'codec_type', 'width', 'height', 'r_frame_rate', 'nb_frames')} for stream in probe['streams']]}
     (output / f'{args.name}-录制信息.json').write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + '\n')

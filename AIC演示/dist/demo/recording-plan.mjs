@@ -23,7 +23,7 @@ export const RECORDING_PLAN = [
     narration: '任务板展示认领者、验收条件和交付证据。协调者检查各项成果并复核，形成从任务发布、认领、提交到验收的可追踪流程。' },
   { key: 'structured', title: '可选结构化输入输出', seconds: 6,
     intro: '需要对接业务系统时，可开启结构化能力。',
-    narration: '结构化输入输出作为可选内置能力使用。任务按约定的 Schema 返回摘要、发现与来源等字段，方便后续程序读取和处理。' },
+    narration: '在详情中按需配置结构化能力。结果按约定字段展示，支持复制或下载 JSON，供其他程序读取。' },
   { key: 'canvas-review', title: '共享画布与版本审查', seconds: 6,
     intro: '共享画布，将多轮协作汇入同一份文稿。',
     narration: '第一轮生成研究方案，用户检查并接受改动；第二轮补充验收与复核表，再次审查修订。交付物不止停留在聊天里，而是持续完善同一份文档。' },
@@ -52,12 +52,10 @@ export async function chapterCard(chapter, signal, wait) {
     .recording-chapter-card{position:fixed;inset:0;z-index:2147483646;background:#0c0d0f;color:#f3f3ee;font-family:Inter,"Noto Sans SC",sans-serif;display:grid;place-items:center}
     .recording-chapter-brand{position:absolute;top:56px;left:64px;display:flex;align-items:center;gap:16px;font-size:28px;font-weight:600;letter-spacing:-.025em}
     .recording-chapter-brand svg{width:30px;height:30px;padding:13px;border-radius:15px;background:#efefeb;color:#171815;box-sizing:content-box}
-    .recording-chapter-center{text-align:center;max-width:80vw}.recording-chapter-number{color:#92958f;font:16px/1.5 "DM Mono",monospace;letter-spacing:.22em;margin-bottom:26px}
+    .recording-chapter-center{text-align:center;max-width:80vw}
     .recording-chapter-card h1{font-size:clamp(32px,3.3vw,64px);font-weight:500;letter-spacing:.035em;margin:0}
-    .recording-chapter-line{width:54px;height:2px;background:#879f8b;margin:38px auto 0}
-  </style><div class="recording-chapter-brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M12 8v5M5 16v-3h14v3"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/></svg><span>AegisMesh</span></div><div class="recording-chapter-center"><div class="recording-chapter-number"></div><h1></h1><div class="recording-chapter-line"></div></div>`
+  </style><div class="recording-chapter-brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M12 8v5M5 16v-3h14v3"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/></svg><span>AegisMesh</span></div><div class="recording-chapter-center"><h1></h1></div>`
   page.querySelector('h1').textContent = item.title
-  page.querySelector('.recording-chapter-number').textContent = `${String(RECORDING_PLAN.indexOf(item) + 1).padStart(2, '0')} / ${RECORDING_PLAN.length}`
   document.body.append(page)
   try { await wait(item.seconds * 1000, signal) } finally { page.remove() }
 }
