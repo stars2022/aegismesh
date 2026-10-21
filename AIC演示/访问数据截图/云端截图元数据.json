@@ -1,0 +1,64 @@
+{
+  "source_origin": "https://demmo.cc.cd",
+  "source": "authenticated production administration UI",
+  "capture_engine": "native browser PNG frame, no resampling or painted overlays",
+  "preset_data": false,
+  "altered_pixels": false,
+  "timezone": "Asia/Singapore",
+  "css_viewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "screenshots": [
+    {
+      "file": "01-云端运行概览-20261021.png",
+      "bytes": 674367,
+      "pixel_width": 2880,
+      "pixel_height": 2000,
+      "sha256": "15aab422a4705b5b238cedd328ec7778d530545cd562d841c97bb56b7192f181",
+      "captured_at": "2026-10-21T12:12:37.444Z"
+    },
+    {
+      "file": "02-云端调用日志-最近七天-20261021.png",
+      "bytes": 1042616,
+      "pixel_width": 2880,
+      "pixel_height": 2000,
+      "sha256": "db6abd5a7c97ada5fed68b7b9a96276cbf9e1d43051b4979a763a41161420914",
+      "captured_at": "2026-10-21T12:13:14.444Z"
+    },
+    {
+      "file": "03-云端真实调用详情-20261021.png",
+      "bytes": 920342,
+      "pixel_width": 2880,
+      "pixel_height": 2000,
+      "sha256": "6f7e2f01f95e2d7e9f9fec844a9030b83378bfb1ea42a2a323cb9b4c341d7f38",
+      "captured_at": "2026-10-21T12:13:15.004Z"
+    },
+    {
+      "file": "04-云端日志采集状态-20261021.png",
+      "bytes": 1128284,
+      "pixel_width": 2880,
+      "pixel_height": 2000,
+      "sha256": "1321f57085b27333f1a5c878589a710503826942f59471b94385f31473bc7615",
+      "captured_at": "2026-10-21T12:13:15.639Z"
+    }
+  ],
+  "overview": {
+    "total_runs": 1212,
+    "success_rate_percent": 86.1,
+    "online_agents": 29,
+    "total_agents": 31,
+    "average_latency_seconds": 28.3
+  },
+  "logs": {
+    "period": "最近7天",
+    "kind": "调用",
+    "visible_result": "匹配 52 条 · 异常 0 条\n平台回执：未接入",
+    "retention_and_collection": "采集与保留\n1 个来源异常\n\n本地落盘及 MQ ack 不代表 AMP 平台已接收或计榜；当前未接入平台回执。\n\nAMP 查询索引保留 7 天 / 最多 100,000 条；管理审计保留 90 天 / 最多 50,000 条（任一上限先到即清理索引）。原始 AMP 文件及上报游标不受影响。\n\n采集周期 5 秒；采集器已启用。本进程审计写入失败 0 次。仅管理员可查，无界面删除入口；本地审计不是第三方防篡改存证。\n\namp_access_aegismesh.jsonl\n已读取 17.7 MB / 17.7 MB\n无效行 0 · 过期跳过 22 · 文件重建 0 · 2026/10/21 20:13:12\namp_audit_aegismesh.jsonl\n尚未产生\n无效行 0 · 过期跳过 0 · 文件重建 0 · 2026/10/21 20:13:12\namp_heartbeat_aegismesh.jsonl\n已读取 667.8 MB / 667.8 MB\n无效行 2 · 过期跳过 1689 · 文件重建 0 · 2026/10/21 20:13:12\namp_message_aegismesh.jsonl\n已读取 2.0 MB / 2.0 MB\n无效行 0 · 过期跳过 0 · 文件重建 0 · 2026/10/21 20:13:12\namp_metrics_aegismesh.jsonl\n尚未产生\n无效行 0 · 过期跳过 0 · 文件重建 0 · 2026/10/21 20:13:12\namp_system_aegismesh.jsonl\n已读取 911.0 KB / 911.0 KB\n无效行 0 · 过期跳过 321 · 文件重建 0 · 2026/10/21 20:13:12"
+  },
+  "notes": [
+    "任务记录、日志事件、网站PV/UV和平台榜单不是同一统计口径。",
+    "生产业务持续运行，截图数值只表示各自采集时页面返回的快照，不跨时间点强行对齐。",
+    "本轮只读查询，没有为截图产生业务任务或修改配额、认证、服务配置。"
+  ]
+}
