@@ -1,10 +1,19 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { buildStructuredTask, fieldType, inputValues, parseSchemaText, schemaText, taskSchemas } from '../src/structuredIOModel.ts'
 
 const input = { type: 'object', properties: { topic: {type: 'string'}, count: {type: 'integer', default: 2}, enabled: {type: 'boolean'}, items: {type: 'array'}, kind: {type: 'string', enum: ['a', 'b']} }, required: ['topic'], additionalProperties: false }
 const output = { type: 'object', properties: {summary: {type: 'string'}}, required: ['summary'] }
 const agent = { id: 'agent', structured_io_enabled: true, input_schema: input, output_schema: output, skills: [{id: 'one', input_schema: {type: 'object', properties: {number: {type: 'integer'}}, required: ['number']}}] }
+
+test('ordinary chat has no extra structured opt-in row; configuration and results remain', async () => {
+  const chat = await readFile(new URL('../src/chat/ChatDemo.tsx', import.meta.url), 'utf8')
+  const builder = await readFile(new URL('../src/admin/AgentBuilder.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(chat, /StructuredTaskControls|structured-task-toggle|本次使用结构化输入输出/)
+  assert.match(chat, /<StructuredResult/)
+  assert.match(builder, /<StructuredCapability/)
+})
 
 test('feature stays off even when configured; no hidden fields in normal tasks', () => {
   assert.equal(buildStructuredTask(agent, false, '', {}), undefined)

@@ -39,7 +39,7 @@ import { DispatchCard } from "../DispatchCard";
 import { hasCompletedTaskMessage, upsertRecoveredAssistant } from "../chatRecovery";
 import { Dropdown, ScoreBar } from "../components";
 import { AgentPicker } from "../AgentPicker";
-import { StructuredTaskControls, StructuredResult } from "../StructuredIO";
+import { StructuredResult } from "../StructuredIO";
 import { buildStructuredTask, inputValues, taskSchemas } from "../structuredIOModel";
 import type { StructuredTaskOptions, Agent, Attachment, BlackboardMessage, ChatResult } from "../types";
 import { SidebarToggle, useCompactSidebar } from "../SidebarToggle";
@@ -2694,11 +2694,6 @@ ${cleanHistory}
                 ))}
               </div>
             )}
-            {!activeMeta?.isGroup && !isCanvasConv && agents.find(agent => agent.id === agentId)?.structured_io_enabled && <StructuredTaskControls
-              agent={agents.find(agent => agent.id === agentId)!} enabled={structuredEnabled} skillId={structuredSkill} values={structuredValues}
-              onEnabled={value => { setStructuredEnabled(value); setStructuredError(''); }}
-              onSkill={value => { setStructuredSkill(value); setStructuredValues({}); setStructuredError(''); }}
-              onValues={value => { setStructuredValues(value); setStructuredError(''); }}/>}
             {structuredError && <p className="builder-error" role="alert">{structuredError}</p>}
             <textarea
               ref={composerTextareaRef}
