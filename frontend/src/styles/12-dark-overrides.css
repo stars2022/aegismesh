@@ -1,5 +1,10 @@
 /* 深色模式整体覆盖 */
 
+[data-theme="dark"] {
+  --code-surface: #18181b;
+  --code-ink: #e4e4e7;
+}
+
 /* ===== 深色模式彻底覆盖 (解决白底与对比度问题) ===== */
 [data-theme="dark"] .group-settings-drawer {
   background: #1d1d20 !important;

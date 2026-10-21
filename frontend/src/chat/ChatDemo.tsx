@@ -62,6 +62,7 @@ import { ConciseTurn, LiveSubagentRow, TurnClock } from "./conciseTurn";
 import { BlackboardPanel, GroupCollaborationPanel, GroupMembersPanel, GroupSettingsDrawer } from "./groupPanels";
 import { currentHistorySync, historySync, loadConversationData, loadConversationIndex, saveConversationData, saveConversationIndex } from "./historyStore";
 import { MarkdownText } from "./markdown";
+import { groupMessageText } from "./groupMessageText";
 import { formatFileSize, formatMs } from "../format";
 
 const CanvasWorkspace = lazy(() => import("../CanvasWorkspace").then((module) => ({ default: module.CanvasWorkspace })));
@@ -2464,7 +2465,7 @@ ${cleanHistory}
                       )}
                       {message.result?.structured_output && message.result.status === 'completed'
                         ? <StructuredResult value={message.result.structured_output}/>
-                        : <MarkdownText text={message.text} streaming={message.streaming} />}
+                        : <MarkdownText text={activeMeta?.isGroup && message.role === "assistant" ? groupMessageText(message.text) : message.text} streaming={message.streaming} />}
                       {message.streaming && (
                         <>
                           {Object.values(liveSubagents)
