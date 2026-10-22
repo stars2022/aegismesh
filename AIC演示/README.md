@@ -37,9 +37,9 @@ F8 → “播放完整流程”。脚本操作原来的按钮和表单：
 
 ## 视频
 
-`视频/` 保存实际浏览器操作录制的 MP4、章节字幕和录制信息。按用户要求，成片不添加水印、环境标签或悬浮控制台；仅新增章节过场页。当前未合成人声，配套口播稿及可选口播 SRT 可用于本人配音。
+`视频/` 保存实际浏览器操作录制的 MP4、章节字幕和录制信息。按用户要求，成片不添加水印、环境标签或悬浮控制台；仅新增章节过场页。现已增加 Azure 中文男声口播，字幕独立保存，不烧录到画面。
 
-当前主片为 `视频/AegisMesh-互联全流程-精简版.mp4`：1920×1080、H.264、24fps，289.167 秒（约 4 分 49 秒）、9,831,784 字节；符合 MP4、3–5 分钟、300MB 以内要求。12 章均从干净标签页重新录制；具体分段时间见录制信息 JSON。旧版保存在 `视频/历史版本/`，不作为当前主片。
+当前配音主片为 `视频/AegisMesh-互联全流程-配音版.mp4`：1920×1080、H.264、24fps，289.167 秒（约 4 分 49 秒）；符合 MP4、3–5 分钟、300MB 以内要求。音色为 Azure Speech `zh-CN-YunyangNeural`，配套提供独立 MP3、WAV、逐句 SRT 与核验 JSON。画面直接复制无声原片的视频流，不重新编码、不改变画面；12 章均从干净标签页录制。无声原片 `视频/AegisMesh-互联全流程-精简版.mp4` 保留，旧版保存在 `视频/历史版本/`。
 
 普通聊天已移除“本次使用结构化输入输出”整块控件；能力配置和结果展示仍保留，不自动改变正常聊天请求。结构化章节展示一份预置的 API 结果会话，由 `structured-example.mjs` 使用本地接口契约初始化并幂等保存，不偷偷给聊天请求添加开关。
 
@@ -66,6 +66,7 @@ F8 → “播放完整流程”。脚本操作原来的按钮和表单：
 - `scripts/audit-recording.py /path/to/capture ./视频/精简版检查`：用 Pillow 检查每张原生图片尺寸、控件隔离、深色主题、至少约 6 秒过场，生成检查报告。
 - `scripts/encode-recording.py /path/to/capture ./视频 --name AegisMesh-互联全流程-精简版 --submission --audit ./视频/精简版检查/采集核验.json`：检查 12 章和时长大小上限，输出 MP4、章节字幕、口播稿与口播字幕。
 - `scripts/audit-encoded.py ./视频/AegisMesh-互联全流程-精简版.mp4 ./视频/AegisMesh-互联全流程-精简版-录制信息.json`：对实际成片解码，检查 12 张模块页及口播时间码偏差。本次全片解码通过，过场约 6–7 秒，章节起点偏差最大约 0.063 秒。
+- `scripts/synthesize-narration.py --source ./视频/AegisMesh-互联全流程-精简版.mp4 --metadata ./视频/AegisMesh-互联全流程-精简版-录制信息.json --audit ./视频/AegisMesh-互联全流程-精简版-成片核验.json --output ./视频/AegisMesh-互联全流程-配音版.mp4`：按实际模块页与操作时间合成中文口播、统一响度、合入 AAC 音轨，并核验视频流哈希与全片解码。密钥通过隐藏输入读取，仅在进程内存及指定 Azure HTTPS 请求头中使用，不写入代码、配置、文件或输出；不跟随重定向。输出名必须尚不存在，原片不覆盖。默认 East US、中文云扬男声；无需部署服务或启用真实智能体。API 参考 [Microsoft Speech REST 文档](https://learn.microsoft.com/azure/ai-services/speech-service/rest-text-to-speech)。
 
 ```sh
 node --test tests/runtime.test.mjs
