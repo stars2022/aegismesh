@@ -1,4 +1,5 @@
 import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { createId } from "../randomId.mjs";
 import {
   ClipboardCheck,
   ArrowLeft,
@@ -121,7 +122,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   const [conversations, setConversations] =
     useState<ConversationMeta[]>(loadConversationIndex);
   const [activeId, setActiveId] = useState(
-    () => conversations[0]?.id || crypto.randomUUID(),
+    () => conversations[0]?.id || createId(),
   );
   const activeMeta = conversations.find((item) => item.id === activeId);
   const initialActive = loadConversationData(activeId);
@@ -753,8 +754,8 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     setExecutionMode('route');
     setLiveSubagents({});
     setLiveBlackboardMessages([]);
-    const newId = crypto.randomUUID();
-    const canvasSession = `ses-${crypto.randomUUID()}`;
+    const newId = createId();
+    const canvasSession = `ses-${createId()}`;
     const defaultAgentId = targetAgentId || defaultCoordinatorId(agents, isCanvas);
     setActiveId(newId);
     activeIdRef.current = newId;
@@ -812,7 +813,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
   };
 
   const createGroupConversationInner = (config: GroupConfig) => {
-    const newId = crypto.randomUUID();
+    const newId = createId();
     const newMeta: ConversationMeta = {
       id: newId,
       session: `ses-${newId}`,
@@ -1067,7 +1068,7 @@ export function ChatDemo({ onComplete }: { onComplete: () => Promise<void> }) {
     setLiveBlackboardMessages([]);
     const taskConvId = activeId;
     taskConvRef.current = taskConvId;
-    const taskSessionId = sessionRef.current || `ses-${crypto.randomUUID()}`;
+    const taskSessionId = sessionRef.current || `ses-${createId()}`;
     if (!sessionRef.current) {
       sessionRef.current = taskSessionId;
       setSession(taskSessionId);
@@ -1474,7 +1475,7 @@ ${cleanHistory}
     taskConvRef.current = taskConvId;
     // Give the task a durable client-known session before opening the stream.
     // A refresh during the very first response can then still locate and replay it.
-    const taskSessionId = sessionRef.current || `ses-${crypto.randomUUID()}`;
+    const taskSessionId = sessionRef.current || `ses-${createId()}`;
     if (!sessionRef.current) {
       sessionRef.current = taskSessionId;
       setSession(taskSessionId);
@@ -1706,7 +1707,7 @@ ${cleanHistory}
       setQueue((items) => [
         ...items,
         {
-          id: crypto.randomUUID(),
+          id: createId(),
           text: finalMsg,
           agentId,
           attachments: currentAttachments,

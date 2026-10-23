@@ -1,7 +1,9 @@
 export type AssistantMessage = { id: string; role: 'user' | 'assistant'; text: string; state?: 'pending' | 'failed' | 'stopped' }
 export type AssistantSession = { id: string; title: string; messages: AssistantMessage[]; taskId?: string; pendingId?: string }
+import { createId } from './randomId.mjs'
+
 export function newAssistantSession(): AssistantSession {
-  return { id: `human-${crypto.randomUUID()}`, title: '新的咨询', messages: [] }
+  return { id: `human-${createId()}`, title: '新的咨询', messages: [] }
 }
 export function readAssistantSession(raw: string | null): AssistantSession | null {
   try {

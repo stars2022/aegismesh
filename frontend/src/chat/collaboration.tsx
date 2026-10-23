@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { createId } from "../randomId.mjs";
 import {
   ArrowLeft,
   Bot,
@@ -109,7 +110,7 @@ export function handleSubagentEvent(
       event.data.task_id ||
       (event.data.agent_id
         ? `${event.data.agent_id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-        : crypto.randomUUID());
+        : createId());
     setLiveSubagents((prev) => ({
       ...prev,
       [key]: {

@@ -1,4 +1,5 @@
 import type { Attachment, ChatResult, StructuredTaskOptions } from './types'
+import { createId } from './randomId.mjs'
 
 export type GroupConfig = {
   name: string; members: string[]; hostAgentId?: string | null;
@@ -49,7 +50,7 @@ export function copyLegacyHistory(source: Conversation, id: string): Conversatio
     messages: (source.messages || []).map(message => ({
       role: message.role, text: message.text, createdAt: message.createdAt,
       senderAgentId: message.senderAgentId, senderName: message.senderName, isHost: message.isHost,
-      historyId: crypto.randomUUID(),
+      historyId: createId(),
     })), queue: [],
   }
 }

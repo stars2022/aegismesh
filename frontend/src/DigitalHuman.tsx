@@ -3,6 +3,7 @@ import { ArrowDown, ArrowLeft, BookOpen, ChevronRight, MessageCircle, Newspaper,
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from './api'
+import { createId } from './randomId.mjs'
 import type { ChatResult } from './types'
 import { conversationStorageForOwner } from './conversationStorage'
 import { conversationCacheKeysOldestFirst, setWithEviction } from './conversationSync'
@@ -202,9 +203,9 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
     speechInputRef.current?.cancel()
     silence(); setNotice(''); setInput('')
     followReplies.current = true; setShowLatest(false)
-    const replyId = crypto.randomUUID()
+    const replyId = createId()
     const current = sessionRef.current
-    const next: AssistantSession = { ...current, title: current.messages.length ? current.title : text.slice(0, 24), taskId: undefined, pendingId: replyId, messages: [...current.messages, { id: crypto.randomUUID(), role: 'user', text }, { id: replyId, role: 'assistant', text: '', state: 'pending' }] }
+    const next: AssistantSession = { ...current, title: current.messages.length ? current.title : text.slice(0, 24), taskId: undefined, pendingId: replyId, messages: [...current.messages, { id: createId(), role: 'user', text }, { id: replyId, role: 'assistant', text: '', state: 'pending' }] }
     save(next); void run(next)
   }
   const stop = async () => {

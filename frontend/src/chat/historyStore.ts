@@ -2,6 +2,7 @@ import { conversationStorage, conversationStorageForOwner, getConversationOwner 
 import type { ConversationMeta } from "../conversationHistory";
 import { ConversationSync } from "../conversationSync";
 import { mergeHistory, type Conversation } from "../historyDocument";
+import { createId } from "../randomId.mjs";
 
 export let historySync: ConversationSync | undefined;
 export function currentHistorySync() {
@@ -83,7 +84,7 @@ export function saveConversationData(conv: Conversation): void {
   const previous = loadConversationData(conv.id)?.messages || [];
   conv.messages = conv.messages.map((message, index) => message.historyId ? message : {
     ...message, historyId: previous[index]?.role === message.role && previous[index]?.createdAt === message.createdAt
-      ? previous[index].historyId || crypto.randomUUID() : crypto.randomUUID(),
+      ? previous[index].historyId || createId() : createId(),
   });
   const sync = currentHistorySync();
   sync?.remember(conv);

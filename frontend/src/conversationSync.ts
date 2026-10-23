@@ -1,5 +1,6 @@
 import type { Conversation } from './historyDocument'
 import type { ConversationMeta } from './conversationHistory'
+import { createId } from './randomId.mjs'
 
 type Store = { getItem: (key: string) => string | null; setItem: (key: string, value: string) => void; removeItem: (key: string) => void }
 type CloudMeta = ConversationMeta & { revision: number; deleted: boolean }
@@ -231,7 +232,7 @@ export class ConversationSync {
     const imports: Record<string, string> = JSON.parse(this.store.getItem('history-legacy-imports') || '{}')
     for (const source of documents) {
       if (imports[source.id]) continue
-      const document = copy(source, crypto.randomUUID())
+      const document = copy(source, createId())
       this.cache(document)
       // Write the recovery index before the first network request; failed imports remain retryable.
       const metas = this.index()
