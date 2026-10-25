@@ -1,5 +1,8 @@
 # Additive agents and role-only selection
 
+Current production port mapping (verified 2026-10-25): see [生产智能体端口](production-ports.md).
+The September rollout details below are historical; the four research listeners now use 8458–8461.
+
 The service catalog adds eight distinct capabilities: two coordinators and six executors.
 Travel covers culture, dining and logistics; news covers retrieval, timelines and verification.
 These are coverage areas, **not fixed teams, discovery filters or menu groups**. Coordinators
