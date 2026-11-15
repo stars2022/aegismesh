@@ -395,6 +395,10 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
       if (!mounted.current) return
       setDhConfig(cfg)
       setRealtimeMode(cfg.realtime_mode)
+      if (cfg.realtime_mode) {
+        voiceEnabled.current = true
+        setVoiceOn(true)
+      }
     }).catch(() => undefined)
     void recover(sessionRef.current)
     return () => {
@@ -858,6 +862,7 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
         </aside>
         <section className={`dh-host${speaking || listening ? ' is-speaking' : ''}`} aria-label="虚拟助手麦溪">
             <ConsoleFrame/>
+            <div className="dh-host-body">
             <div className="dh-host-caption"><h2>数字人服务</h2><span className="dh-voice-level" aria-hidden="true">{[0,1,2,3,4].map(n => <i key={n}/>)}</span></div>
             <div className="dh-avatar-chamber">
               <svg className="dh-instrument" viewBox="0 0 480 520" fill="none" aria-hidden="true" focusable="false">
@@ -879,7 +884,7 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
               <p className="dh-host-status" role="status"><span aria-hidden="true"/>{transcribing ? '正在识别语音…' : speaking ? (voiceConversation ? '正在回答，您可以直接说话打断' : '正在为您播报') : busy ? (routingStage || '正在整理答复') : listening ? '正在聆听，说完自动发送' : '请问有什么可以帮您？'}</p>
             )}
             <div className="dh-host-controls">
-              <button disabled={busy} aria-pressed={realtimeMode} title="开启后支持流式播报、自动断句与连续对话" onClick={() => { const next = !realtimeMode; endVoiceConversation(); silence(); realtimeModeRef.current = next; setRealtimeMode(next) }}><Radio size={20}/> {realtimeMode ? '实时模式：开' : '实时模式：关'}</button>
+              <button disabled={busy} aria-pressed={realtimeMode} title="开启后支持流式播报、自动断句与连续对话" onClick={() => { const next = !realtimeMode; endVoiceConversation(); silence(); realtimeModeRef.current = next; setRealtimeMode(next); if (next) { voiceEnabled.current = true; setVoiceOn(true); realtimeQueueRef.current?.prime() } }}><Radio size={20}/> {realtimeMode ? '实时模式：开' : '实时模式：关'}</button>
               <button disabled={!voiceAvailable} title={usingDeepSeekTts ? '使用 DeepSeek 语音合成' : voice ? '使用设备本地中文声音' : '当前设备没有可用的本地中文声音'} aria-pressed={voiceOn} onClick={() => { const enabled = !voiceOn; voiceEnabled.current = enabled; setVoiceOn(enabled); if (!enabled) silence(); else { realtimeQueueRef.current?.prime(); speak(`您好，我是${dhConfig.display_name || '麦溪'}，请问有什么可以帮您？`, undefined, true) } }}>{voiceOn ? <Volume2 size={20}/> : <VolumeX size={20}/>} {voiceAvailable ? voiceOn ? '关闭播报' : '开启播报' : '语音不可用'}</button>
               {!realtimeMode && <>
               <button className={`dh-dictate${listening || voiceConversation ? ' is-listening' : ''}`} disabled={!canDictate || (!voiceConversation && (transcribing || (busy && !realtimeMode)))} aria-pressed={voiceConversation || listening}
@@ -889,6 +894,7 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
               </>}
             </div>
             {voiceAvailable && <details className="dh-voice-settings"><summary>声音设置</summary>{usingDeepSeekTts ? <label>音色<select aria-label="播报音色" value={deepseekVoice} onChange={e => { silence(); setVoiceId(e.target.value) }}><option value="stella">海星（女声）</option><option value="tide">暗潮（男声）</option></select></label> : voices.length > 1 && <label>音色<select aria-label="播报音色" value={voice!.voiceURI} onChange={e => { silence(); setVoiceId(e.target.value) }}>{voices.map(v => <option value={v.voiceURI} key={v.voiceURI}>{v.name}</option>)}</select></label>}<label>语速<select aria-label="播报语速" value={voiceRate} onChange={e => { silence(); setVoiceRate(Number(e.target.value)) }}><option value={0.8}>慢速</option><option value={0.9}>舒缓</option><option value={1}>正常</option></select></label></details>}
+          </div>
         </section>
         <section className="dh-consultation" aria-label={realtimeMode ? 'Dynamic UI 实时交互区' : '智能咨询对话'}>
           <ConsoleFrame/>

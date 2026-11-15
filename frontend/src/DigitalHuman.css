@@ -272,10 +272,11 @@
   .dh-service-column { min-height: 0; overflow-y: auto; gap: clamp(12px, 2dvh, 24px); }
   .dh-guide button { min-height: clamp(58px, 8.5dvh, 90px); }
   .dh-directory-circuit { flex: 1 1 0; min-height: 0; height: auto; overflow: hidden; }
-  /* 展开声音设置等内容超出时，只在这一栏内部滚动，不撑高整页 */
-  .dh-host { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
-  .dh-avatar-chamber { flex: 1 0 auto; padding-block: clamp(8px, 2.4dvh, 26px); }
-  .dh-host-stage { height: clamp(150px, calc(100dvh - 560px), 390px); }
+  /* 展开声音设置等内容超出时，只在内部滚动区滚动，不遮挡外框角标 */
+  .dh-host { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding-bottom: 10px; }
+  .dh-host-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding-bottom: 8px; }
+  .dh-avatar-chamber { flex: 1 1 auto; min-height: 0; padding-block: clamp(6px, 1.5dvh, 20px); }
+  .dh-host-stage { height: clamp(120px, calc(100dvh - 600px), 340px); }
   .dh-composer textarea { min-height: clamp(64px, 9dvh, 102px); }
 }
 @media (min-height: 560px) and (max-width: 72rem) {
