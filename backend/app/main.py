@@ -1596,13 +1596,15 @@ async def demo_digital_human_realtime_chat(
         "2. action=\"quick_search\"：简单事实查询、最新新闻、股价/天气/汇率/单一事件检索（例如“查一下最近AI新闻”“小米今天股价”“某概念是什么”）。填写简洁的 search_query（不超过60字），reply 留空或写一句过渡语，系统会立即联网搜索并回答，绝不启动后台任务。\n"
         "3. action=\"dispatch_task\"：仅当用户明确要求深度研究、多维度财报/行业对比分析、撰写长篇方案/报告或复杂多步骤编排时使用（例如“研究一下小米公司财报并做可视化对比”）。填写 task_title（4-15字）和 task_prompt，reply 用口语立即告知用户已开始后台研究、可继续聊天。\n"
         "【预制 UI 模块（ui_blocks，仅在需要展示数据时使用，纯闲聊留 []）】：\n"
-        "允许的 block type：kpi_grid, bar_chart, table, cards, actions。\n"
+        "允许的 block type：kpi_grid, bar_chart, line_chart, pie_chart, quiz, table, cards, actions。\n"
         "- cards: {\"type\":\"cards\",\"title\":\"...\",\"items\":[{\"title\":\"...\",\"subtitle\":\"...\",\"body\":\"...\",\"badge\":\"...\",\"url\":\"...\"}]}\n"
         "- actions: {\"type\":\"actions\",\"items\":[{\"label\":\"按钮文字\",\"prompt\":\"点击后发送的问题\"}]}"
     )
     system_prompt += "\n" + DYNAMIC_UI_CONTRACT
+    ui_context_text = (payload.ui_context or "").strip() or "当前屏幕暂无交互组件"
     user_prompt = (
         f"【当前后台任务状态】\n{tasks_text}\n\n"
+        f"【当前屏幕 Dynamic UI 状态与用户选择】\n{ui_context_text}\n\n"
         f"【最近对话记录】\n{history_text}\n\n"
         f"【用户最新输入】\n{payload.message}"
     )
@@ -1765,12 +1767,14 @@ async def demo_digital_human_realtime_chat_stream(
             "1. action=\"chat\"：寒暄、日常闲聊、围绕已有结果的追问、无需实时检索的常识问答。直接给出自然口语化的 reply。\n"
             "2. action=\"quick_search\"：简单事实查询、最新新闻、股价/天气/汇率/单一事件检索。填写简洁的 search_query（不超过60字），reply 留空或写一句过渡语。\n"
             "3. action=\"dispatch_task\"：仅当用户明确要求深度研究、多维度对比分析、撰写长篇方案/报告或复杂多步骤编排时使用。填写 task_title（4-15字）和 task_prompt，reply 用口语立即告知用户已开始后台研究。\n"
-            "【预制 UI 模块（ui_blocks，纯闲聊留 []）】：kpi_grid, bar_chart, table, cards, actions。\n"
+            "【预制 UI 模块（ui_blocks，纯闲聊留 []）】：kpi_grid, bar_chart, line_chart, pie_chart, quiz, table, cards, actions。\n"
             "reply 必须适合直接语音播报（简明自然口语，2-4句，不带 Markdown）。"
         )
         system_prompt += "\n" + DYNAMIC_UI_CONTRACT
+        ui_context_text = (payload.ui_context or "").strip() or "当前屏幕暂无交互组件"
         user_prompt = (
             f"当前后台任务状态：\n{tasks_text}\n\n"
+            f"当前屏幕 Dynamic UI 状态与用户选择：\n{ui_context_text}\n\n"
             f"最近对话：\n{history_text}\n\n"
             f"用户最新输入：{payload.message}\n\n"
             "请判断路由并输出 JSON："

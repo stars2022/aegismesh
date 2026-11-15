@@ -41,6 +41,7 @@ export type RealtimeSpeechQueueOptions = {
   fetchAudio: (text: string, signal: AbortSignal) => Promise<Blob | PcmSpeechAudio>
   getPlaybackRate: () => number
   onSpeaking: (speaking: boolean) => void
+  onSentenceStart?: (sentence: string) => void
   onError: (reason?: unknown) => void
   onAllDone?: () => void
 }
@@ -135,7 +136,10 @@ export function createRealtimeSpeechQueue(options: RealtimeSpeechQueueOptions) {
         if ('sampleRate' in blob) {
           try {
             await streamPlayer.play(blob, item.abort.signal, Math.min(1.1, Math.max(.75, options.getPlaybackRate())), () => {
-              if (run === generation) options.onSpeaking(true)
+              if (run === generation) {
+                options.onSpeaking(true)
+                options.onSentenceStart?.(item.text)
+              }
             })
           } catch (error) {
             if (run === generation && !item.abort.signal.aborted) options.onError(error)
@@ -153,7 +157,10 @@ export function createRealtimeSpeechQueue(options: RealtimeSpeechQueueOptions) {
         await new Promise<void>(resolve => {
           releasePlayback = resolve
           audio.onplay = () => {
-            if (run === generation) options.onSpeaking(true)
+            if (run === generation) {
+              options.onSpeaking(true)
+              options.onSentenceStart?.(item.text)
+            }
           }
           audio.onended = () => resolve()
           audio.onerror = () => {

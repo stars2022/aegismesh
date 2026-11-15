@@ -375,6 +375,7 @@ export const api = {
       message: string
       history: { role: 'user' | 'assistant'; text: string }[]
       tasks: DigitalHumanBackgroundTaskSummary[]
+      ui_context?: string
     },
     signal?: AbortSignal,
   ) =>
@@ -386,6 +387,7 @@ export const api = {
       message: string
       history: { role: 'user' | 'assistant'; text: string }[]
       tasks: DigitalHumanBackgroundTaskSummary[]
+      ui_context?: string
     },
     handlers: {
       onStage?: (stage: string) => void

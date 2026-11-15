@@ -371,6 +371,19 @@
 .dh-dynamic-stage { overflow-y: auto; }
 .dh-dynamic-stage > * { flex-shrink: 0; }
 .dh-dynamic-stage .dh-prefab-root { flex: 1 0 auto; overflow: visible; }
+.dh-host-caption {
+  margin: 4px 0 0;
+  padding: 8px 12px;
+  max-width: 100%;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #f1f5f9;
+  font-size: 13.5px;
+  line-height: 1.5;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
 @media (min-width: 52.01rem) and (max-height: 820px) {
   .dh-voice-composer { min-height: 112px; padding: 10px; gap: 6px; }
   .digital-human .dh-voice-trigger { width: 56px; height: 56px; }

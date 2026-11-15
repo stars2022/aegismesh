@@ -416,6 +416,7 @@ class DigitalHumanRealtimeChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10000)
     history: list[DigitalHumanRealtimeChatMessage] = Field(default_factory=list, max_length=12)
     tasks: list[DigitalHumanBackgroundTaskSummary] = Field(default_factory=list, max_length=10)
+    ui_context: str = Field(default="", max_length=4000)
 
 
 class DigitalHumanRealtimeChatResponse(BaseModel):

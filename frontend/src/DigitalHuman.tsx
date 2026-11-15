@@ -17,7 +17,7 @@ import { SettingsDialog } from './SettingsDialog'
 import { DigitalHumanAvatar } from './DigitalHumanAvatar'
 import { isNearConversationEnd, readDigitalHumanPreferences } from './digitalHumanPreferences'
 import { applyTheme, loadSettings, saveSettings, type UserSettings } from './settings'
-import { DynamicUiRenderer, type DynamicUiBlock } from './DynamicUiRenderer'
+import { DynamicUiRenderer, type DynamicUiBlock, type QuizAnswerEntry } from './DynamicUiRenderer'
 import './DigitalHuman.css'
 
 const STORAGE_FULL = '浏览器存储空间已满，本次对话记录未能保存；当前对话仍可继续。'
@@ -80,6 +80,9 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
   const [routingStage, setRoutingStage] = useState('')
   const [dynamicUi, setDynamicUi] = useState<{ title: string; blocks?: DynamicUiBlock[]; html?: string; sourceText?: string } | null>(null)
   const [liveCaption, setLiveCaption] = useState('')
+  const dynamicUiRef = useRef(dynamicUi)
+  dynamicUiRef.current = dynamicUi
+  const quizAnswersRef = useRef<Record<string, QuizAnswerEntry>>({})
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const backgroundTasksRef = useRef<BackgroundTaskItem[]>([])
   const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTaskItem[]>([])
@@ -189,6 +192,7 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
     playerRef.current?.stop()
     setSpeaking(false)
     setReadingId(null)
+    setLiveCaption('')
   }
   const endVoiceConversation = () => {
     continuousFollowRef.current = false
@@ -371,6 +375,7 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
       fetchAudio: (text, signal) => api.digitalHumanSpeechAudio(text, deepseekVoiceRef.current, signal),
       getPlaybackRate: () => voiceRateRef.current,
       onSpeaking: value => { if (mounted.current) setSpeaking(value) },
+      onSentenceStart: sentence => { if (mounted.current) setLiveCaption(sentence) },
       onError: reason => {
         if (!mounted.current) return
         endVoiceConversation()
@@ -382,6 +387,7 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
         if (!mounted.current) return
         setSpeaking(false)
         setReadingId(null)
+        setLiveCaption('')
         resumeListeningRef.current()
       },
     })
@@ -567,8 +573,25 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
         stage: t.stage,
         result_preview: t.result.slice(0, 600),
       }))
+      const uiSnap = dynamicUiRef.current
+      const uiParts: string[] = []
+      if (uiSnap) {
+        if (uiSnap.title) uiParts.push(`界面标题：${uiSnap.title}`)
+        if (Array.isArray(uiSnap.blocks) && uiSnap.blocks.length > 0) {
+          uiParts.push(`界面模块：${JSON.stringify(uiSnap.blocks).slice(0, 2200)}`)
+        } else if (uiSnap.sourceText) {
+          uiParts.push(`界面内容：${uiSnap.sourceText.slice(0, 1200)}`)
+        }
+      }
+      const pickedEntries = Object.values(quizAnswersRef.current)
+      if (pickedEntries.length > 0) {
+        uiParts.push(
+          '用户当前已作答选项：\n' +
+          pickedEntries.map(e => `- ${e.question} -> 已选 ${e.key}. ${e.label}${typeof e.correct === 'boolean' ? (e.correct ? '（正确）' : '（错误）') : ''}`).join('\n')
+        )
+      }
       const res = await api.digitalHumanRealtimeChatStream(
-        { message: text, history: historyPayload, tasks: tasksPayload },
+        { message: text, history: historyPayload, tasks: tasksPayload, ui_context: uiParts.join('\n').slice(0, 3800) },
         {
           onStage: stage => {
             if (isCurrent() && stage) setRoutingStage(stage)
@@ -576,16 +599,18 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
           onSpeech: chunk => {
             if (!isCurrent() || !chunk.trim()) return
             streamedCaption = streamedCaption ? `${streamedCaption} ${chunk.trim()}` : chunk.trim()
-            setLiveCaption(streamedCaption)
             const updated = { ...sessionRef.current, messages: sessionRef.current.messages.map(m => m.id === replyId ? { ...m, text: streamedCaption } : m) }
             sessionRef.current = updated; setSession(updated)
             if (streamDeepSeekTts && !document.hidden) {
               spokenByStream = true
               realtimeQueueRef.current?.pushSpeech(chunk.trim())
+            } else {
+              setLiveCaption(chunk.trim())
             }
           },
           onUi: (uiTitle, uiBlocks) => {
             if (!isCurrent() || !uiBlocks.length) return
+            quizAnswersRef.current = {}
             setDynamicUi({ title: uiTitle || '实时交互界面', blocks: uiBlocks })
           },
         },
@@ -593,8 +618,8 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
       )
       if (!isCurrent()) return
       save(finishAssistantReply(sessionRef.current, replyId, res.reply))
-      setLiveCaption(res.reply)
       if ((res.ui_blocks && res.ui_blocks.length > 0) || (res.ui_html && res.ui_html.trim())) {
+        quizAnswersRef.current = {}
         setDynamicUi({ title: res.ui_title || '实时交互界面', blocks: res.ui_blocks, html: res.ui_html })
       }
       if (res.action === 'dispatch_task') {
@@ -603,6 +628,7 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
       if (streamDeepSeekTts && spokenByStream) {
         realtimeQueueRef.current?.flush()
       } else {
+        if (!streamDeepSeekTts && res.reply.trim()) setLiveCaption(res.reply.trim())
         speak(res.reply, replyId)
       }
     } catch (error) {
@@ -847,7 +873,11 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
               <div className="dh-host-floor" aria-hidden="true"/>
             </div>
             <div className="dh-host-name"><strong>{dhConfig.display_name || '麦溪'}</strong><span>Mesh</span></div>
-            <p className="dh-host-status" role="status"><span aria-hidden="true"/>{transcribing ? '正在识别语音…' : speaking ? (voiceConversation ? '正在回答，您可以直接说话打断' : '正在为您播报') : busy ? (routingStage || '正在整理答复') : listening ? '正在聆听，说完自动发送' : '请问有什么可以帮您？'}</p>
+            {realtimeMode && liveCaption ? (
+              <p className="dh-host-caption" role="status" aria-live="polite">{liveCaption}</p>
+            ) : (
+              <p className="dh-host-status" role="status"><span aria-hidden="true"/>{transcribing ? '正在识别语音…' : speaking ? (voiceConversation ? '正在回答，您可以直接说话打断' : '正在为您播报') : busy ? (routingStage || '正在整理答复') : listening ? '正在聆听，说完自动发送' : '请问有什么可以帮您？'}</p>
+            )}
             <div className="dh-host-controls">
               <button disabled={busy} aria-pressed={realtimeMode} title="开启后支持流式播报、自动断句与连续对话" onClick={() => { const next = !realtimeMode; endVoiceConversation(); silence(); realtimeModeRef.current = next; setRealtimeMode(next) }}><Radio size={20}/> {realtimeMode ? '实时模式：开' : '实时模式：关'}</button>
               {!realtimeMode && <>
@@ -865,10 +895,6 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
           <header className="dh-chat-heading"><h2>{realtimeMode ? (dynamicUi?.title || `${dhConfig.display_name || '麦溪'} · 实时交互`) : `与${dhConfig.display_name || '麦溪'}对话`}</h2><div>{realtimeMode && dynamicUi && <button type="button" onClick={() => setDynamicUi(null)}>清空视图</button>}<button aria-pressed={largeText} onClick={() => setLargeText(value => !value)}>大字</button><button onClick={() => { setDynamicUi(null); setLiveCaption(''); changeSession(newAssistantSession()) }} disabled={busy}><Plus size={18}/>新咨询</button></div></header>
           {realtimeMode ? (
             <div className="dh-dynamic-stage">
-              {liveCaption && <div className="dh-realtime-caption" role="status" aria-live="polite">
-                <strong>{dhConfig.display_name || '麦溪'}</strong>
-                <p>{liveCaption}</p>
-              </div>}
               {backgroundTasks.some(task => task.status !== 'completed') && <div className="dh-background-tasks" aria-label="后台协作任务">
                 {backgroundTasks.filter(task => task.status !== 'completed').slice(0, 3).map(task => <div className="dh-background-task" key={task.id} data-status={task.status}>
                   <strong>{task.title}</strong><span role="status">{task.stage}</span>
@@ -876,7 +902,7 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
               </div>}
               {dynamicUi ? (
                 (dynamicUi.blocks?.length || dynamicUi.sourceText) ? (
-                  <DynamicUiRenderer blocks={dynamicUi.blocks || []} fallbackText={dynamicUi.sourceText} onAction={prompt => submitText(prompt)} />
+                  <DynamicUiRenderer blocks={dynamicUi.blocks || []} fallbackText={dynamicUi.sourceText} onAction={prompt => submitText(prompt)} onQuizAnswer={entry => { quizAnswersRef.current[entry.id] = entry }} />
                 ) : dynamicUi.html ? (
                   <iframe
                     ref={iframeRef}

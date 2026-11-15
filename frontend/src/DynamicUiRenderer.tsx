@@ -7,7 +7,9 @@ export type { DynamicUiBlock } from './dynamicUiData'
 
 const CHART_COLORS = ['#38bdf8', '#34d399', '#a78bfa', '#fbbf24', '#f87171', '#22d3ee']
 
-function QuizBlock({ block, onAction }: { block: DynamicUiBlock; onAction: (prompt: string) => void }) {
+export type QuizAnswerEntry = { id: string; question: string; key: string; label: string; correct?: boolean }
+
+function QuizBlock({ block, onAction, onQuizAnswer }: { block: DynamicUiBlock; onAction: (prompt: string) => void; onQuizAnswer?: (entry: QuizAnswerEntry) => void }) {
   const [selected, setSelected] = useState<Record<string, string>>({})
   const questions = Array.isArray(block.questions) ? block.questions : []
   return (
@@ -34,6 +36,7 @@ function QuizBlock({ block, onAction }: { block: DynamicUiBlock; onAction: (prom
                       className={`dh-ui-quiz-opt${stateClass}`}
                       onClick={() => {
                         setSelected(prev => ({ ...prev, [q.id]: opt.key }))
+                        onQuizAnswer?.({ id: q.id, question: q.question, key: opt.key, label: opt.label, correct: opt.correct })
                         if (!hasCorrectFlag) {
                           onAction(`我选择 ${opt.key}. ${opt.label}`)
                         }
@@ -169,10 +172,12 @@ function safeHttpUrl(raw?: string): string | null {
 export function DynamicUiRenderer({
   blocks,
   onAction,
+  onQuizAnswer,
   fallbackText,
 }: {
   blocks: DynamicUiBlock[]
   onAction: (prompt: string) => void
+  onQuizAnswer?: (entry: QuizAnswerEntry) => void
   fallbackText?: string
 }) {
   const normalized = normalizeDynamicUiBlocks(blocks)
@@ -184,7 +189,7 @@ export function DynamicUiRenderer({
       {contentBlocks.map((block, index) => {
         if (!block || typeof block !== 'object') return null
 
-        if (block.type === 'quiz') return <QuizBlock key={index} block={block} onAction={onAction} />
+        if (block.type === 'quiz') return <QuizBlock key={index} block={block} onAction={onAction} onQuizAnswer={onQuizAnswer} />
 
         if (block.type === 'line_chart' && Array.isArray(block.items) && block.items.length > 0) return <LineChartBlock key={index} block={block} />
 
