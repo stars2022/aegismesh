@@ -105,10 +105,19 @@ export function createRealtimeSpeechQueue(options: RealtimeSpeechQueueOptions) {
     const run = generation
     const parts = speechText(rawText)
     for (const part of parts) {
-      const text = part.trim()
-      if (!text) continue
-      const abort = new AbortController()
-      queue.push({ text, abort })
+      const cleaned = part.trim()
+      if (!cleaned) continue
+      if (cleaned.length > 26) {
+        const { sentences, remainder } = extractCompleteSentences(cleaned)
+        const clauses = [...sentences, ...(remainder.trim() ? [remainder.trim()] : [])]
+        for (const clause of clauses) {
+          const text = clause.trim()
+          if (!text) continue
+          queue.push({ text, abort: new AbortController() })
+        }
+      } else {
+        queue.push({ text: cleaned, abort: new AbortController() })
+      }
     }
     if (!playing && queue.length > 0 && run === generation) {
       void drain(run)

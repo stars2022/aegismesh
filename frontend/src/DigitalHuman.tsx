@@ -874,14 +874,14 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
             </div>
             <div className="dh-host-name"><strong>{dhConfig.display_name || '麦溪'}</strong><span>Mesh</span></div>
             {realtimeMode && liveCaption ? (
-              <p className="dh-host-caption" role="status" aria-live="polite">{liveCaption}</p>
+              <p className="dh-host-subtitle" role="status" aria-live="polite">{liveCaption}</p>
             ) : (
               <p className="dh-host-status" role="status"><span aria-hidden="true"/>{transcribing ? '正在识别语音…' : speaking ? (voiceConversation ? '正在回答，您可以直接说话打断' : '正在为您播报') : busy ? (routingStage || '正在整理答复') : listening ? '正在聆听，说完自动发送' : '请问有什么可以帮您？'}</p>
             )}
             <div className="dh-host-controls">
               <button disabled={busy} aria-pressed={realtimeMode} title="开启后支持流式播报、自动断句与连续对话" onClick={() => { const next = !realtimeMode; endVoiceConversation(); silence(); realtimeModeRef.current = next; setRealtimeMode(next) }}><Radio size={20}/> {realtimeMode ? '实时模式：开' : '实时模式：关'}</button>
+              <button disabled={!voiceAvailable} title={usingDeepSeekTts ? '使用 DeepSeek 语音合成' : voice ? '使用设备本地中文声音' : '当前设备没有可用的本地中文声音'} aria-pressed={voiceOn} onClick={() => { const enabled = !voiceOn; voiceEnabled.current = enabled; setVoiceOn(enabled); if (!enabled) silence(); else { realtimeQueueRef.current?.prime(); speak(`您好，我是${dhConfig.display_name || '麦溪'}，请问有什么可以帮您？`, undefined, true) } }}>{voiceOn ? <Volume2 size={20}/> : <VolumeX size={20}/>} {voiceAvailable ? voiceOn ? '关闭播报' : '开启播报' : '语音不可用'}</button>
               {!realtimeMode && <>
-              <button disabled={!voiceAvailable} title={usingDeepSeekTts ? '使用 DeepSeek 语音合成' : voice ? '使用设备本地中文声音' : '当前设备没有可用的本地中文声音'} aria-pressed={voiceOn} onClick={() => { const enabled = !voiceOn; voiceEnabled.current = enabled; setVoiceOn(enabled); if (!enabled) silence(); else speak(`您好，我是${dhConfig.display_name || '麦溪'}，请问有什么可以帮您？`) }}>{voiceOn ? <Volume2 size={20}/> : <VolumeX size={20}/>} {voiceAvailable ? voiceOn ? '关闭播报' : '开启播报' : '语音不可用'}</button>
               <button className={`dh-dictate${listening || voiceConversation ? ' is-listening' : ''}`} disabled={!canDictate || (!voiceConversation && (transcribing || (busy && !realtimeMode)))} aria-pressed={voiceConversation || listening}
                 title={realtimeMode ? (voiceConversation ? '结束后释放麦克风并停止当前答复' : usingDeepSeekAsr ? '持续聆听，停顿后自动发送；回答时可直接说话打断' : '回答结束后自动继续聆听；可点击停止回答后继续提问') : '点击开始语音提问，再次点击结束录音'}
                 onClick={toggleDictation}>{voiceConversation || listening ? <MicOff size={20}/> : <Mic size={20}/>} {realtimeMode ? (voiceConversation ? '结束对话' : '开始对话') : listening ? '结束语音' : transcribing ? '识别中…' : canDictate ? '语音提问' : '语音不可用'}</button>
