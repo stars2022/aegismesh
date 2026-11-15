@@ -169,6 +169,31 @@ class WebSearchConfig(Base):
     max_queries: Mapped[int] = mapped_column(Integer, default=8)
 
 
+class DigitalHumanConfig(Base):
+    __tablename__ = "digital_human_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    realtime_mode: Mapped[bool] = mapped_column(Boolean, default=True)
+    display_name: Mapped[str] = mapped_column(String(64), default="麦溪")
+    greeting: Mapped[str] = mapped_column(String(500), default="您好，请问有什么可以帮您？")
+    tts_backend: Mapped[str] = mapped_column(String(24), default="browser")
+    tts_provider_id: Mapped[str] = mapped_column(String(64), default="")
+    tts_base_url: Mapped[str] = mapped_column(String(500), default="https://api.deepseek.com")
+    tts_api_key_ciphertext: Mapped[str] = mapped_column(Text, default="")
+    tts_voice_id: Mapped[str] = mapped_column(String(32), default="stella")
+    tts_filter_markdown: Mapped[bool] = mapped_column(Boolean, default=True)
+    tts_timeout_seconds: Mapped[float] = mapped_column(Float, default=30.0)
+    asr_backend: Mapped[str] = mapped_column(String(24), default="browser")
+    asr_provider_id: Mapped[str] = mapped_column(String(64), default="")
+    asr_base_url: Mapped[str] = mapped_column(String(500), default="https://api.deepseek.com")
+    asr_api_key_ciphertext: Mapped[str] = mapped_column(Text, default="")
+    asr_timeout_seconds: Mapped[float] = mapped_column(Float, default=30.0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
 class RoutingPolicy(Base):
     __tablename__ = "routing_policies"
 

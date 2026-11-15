@@ -10,6 +10,7 @@ export type View =
   | "logs"
   | "accounts"
   | "quotas"
+  | "digital-human"
   | "access";
 
 export const stateNames: Record<string, string> = {

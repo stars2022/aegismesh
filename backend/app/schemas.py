@@ -350,6 +350,96 @@ class WebSearchUpdate(WebSearchSettings):
     clear_exa_api_key: bool = False
 
 
+class DigitalHumanSettings(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    enabled: bool = True
+    realtime_mode: bool = True
+    display_name: str = Field(default="麦溪", min_length=1, max_length=64)
+    greeting: str = Field(default="您好，请问有什么可以帮您？", min_length=1, max_length=500)
+    tts_backend: Literal["browser", "deepseek", "disabled"] = "browser"
+    tts_provider_id: str = Field(default="", max_length=64)
+    tts_base_url: str = Field(default="https://api.deepseek.com", max_length=500)
+    tts_voice_id: Literal["stella", "tide"] = "stella"
+    tts_filter_markdown: bool = True
+    tts_timeout_seconds: float = Field(default=30.0, ge=5.0, le=120.0)
+    asr_backend: Literal["browser", "deepseek", "disabled"] = "browser"
+    asr_provider_id: str = Field(default="", max_length=64)
+    asr_base_url: str = Field(default="https://api.deepseek.com", max_length=500)
+    asr_timeout_seconds: float = Field(default=30.0, ge=5.0, le=120.0)
+
+
+class DigitalHumanRead(DigitalHumanSettings):
+    tts_key_configured: bool = False
+    asr_key_configured: bool = False
+
+
+class DigitalHumanUpdate(DigitalHumanSettings):
+    tts_api_key: str | None = Field(default=None, max_length=500)
+    clear_tts_api_key: bool = False
+    asr_api_key: str | None = Field(default=None, max_length=500)
+    clear_asr_api_key: bool = False
+
+
+class DigitalHumanPublicConfig(BaseModel):
+    enabled: bool = True
+    realtime_mode: bool = True
+    display_name: str = "麦溪"
+    greeting: str = "您好，请问有什么可以帮您？"
+    tts_backend: Literal["browser", "deepseek", "disabled"] = "browser"
+    tts_voice_id: Literal["stella", "tide"] = "stella"
+    tts_available: bool = False
+    asr_backend: Literal["browser", "deepseek", "disabled"] = "browser"
+    asr_available: bool = False
+
+
+class DigitalHumanTtsRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=10000)
+    voice_id: Literal["stella", "tide"] | None = None
+    format: Literal["wav", "pcm"] = "wav"
+
+
+class DigitalHumanRealtimeChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    text: str = Field(max_length=4000)
+
+
+class DigitalHumanBackgroundTaskSummary(BaseModel):
+    id: str = Field(max_length=128)
+    title: str = Field(max_length=120)
+    status: Literal["running", "completed", "failed", "stopped"]
+    stage: str = Field(default="", max_length=200)
+    result_preview: str = Field(default="", max_length=1000)
+
+
+class DigitalHumanRealtimeChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=10000)
+    history: list[DigitalHumanRealtimeChatMessage] = Field(default_factory=list, max_length=12)
+    tasks: list[DigitalHumanBackgroundTaskSummary] = Field(default_factory=list, max_length=10)
+
+
+class DigitalHumanRealtimeChatResponse(BaseModel):
+    reply: str
+    action: Literal["chat", "quick_search", "dispatch_task"] = "chat"
+    task_prompt: str = ""
+    task_title: str = ""
+    ui_title: str = ""
+    ui_blocks: list[dict[str, Any]] = Field(default_factory=list)
+    ui_html: str = ""
+
+
+class DigitalHumanSynthesizeUiRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=30000)
+
+
+class DigitalHumanSynthesizeUiResponse(BaseModel):
+    ui_title: str
+    ui_blocks: list[dict[str, Any]] = Field(default_factory=list)
+    ui_html: str = ""
+    summary_speech: str
+
+
 class ProviderCreate(BaseModel):
     id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
     name: str = Field(min_length=1, max_length=120)

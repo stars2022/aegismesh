@@ -33,7 +33,7 @@ export type SpeechInput = { start: () => void; stop: () => void; cancel: () => v
  * 说完一句话后自动结束。`onText` 收到本次识别到的完整文字（含尚未确认的部分），
  * `onEnd` 在结束时调用；出错时 `onError` 收到可直接展示的中文提示。
  */
-export function createSpeechInput(handlers: { onText: (text: string, final: boolean) => void; onEnd: () => void; onError: (message: string) => void }): SpeechInput | null {
+export function createSpeechInput(handlers: { onText: (text: string, final: boolean) => void; onEnd: () => void; onError: (message: string, code?: string) => void }): SpeechInput | null {
   const Constructor = recognitionConstructor()
   if (!Constructor) return null
   const recognition = new Constructor()
@@ -41,7 +41,9 @@ export function createSpeechInput(handlers: { onText: (text: string, final: bool
   recognition.interimResults = true
   recognition.continuous = false
   recognition.maxAlternatives = 1
+  let cancelled = false
   recognition.onresult = event => {
+    if (cancelled) return
     let text = ''
     let final = true
     for (let index = 0; index < event.results.length; index++) {
@@ -51,12 +53,16 @@ export function createSpeechInput(handlers: { onText: (text: string, final: bool
     handlers.onText(text.trim(), final)
   }
   recognition.onerror = event => {
-    if (event.error !== 'aborted') handlers.onError(errorMessages[event.error] || '语音识别没有成功，请再试一次。')
+    if (!cancelled && event.error !== 'aborted') handlers.onError(errorMessages[event.error] || '语音识别没有成功，请再试一次。', event.error)
   }
-  recognition.onend = () => handlers.onEnd()
+  recognition.onend = () => { if (!cancelled) handlers.onEnd() }
   return {
     start: () => recognition.start(),
     stop: () => recognition.stop(),
-    cancel: () => recognition.abort(),
+    cancel: () => {
+      cancelled = true
+      recognition.onresult = null; recognition.onend = null; recognition.onerror = null
+      recognition.abort()
+    },
   }
 }

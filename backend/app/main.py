@@ -20,7 +20,7 @@ from .services.adaptive_lease import AdaptiveDeadlineController, TASK_PROFILES
 
 import httpx
 from pathlib import Path
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
@@ -55,6 +55,7 @@ from .models import (
     RoutingPolicy,
     TraceEvent,
     WebSearchConfig,
+    DigitalHumanConfig,
 )
 from .schemas import (
     AgentCreate,
@@ -70,6 +71,14 @@ from .schemas import (
     DiscoveryQuery,
     DiscoveryImportRequest,
     DemoLogin,
+    DigitalHumanPublicConfig,
+    DigitalHumanRead,
+    DigitalHumanRealtimeChatRequest,
+    DigitalHumanRealtimeChatResponse,
+    DigitalHumanSynthesizeUiRequest,
+    DigitalHumanSynthesizeUiResponse,
+    DigitalHumanTtsRequest,
+    DigitalHumanUpdate,
     GroupChatCreate,
     GroupChatMessageIn,
     FeedbackRead,
@@ -93,7 +102,15 @@ from .services.tools import ToolRegistry
 from .account_api import account_router
 from .services.identity import IdentityMiddleware, ConversationOwnershipError, bind_conversation
 from .services import quotas
+from .services.model_budget import reserve_model, settle_model, usage_scope
 from .services.web_search import configured_search, supports_deepseek_search
+from .services.digital_human_speech import (
+    MAX_ASR_AUDIO_BYTES,
+    is_official_deepseek_provider,
+    stream_tts,
+    synthesize_tts,
+    transcribe_asr,
+)
 from .services.transport import TransportRegistry
 from .services.orchestrator import NoEligibleAgentError, ReliableOrchestrator
 from .services.runtime_recovery import INTERRUPTED_MESSAGE, recover_interrupted_runtime
@@ -105,6 +122,7 @@ from .services.certificates import CertificateError, issue_certificate
 from .services.aip_tls import public_aip_base
 from .services.registration import RegistryClient, RegistrationError, validate_registration_acs
 from .services.discovery import AdpDiscoveryClient, DiscoveryError, health_from_alive_map
+from .services.digital_human_ui import DYNAMIC_UI_CONTRACT
 from .services.discovery_pool import discovery_candidates, rank_discovery
 from .services.amp_service import amp_service
 from .services.observability import AdminAuditMiddleware, LogQuery, index_loop, index_status, list_logs, log_read, query_conditions, safe_text
@@ -260,6 +278,24 @@ def initialize_schema() -> None:
                 connection.execute(text(
                     "ALTER TABLE canvas_docs ADD COLUMN owner_id VARCHAR(128) DEFAULT ''"
                 ))
+        if "digital_human_configs" in inspect(connection).get_table_names():
+            dh_columns = {
+                item["name"] for item in inspect(connection).get_columns("digital_human_configs")
+            }
+            if "realtime_mode" not in dh_columns:
+                connection.execute(text(
+                    "ALTER TABLE digital_human_configs ADD COLUMN realtime_mode BOOLEAN DEFAULT 1"
+                ))
+            for col_name, col_ddl in (
+                ("tts_base_url", "VARCHAR(500) DEFAULT 'https://api.deepseek.com'"),
+                ("tts_api_key_ciphertext", "TEXT DEFAULT ''"),
+                ("asr_base_url", "VARCHAR(500) DEFAULT 'https://api.deepseek.com'"),
+                ("asr_api_key_ciphertext", "TEXT DEFAULT ''"),
+            ):
+                if col_name not in dh_columns:
+                    connection.execute(text(
+                        f"ALTER TABLE digital_human_configs ADD COLUMN {col_name} {col_ddl}"
+                    ))
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_schema()
@@ -1106,6 +1142,12 @@ def delete_provider(provider_id: str, db: DbSession) -> Response:
     search = db.get(WebSearchConfig, 1)
     if search and search.backend in {"deepseek", "deepseek_native"} and search.deepseek_provider_id == provider_id:
         raise HTTPException(status_code=409, detail="供应商仍被联网搜索使用，请先更改搜索设置")
+    digital_human = db.get(DigitalHumanConfig, 1)
+    if digital_human and (
+        (digital_human.tts_backend == "deepseek" and digital_human.tts_provider_id == provider_id)
+        or (digital_human.asr_backend == "deepseek" and digital_human.asr_provider_id == provider_id)
+    ):
+        raise HTTPException(status_code=409, detail="供应商仍被数字人语音配置使用，请先更改数字人设置")
     db.delete(provider)
     db.commit()
     return Response(status_code=204)
@@ -1195,6 +1237,766 @@ async def test_search_settings(payload: WebSearchUpdate, db: DbSession) -> dict:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"ok": True, "latency_ms": round((time.monotonic() - started) * 1000),
             "backend": payload.backend, "sources": result["sources"], "usage": result.get("_usage", {})}
+
+
+def digital_human_config_read(config: DigitalHumanConfig | None) -> DigitalHumanRead:
+    if config is None:
+        return DigitalHumanRead()
+    return DigitalHumanRead(
+        **DigitalHumanRead.model_validate(config).model_dump(exclude={"tts_key_configured", "asr_key_configured"}),
+        tts_key_configured=bool(config.tts_api_key_ciphertext),
+        asr_key_configured=bool(config.asr_api_key_ciphertext),
+    )
+
+
+def prepare_digital_human_config(payload: DigitalHumanUpdate, db: Session) -> DigitalHumanConfig:
+    old = db.get(DigitalHumanConfig, 1)
+    config = DigitalHumanConfig(
+        id=1,
+        **payload.model_dump(exclude={"tts_api_key", "clear_tts_api_key", "asr_api_key", "clear_asr_api_key"}),
+        tts_api_key_ciphertext=old.tts_api_key_ciphertext if old else "",
+        asr_api_key_ciphertext=old.asr_api_key_ciphertext if old else "",
+    )
+    if payload.tts_api_key and payload.clear_tts_api_key:
+        raise HTTPException(status_code=422, detail="不能同时更新和清除语音合成密钥")
+    if payload.asr_api_key and payload.clear_asr_api_key:
+        raise HTTPException(status_code=422, detail="不能同时更新和清除语音识别密钥")
+    try:
+        if payload.tts_api_key and payload.tts_api_key.strip():
+            config.tts_api_key_ciphertext = encrypt_api_key(payload.tts_api_key.strip())
+        elif payload.clear_tts_api_key:
+            config.tts_api_key_ciphertext = ""
+        if payload.asr_api_key and payload.asr_api_key.strip():
+            config.asr_api_key_ciphertext = encrypt_api_key(payload.asr_api_key.strip())
+        elif payload.clear_asr_api_key:
+            config.asr_api_key_ciphertext = ""
+
+        if config.tts_backend == "deepseek":
+            if not config.tts_api_key_ciphertext:
+                provider = db.get(ProviderConfig, config.tts_provider_id)
+                if not is_official_deepseek_provider(provider):
+                    raise HTTPException(status_code=422, detail="请填写独立的语音合成 API Key，或选择启用的 api.deepseek.com 官方供应商")
+                resolve_api_key(provider)
+            else:
+                from .services.digital_human_speech import normalize_speech_base_url
+                config.tts_base_url = normalize_speech_base_url(config.tts_base_url)
+        if config.asr_backend == "deepseek":
+            if not config.asr_api_key_ciphertext:
+                provider = db.get(ProviderConfig, config.asr_provider_id)
+                if not is_official_deepseek_provider(provider):
+                    raise HTTPException(status_code=422, detail="请填写独立的语音识别 API Key，或选择启用的 api.deepseek.com 官方供应商")
+                resolve_api_key(provider)
+            else:
+                from .services.digital_human_speech import normalize_speech_base_url
+                config.asr_base_url = normalize_speech_base_url(config.asr_base_url)
+    except (ProviderSecretError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return config
+
+
+@app.get("/api/admin/digital-human", response_model=DigitalHumanRead, dependencies=[Depends(require_admin)], tags=["digital-human"])
+def read_digital_human_settings(db: DbSession) -> DigitalHumanRead:
+    return digital_human_config_read(db.get(DigitalHumanConfig, 1))
+
+
+@app.put("/api/admin/digital-human", response_model=DigitalHumanRead, dependencies=[Depends(require_admin)], tags=["digital-human"])
+def update_digital_human_settings(payload: DigitalHumanUpdate, db: DbSession) -> DigitalHumanRead:
+    config = db.merge(prepare_digital_human_config(payload, db))
+    db.commit()
+    return digital_human_config_read(config)
+
+
+@app.post("/api/admin/digital-human/test-tts", dependencies=[Depends(require_admin)], tags=["digital-human"])
+async def test_digital_human_tts(
+    payload: DigitalHumanUpdate,
+    db: DbSession,
+    text: str = Query(default="您好，我是麦溪，DeepSeek 语音合成测试成功。", min_length=1, max_length=500),
+) -> Response:
+    if payload.tts_backend != "deepseek":
+        raise HTTPException(status_code=422, detail="请先将语音合成后端切换为 DeepSeek 再测试")
+    config = prepare_digital_human_config(payload, db)
+    provider = db.get(ProviderConfig, config.tts_provider_id)
+    try:
+        audio = await synthesize_tts(
+            provider,
+            text=text,
+            voice_id=config.tts_voice_id,
+            filter_markdown=config.tts_filter_markdown,
+            timeout_seconds=config.tts_timeout_seconds,
+            base_url=config.tts_base_url,
+            api_key_ciphertext=config.tts_api_key_ciphertext,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/admin/digital-human/test-asr", dependencies=[Depends(require_admin)], tags=["digital-human"])
+async def test_digital_human_asr(
+    db: DbSession,
+    file: UploadFile = File(...),
+    provider_id: str = Form(default=""),
+    base_url: str = Form(default=""),
+    api_key: str = Form(default=""),
+    timeout_seconds: float = Form(default=30.0),
+) -> dict[str, Any]:
+    config = db.get(DigitalHumanConfig, 1)
+    provider = db.get(ProviderConfig, provider_id) if provider_id else None
+    saved_cipher = config.asr_api_key_ciphertext if config else ""
+    effective_base_url = base_url or (config.asr_base_url if config else "")
+    if not api_key.strip() and not saved_cipher and not is_official_deepseek_provider(provider):
+        raise HTTPException(status_code=422, detail="请填写独立的语音识别 API Key，或选择启用的 api.deepseek.com 官方供应商")
+    audio_bytes = await file.read(MAX_ASR_AUDIO_BYTES + 1)
+    if len(audio_bytes) > MAX_ASR_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="音频文件不能超过 8 MiB")
+    started = time.monotonic()
+    try:
+        result = await transcribe_asr(
+            provider,
+            audio_bytes=audio_bytes,
+            filename=file.filename or "speech.wav",
+            content_type=file.content_type or "audio/wav",
+            timeout_seconds=max(5.0, min(120.0, timeout_seconds)),
+            base_url=effective_base_url,
+            api_key_ciphertext=saved_cipher,
+            raw_api_key=api_key,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "latency_ms": round((time.monotonic() - started) * 1000),
+        "text": result["text"],
+        "duration_ms": result["duration_ms"],
+    }
+
+
+@app.get("/api/demo/digital-human/config", response_model=DigitalHumanPublicConfig, dependencies=[Depends(require_demo)], tags=["demo"])
+def demo_digital_human_config(db: DbSession) -> DigitalHumanPublicConfig:
+    config = db.get(DigitalHumanConfig, 1)
+    if config is None:
+        return DigitalHumanPublicConfig()
+    tts_available = False
+    if config.tts_backend == "deepseek":
+        if config.tts_api_key_ciphertext:
+            tts_available = True
+        else:
+            provider = db.get(ProviderConfig, config.tts_provider_id)
+            try:
+                tts_available = is_official_deepseek_provider(provider) and bool(resolve_api_key(provider))
+            except ProviderSecretError:
+                tts_available = False
+    elif config.tts_backend == "browser":
+        tts_available = True
+    asr_available = False
+    if config.asr_backend == "deepseek":
+        if config.asr_api_key_ciphertext:
+            asr_available = True
+        else:
+            provider = db.get(ProviderConfig, config.asr_provider_id)
+            try:
+                asr_available = is_official_deepseek_provider(provider) and bool(resolve_api_key(provider))
+            except ProviderSecretError:
+                asr_available = False
+    elif config.asr_backend == "browser":
+        asr_available = True
+    return DigitalHumanPublicConfig(
+        enabled=config.enabled,
+        realtime_mode=config.realtime_mode,
+        display_name=config.display_name,
+        greeting=config.greeting,
+        tts_backend=config.tts_backend,
+        tts_voice_id=config.tts_voice_id,
+        tts_available=tts_available,
+        asr_backend=config.asr_backend,
+        asr_available=asr_available,
+    )
+
+
+@app.post("/api/demo/digital-human/tts", dependencies=[Depends(require_demo)], tags=["demo"])
+async def demo_digital_human_tts(payload: DigitalHumanTtsRequest, request: Request, db: DbSession) -> StreamingResponse:
+    config = db.get(DigitalHumanConfig, 1)
+    if not config or not config.enabled:
+        raise HTTPException(status_code=403, detail="数字人服务暂未启用")
+    if config.tts_backend != "deepseek":
+        raise HTTPException(status_code=400, detail="当前未启用 DeepSeek 语音合成")
+    provider = db.get(ProviderConfig, config.tts_provider_id)
+    owner_id = getattr(request.state, "owner_id", None) or "demo"
+    req_id = getattr(request.state, "audit_request_id", None) or uuid.uuid4().hex[:12]
+    with usage_scope(owner_id, f"dh-tts-{owner_id[:16]}", f"dh-tts-{req_id}", SessionLocal):
+        ticket = reserve_model(
+            {"model": "deepseek-tts", "max_tokens": max(64, len(payload.text))},
+            provider_id=provider.id if provider else "default",
+        )
+    text = payload.text
+    voice_id = payload.voice_id or config.tts_voice_id
+    filter_markdown = config.tts_filter_markdown
+    timeout_seconds = config.tts_timeout_seconds
+    base_url = config.tts_base_url
+    api_key_ciphertext = config.tts_api_key_ciphertext
+
+    def _on_complete(total_bytes: int) -> None:
+        settle_model(ticket, {"prompt_tokens": len(text) if total_bytes else 0, "completion_tokens": max(32, total_bytes // 1024) if total_bytes else 0})
+
+    stream = stream_tts(
+        provider,
+        text=text,
+        voice_id=voice_id,
+        filter_markdown=filter_markdown,
+        timeout_seconds=timeout_seconds,
+        base_url=base_url,
+        api_key_ciphertext=api_key_ciphertext,
+        on_complete=_on_complete,
+        audio_format=payload.format,
+    )
+    try:
+        first_chunk = await stream.__anext__()
+    except StopAsyncIteration as exc:
+        raise HTTPException(status_code=502, detail="DeepSeek 语音合成未返回音频数据") from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    async def body_iter():
+        try:
+            yield first_chunk
+            async for chunk in stream:
+                yield chunk
+        finally:
+            await stream.aclose()
+
+    return StreamingResponse(
+        body_iter(),
+        media_type="audio/pcm" if payload.format == "pcm" else "audio/wav",
+        headers={"Cache-Control": "no-store", "X-Audio-Sample-Rate": "24000", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/demo/digital-human/asr", dependencies=[Depends(require_demo)], tags=["demo"])
+async def demo_digital_human_asr(
+    request: Request,
+    db: DbSession,
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    config = db.get(DigitalHumanConfig, 1)
+    if not config or not config.enabled:
+        raise HTTPException(status_code=403, detail="数字人服务暂未启用")
+    if config.asr_backend != "deepseek":
+        raise HTTPException(status_code=400, detail="当前未启用 DeepSeek 语音识别")
+    provider = db.get(ProviderConfig, config.asr_provider_id)
+    audio_bytes = await file.read(MAX_ASR_AUDIO_BYTES + 1)
+    if len(audio_bytes) > MAX_ASR_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="音频文件不能超过 8 MiB")
+    owner_id = getattr(request.state, "owner_id", None) or "demo"
+    req_id = getattr(request.state, "audit_request_id", None) or uuid.uuid4().hex[:12]
+    with usage_scope(owner_id, f"dh-asr-{owner_id[:16]}", f"dh-asr-{req_id}", SessionLocal):
+        ticket = reserve_model(
+            {"model": "deepseek-asr", "max_tokens": max(64, len(audio_bytes) // 2048)},
+            provider_id=provider.id if provider else "default",
+        )
+        try:
+            result = await transcribe_asr(
+                provider,
+                audio_bytes=audio_bytes,
+                filename=file.filename or "speech.wav",
+                content_type=file.content_type or "audio/wav",
+                timeout_seconds=config.asr_timeout_seconds,
+                base_url=config.asr_base_url,
+                api_key_ciphertext=config.asr_api_key_ciphertext,
+            )
+            settle_model(ticket, {"prompt_tokens": max(32, len(audio_bytes) // 2048), "completion_tokens": len(result.get("text") or "")})
+        except (RuntimeError, ValueError) as exc:
+            settle_model(ticket, {"prompt_tokens": 0, "completion_tokens": 0})
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"text": result["text"], "duration_ms": result["duration_ms"]}
+
+
+def _pick_realtime_chat_provider(db: Session, config: DigitalHumanConfig | None) -> ProviderConfig | None:
+    candidate_ids: list[str] = []
+    if config:
+        if config.tts_provider_id:
+            candidate_ids.append(config.tts_provider_id)
+        if config.asr_provider_id:
+            candidate_ids.append(config.asr_provider_id)
+    leader = db.scalar(select(Agent).where(Agent.role == "leader", Agent.active == True))
+    if leader and leader.model_provider:
+        candidate_ids.append(leader.model_provider)
+    for pid in candidate_ids:
+        provider = db.get(ProviderConfig, pid)
+        if provider and provider.active:
+            try:
+                if resolve_api_key(provider):
+                    return provider
+            except ProviderSecretError:
+                continue
+    for provider in db.scalars(select(ProviderConfig).where(ProviderConfig.active == True)).all():
+        try:
+            if resolve_api_key(provider):
+                return provider
+        except ProviderSecretError:
+            continue
+    return None
+
+
+def _extract_transport_text(result: Any) -> str:
+    return (result.text if hasattr(result, "text") else str(result or "")).strip()
+
+
+def _strip_json_fences(raw: Any) -> str:
+    text = _extract_transport_text(raw)
+    if text.startswith("```json"):
+        text = text[7:].strip()
+    if text.startswith("```"):
+        text = text[3:].strip()
+    if text.endswith("```"):
+        text = text[:-3].strip()
+    return text
+
+
+@app.post(
+    "/api/demo/digital-human/realtime-chat",
+    response_model=DigitalHumanRealtimeChatResponse,
+    dependencies=[Depends(require_demo)],
+    tags=["demo"],
+)
+async def demo_digital_human_realtime_chat(
+    payload: DigitalHumanRealtimeChatRequest,
+    request: Request,
+    db: DbSession,
+) -> DigitalHumanRealtimeChatResponse:
+    config = db.get(DigitalHumanConfig, 1)
+    if config and not config.enabled:
+        raise HTTPException(status_code=403, detail="数字人服务暂未启用")
+    display_name = config.display_name if config else "麦溪"
+    provider = _pick_realtime_chat_provider(db, config)
+    if provider is None:
+        return DigitalHumanRealtimeChatResponse(
+            reply="好的，我已经安排后台任务为您处理，您可以继续和我交流，完成后我会第一时间告诉您。",
+            action="dispatch_task",
+            task_prompt=payload.message,
+            task_title=payload.message.strip()[:16] or "后台任务",
+        )
+
+    tasks_text = "\n".join(
+        f"- [{t.status}] {t.title}"
+        + (f"（阶段：{t.stage}）" if t.stage else "")
+        + (f"｜结果摘要：{t.result_preview[:240]}" if t.result_preview else "")
+        for t in payload.tasks
+    ) or "暂无后台任务"
+    history_text = "\n".join(
+        f"{'用户' if m.role == 'user' else display_name}：{m.text[:400]}"
+        for m in payload.history[-6:]
+    ) or "（新对话）"
+
+    system_prompt = (
+        f"你是数字人实时助手「{display_name}」，负责对用户输入做精准的三级路由，并可组合预制 Dynamic UI 模块。\n"
+        "请严格输出一个 JSON 对象，不要输出 Markdown 代码块，字段如下：\n"
+        '{"reply": string, "action": "chat" | "quick_search" | "dispatch_task", "search_query": string, "task_prompt": string, "task_title": string, "ui_title": string, "ui_blocks": array}\n'
+        "【三级路由规则（严禁把简单问题全扔给后台任务！）】：\n"
+        "1. action=\"chat\"：寒暄、日常闲聊、围绕已有结果的追问、无需实时检索的常识问答。直接给出自然口语化的 reply。\n"
+        "2. action=\"quick_search\"：简单事实查询、最新新闻、股价/天气/汇率/单一事件检索（例如“查一下最近AI新闻”“小米今天股价”“某概念是什么”）。填写简洁的 search_query（不超过60字），reply 留空或写一句过渡语，系统会立即联网搜索并回答，绝不启动后台任务。\n"
+        "3. action=\"dispatch_task\"：仅当用户明确要求深度研究、多维度财报/行业对比分析、撰写长篇方案/报告或复杂多步骤编排时使用（例如“研究一下小米公司财报并做可视化对比”）。填写 task_title（4-15字）和 task_prompt，reply 用口语立即告知用户已开始后台研究、可继续聊天。\n"
+        "【预制 UI 模块（ui_blocks，仅在需要展示数据时使用，纯闲聊留 []）】：\n"
+        "允许的 block type：kpi_grid, bar_chart, table, cards, actions。\n"
+        "- cards: {\"type\":\"cards\",\"title\":\"...\",\"items\":[{\"title\":\"...\",\"subtitle\":\"...\",\"body\":\"...\",\"badge\":\"...\",\"url\":\"...\"}]}\n"
+        "- actions: {\"type\":\"actions\",\"items\":[{\"label\":\"按钮文字\",\"prompt\":\"点击后发送的问题\"}]}"
+    )
+    system_prompt += "\n" + DYNAMIC_UI_CONTRACT
+    user_prompt = (
+        f"【当前后台任务状态】\n{tasks_text}\n\n"
+        f"【最近对话记录】\n{history_text}\n\n"
+        f"【用户最新输入】\n{payload.message}"
+    )
+    chat_agent = Agent(
+        id="digital-human-realtime-chat",
+        aic="",
+        name=display_name,
+        role="partner",
+        system_prompt=system_prompt,
+        tools=[],
+        skills=[],
+        model_name=provider.default_model,
+        streaming_enabled=False,
+    )
+    transport = TransportRegistry().get(provider.kind)
+    request_id = getattr(request.state, "audit_request_id", None) or uuid.uuid4().hex
+    owner_id = getattr(request.state, "owner_id", None) or "demo"
+    quota_id = f"dh-rt-{uuid.uuid4().hex[:12]}"
+    dh_session_id = f"dh-rt-{owner_id[:16]}"
+    quotas.reserve(db, owner=owner_id, entry_id=quota_id, session_id=dh_session_id, resource="tasks", amount=1)
+    try:
+        with usage_scope(owner_id, dh_session_id, quota_id, SessionLocal):
+            raw = await transport.execute(
+                chat_agent,
+                user_prompt,
+                timeout_seconds=18.0,
+                provider=provider,
+                session_id=f"dh-rt-{request_id}",
+                max_rounds=0,
+                structured_output=True,
+            )
+            parsed = json.loads(_strip_json_fences(raw))
+            action = parsed.get("action") if parsed.get("action") in {"chat", "quick_search", "dispatch_task"} else "chat"
+            if action == "quick_search":
+                search_query = str(parsed.get("search_query") or payload.message).strip()[:120]
+                search_handler = configured_search(db, provider, {}, max_queries=2)
+                if search_handler is not None:
+                    try:
+                        search_data = await search_handler({"query": search_query})
+                        sources = search_data.get("sources") or []
+                        summary_prompt = (
+                            f"用户问题：{payload.message}\n"
+                            f"联网检索结果：{json.dumps(search_data, ensure_ascii=False)[:8000]}\n\n"
+                            "请严格输出一个 JSON 对象（不要 Markdown 代码块）：\n"
+                            '{"reply": "2-3句适合语音播报的简明回答", "ui_title": "简短标题", "ui_blocks": [...]}\n'
+                            "ui_blocks 可组合 cards（展示检索要点与来源 url）和 actions（1-3个快捷追问按钮）。"
+                            + DYNAMIC_UI_CONTRACT
+                        )
+                        summary_raw = await transport.execute(
+                            chat_agent,
+                            summary_prompt,
+                            timeout_seconds=18.0,
+                            provider=provider,
+                            session_id=f"dh-qs-{request_id}",
+                            max_rounds=0,
+                            structured_output=True,
+                        )
+                        sp = json.loads(_strip_json_fences(summary_raw))
+                        blocks = sp.get("ui_blocks") if isinstance(sp.get("ui_blocks"), list) else []
+                        if not blocks and sources:
+                            blocks = [{
+                                "type": "cards",
+                                "title": "检索来源",
+                                "items": [
+                                    {"title": s.get("title") or s.get("url", ""), "body": s.get("snippet", ""), "url": s.get("url", "")}
+                                    for s in sources[:4] if isinstance(s, dict)
+                                ],
+                            }]
+                        quotas.settle(db, quota_id, success=True)
+                        return DigitalHumanRealtimeChatResponse(
+                            reply=str(sp.get("reply") or "我已为您查到最新信息，详细来源已展示在界面上。").strip(),
+                            action="quick_search",
+                            ui_title=str(sp.get("ui_title") or search_query)[:120],
+                            ui_blocks=blocks[:8],
+                        )
+                    except quotas.QuotaExceeded:
+                        raise
+                    except Exception:
+                        pass
+                # If search is disabled or failed, fall back cleanly to direct chat answer.
+                action = "chat"
+            reply = str(parsed.get("reply") or "").strip()
+            if not reply:
+                reply = "好的，我明白了。" if action == "chat" else "好的，我已经安排后台任务为您处理，您可以继续和我聊天。"
+            blocks = parsed.get("ui_blocks") if isinstance(parsed.get("ui_blocks"), list) else []
+            # dispatch_task immediately launches assistantChatStream which reserves its own task turn
+            quotas.settle(db, quota_id, success=(action != "dispatch_task"))
+            return DigitalHumanRealtimeChatResponse(
+                reply=reply,
+                action=action,
+                task_prompt=str(parsed.get("task_prompt") or payload.message)[:10000] if action == "dispatch_task" else "",
+                task_title=str(parsed.get("task_title") or payload.message[:16])[:120] if action == "dispatch_task" else "",
+                ui_title=str(parsed.get("ui_title") or "")[:120],
+                ui_blocks=blocks[:8],
+                ui_html="",
+            )
+    except quotas.QuotaExceeded:
+        quotas.settle(db, quota_id, success=False)
+        raise
+    except Exception as exc:
+        logger.warning("digital-human realtime-chat fallback: %s", exc)
+        quotas.settle(db, quota_id, success=False)
+        return DigitalHumanRealtimeChatResponse(
+            reply="我刚刚走神了一下，您可以再说一遍吗？如果是需要深度研究的任务，也可以直接告诉我。",
+            action="chat",
+        )
+
+
+@app.post("/api/demo/digital-human/realtime-chat/stream", dependencies=[Depends(require_demo)], tags=["demo"])
+async def demo_digital_human_realtime_chat_stream(
+    payload: DigitalHumanRealtimeChatRequest,
+    request: Request,
+    db: DbSession,
+) -> StreamingResponse:
+    """Stream real-time routing stages, immediate spoken chunks, and Dynamic UI blocks via SSE."""
+    from .services.digital_human_stream import stream_realtime_result
+    config = db.get(DigitalHumanConfig, 1)
+    if config and not config.enabled:
+        raise HTTPException(status_code=403, detail="数字人服务暂未启用")
+    owner_id = getattr(request.state, "owner_id", None) or "demo"
+    quota_id = f"dh-rt-{uuid.uuid4().hex[:12]}"
+    dh_session_id = f"dh-rt-{owner_id[:16]}"
+    quotas.reserve(db, owner=owner_id, entry_id=quota_id, session_id=dh_session_id, resource="tasks", amount=1)
+
+    display_name = config.display_name if config else "麦溪"
+    provider = _pick_realtime_chat_provider(db, config)
+    request_id = getattr(request.state, "audit_request_id", None) or uuid.uuid4().hex
+
+    def _sse(event_name: str, data: dict[str, Any]) -> str:
+        return f"event: {event_name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    async def event_stream():
+        if provider is None:
+            quotas.settle(db, quota_id, success=False)
+            resp = DigitalHumanRealtimeChatResponse(
+                reply="好的，我已经安排后台任务为您处理，您可以继续和我交流，完成后我会第一时间告诉您。",
+                action="dispatch_task",
+                task_prompt=payload.message,
+                task_title=payload.message.strip()[:16] or "后台任务",
+            )
+            yield _sse("speech", {"text": resp.reply})
+            yield _sse("done", resp.model_dump())
+            return
+
+        tasks_text = "\n".join(
+            f"- [{t.status}] {t.title}"
+            + (f"（阶段：{t.stage}）" if t.stage else "")
+            + (f"｜结果摘要：{t.result_preview[:240]}" if t.result_preview else "")
+            for t in payload.tasks
+        ) or "暂无后台任务"
+        history_text = "\n".join(
+            f"{'用户' if m.role == 'user' else display_name}：{m.text[:400]}"
+            for m in payload.history[-6:]
+        ) or "（新对话）"
+        system_prompt = (
+            f"你是数字人实时助手「{display_name}」，负责对用户输入做精准的三级路由，并可组合预制 Dynamic UI 模块。\n"
+            "请严格输出一个 JSON 对象，不要输出 Markdown 代码块。先写 action，再写 reply，最后写其他字段：\n"
+            '{"action": "chat" | "quick_search" | "dispatch_task", "reply": string, "search_query": string, "task_prompt": string, "task_title": string, "ui_title": string, "ui_blocks": array}\n'
+            "【三级路由规则（严禁把简单问题全扔给后台任务！）】：\n"
+            "1. action=\"chat\"：寒暄、日常闲聊、围绕已有结果的追问、无需实时检索的常识问答。直接给出自然口语化的 reply。\n"
+            "2. action=\"quick_search\"：简单事实查询、最新新闻、股价/天气/汇率/单一事件检索。填写简洁的 search_query（不超过60字），reply 留空或写一句过渡语。\n"
+            "3. action=\"dispatch_task\"：仅当用户明确要求深度研究、多维度对比分析、撰写长篇方案/报告或复杂多步骤编排时使用。填写 task_title（4-15字）和 task_prompt，reply 用口语立即告知用户已开始后台研究。\n"
+            "【预制 UI 模块（ui_blocks，纯闲聊留 []）】：kpi_grid, bar_chart, table, cards, actions。\n"
+            "reply 必须适合直接语音播报（简明自然口语，2-4句，不带 Markdown）。"
+        )
+        system_prompt += "\n" + DYNAMIC_UI_CONTRACT
+        user_prompt = (
+            f"当前后台任务状态：\n{tasks_text}\n\n"
+            f"最近对话：\n{history_text}\n\n"
+            f"用户最新输入：{payload.message}\n\n"
+            "请判断路由并输出 JSON："
+        )
+        chat_agent = Agent(
+            id="digital-human-realtime",
+            aic="",
+            name=display_name,
+            role="partner",
+            system_prompt=system_prompt,
+            tools=[],
+            skills=[],
+            model_name=provider.default_model,
+            streaming_enabled=True,
+        )
+        transport = TransportRegistry().get(provider.kind)
+        try:
+            with usage_scope(owner_id, dh_session_id, quota_id, SessionLocal):
+                yield _sse("stage", {"stage": "正在理解您的意图…"})
+                raw = None
+                spoken_reply = ""
+                async for kind, value in stream_realtime_result(
+                    transport, chat_agent, user_prompt, timeout_seconds=18.0, provider=provider,
+                    session_id=f"dh-rt-{request_id}", max_rounds=0, structured_output=True,
+                ):
+                    if kind == "speech":
+                        spoken_reply = value
+                        yield _sse("speech", {"text": value})
+                    else:
+                        raw = value
+                parsed = json.loads(_strip_json_fences(raw))
+                action = parsed.get("action") if parsed.get("action") in {"chat", "quick_search", "dispatch_task"} else "chat"
+                if action == "quick_search":
+                    search_query = str(parsed.get("search_query") or payload.message).strip()[:120]
+                    search_handler = configured_search(db, provider, {}, max_queries=2)
+                    if search_handler is not None:
+                        cue = str(parsed.get("reply") or "好的，我帮您查一下最新信息，请稍等。").strip()
+                        if cue and cue != spoken_reply:
+                            yield _sse("speech", {"text": cue})
+                        yield _sse("stage", {"stage": f"正在检索「{search_query}」…"})
+                        try:
+                            search_data = await search_handler({"query": search_query})
+                            sources = search_data.get("sources") or []
+                            summary_prompt = (
+                                f"用户问题：{payload.message}\n"
+                                f"联网检索结果：{json.dumps(search_data, ensure_ascii=False)[:8000]}\n\n"
+                                "请严格输出一个 JSON 对象（不要 Markdown 代码块）：\n"
+                                '{"reply": "2-3句适合语音播报的简明回答", "ui_title": "简短标题", "ui_blocks": [...]}\n'
+                                "ui_blocks 可组合 cards（展示检索要点与来源 url）和 actions（1-3个快捷追问按钮）。"
+                            + DYNAMIC_UI_CONTRACT
+                            )
+                            yield _sse("stage", {"stage": "正在整理检索结果…"})
+                            summary_raw = await transport.execute(
+                                chat_agent,
+                                summary_prompt,
+                                timeout_seconds=18.0,
+                                provider=provider,
+                                session_id=f"dh-qs-{request_id}",
+                                max_rounds=0,
+                                structured_output=True,
+                            )
+                            sp = json.loads(_strip_json_fences(summary_raw))
+                            blocks = sp.get("ui_blocks") if isinstance(sp.get("ui_blocks"), list) else []
+                            if not blocks and sources:
+                                blocks = [{
+                                    "type": "cards",
+                                    "title": "检索来源",
+                                    "items": [
+                                        {"title": s.get("title") or s.get("url", ""), "body": s.get("snippet", ""), "url": s.get("url", "")}
+                                        for s in sources[:4] if isinstance(s, dict)
+                                    ],
+                                }]
+                            final_reply = str(sp.get("reply") or "我已为您查到最新信息，详细来源已展示在界面上。").strip()
+                            ui_title = str(sp.get("ui_title") or search_query)[:120]
+                            ui_blocks = blocks[:8]
+                            if ui_blocks:
+                                yield _sse("ui", {"ui_title": ui_title, "ui_blocks": ui_blocks})
+                            yield _sse("speech", {"text": final_reply})
+                            quotas.settle(db, quota_id, success=True)
+                            resp = DigitalHumanRealtimeChatResponse(
+                                reply=f"{cue} {final_reply}".strip() if cue and cue not in final_reply else final_reply,
+                                action="quick_search",
+                                ui_title=ui_title,
+                                ui_blocks=ui_blocks,
+                            )
+                            yield _sse("done", resp.model_dump())
+                            return
+                        except quotas.QuotaExceeded:
+                            raise
+                        except Exception:
+                            pass
+                    action = "chat"
+
+                reply = str(parsed.get("reply") or "").strip()
+                if not reply:
+                    reply = "好的，我明白了。" if action == "chat" else "好的，我已经安排后台任务为您处理，您可以继续和我聊天。"
+                blocks = parsed.get("ui_blocks") if isinstance(parsed.get("ui_blocks"), list) else []
+                ui_title = str(parsed.get("ui_title") or "")[:120]
+                ui_blocks = blocks[:8]
+                if ui_blocks:
+                    yield _sse("ui", {"ui_title": ui_title, "ui_blocks": ui_blocks})
+                if reply != spoken_reply:
+                    yield _sse("speech", {"text": reply})
+                quotas.settle(db, quota_id, success=(action != "dispatch_task"))
+                resp = DigitalHumanRealtimeChatResponse(
+                    reply=reply,
+                    action=action,
+                    task_prompt=str(parsed.get("task_prompt") or payload.message)[:10000] if action == "dispatch_task" else "",
+                    task_title=str(parsed.get("task_title") or payload.message[:16])[:120] if action == "dispatch_task" else "",
+                    ui_title=ui_title,
+                    ui_blocks=ui_blocks,
+                    ui_html="",
+                )
+                yield _sse("done", resp.model_dump())
+        except quotas.QuotaExceeded as exc:
+            quotas.settle(db, quota_id, success=False)
+            yield _sse("error", {"detail": str(exc), "status": 429})
+        except Exception as exc:
+            logger.warning("digital-human realtime-chat stream fallback: %s", exc)
+            quotas.settle(db, quota_id, success=False)
+            yield _sse("error", {"detail": "实时对话服务暂时不可用，请稍后重试。", "status": 502})
+        finally:
+            # Cancellation/disconnection must release the foreground reservation.
+            # settle is conditional on 'reserved', so completed turns remain charged.
+            quotas.settle(db, quota_id, success=False)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+def _fallback_ui_blocks(title: str, content: str) -> list[dict[str, Any]]:
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    excerpt = "\n".join(lines[:3])[:360]
+    return [
+        {
+            "type": "cards",
+            "title": "任务要点",
+            "items": [{"title": title, "body": excerpt or "任务未返回正文。"}],
+        },
+        {
+            "type": "actions",
+            "items": [
+                {"label": "语音总结重点", "prompt": f"请用简洁口语帮我总结「{title}」的三个核心重点"},
+                {"label": "深入追问细节", "prompt": f"针对「{title}」，还有哪些关键数据或风险值得注意？"},
+            ],
+        },
+    ]
+
+
+@app.post(
+    "/api/demo/digital-human/synthesize-ui",
+    response_model=DigitalHumanSynthesizeUiResponse,
+    dependencies=[Depends(require_demo)],
+    tags=["demo"],
+)
+async def demo_digital_human_synthesize_ui(
+    payload: DigitalHumanSynthesizeUiRequest,
+    request: Request,
+    db: DbSession,
+) -> DigitalHumanSynthesizeUiResponse:
+    config = db.get(DigitalHumanConfig, 1)
+    display_name = config.display_name if config else "麦溪"
+    provider = _pick_realtime_chat_provider(db, config)
+    if provider is None:
+        return DigitalHumanSynthesizeUiResponse(
+            ui_title=payload.title,
+            ui_blocks=_fallback_ui_blocks(payload.title, payload.content),
+            summary_speech=f"您好，关于「{payload.title}」的后台任务已经完成，详细结果已为您呈现在右侧界面中。",
+        )
+
+    system_prompt = (
+        f"你是数字人「{display_name}」的预制 Dynamic UI 编排器。\n"
+        "请把后台研究产出，组合为结构化的预制前端组件数组 `ui_blocks`（绝不手写原始 HTML，确保界面排版绝不溢出）。\n"
+        "严格输出一个 JSON 对象（不要输出 Markdown 代码块）：\n"
+        '{"ui_title": string, "summary_speech": string, "ui_blocks": array}\n'
+        "可用预制模块（按需组合 1-3 个）：\n"
+        '1. {"type":"kpi_grid","title":"核心指标","items":[{"label":"...","value":"...","delta":"...","trend":"up|down|flat"}]}\n'
+        '2. {"type":"bar_chart","title":"对比图表","items":[{"label":"...","value":123,"display":"123亿"}]}\n'
+        '3. {"type":"table","title":"明细表","columns":["列1","列2"],"rows":[["值1","值2"]]}\n'
+        '5. {"type":"cards","title":"重点/来源","items":[{"title":"...","subtitle":"...","body":"...","badge":"...","url":"..."}]}\n'
+        '6. {"type":"actions","items":[{"label":"追问按钮","prompt":"点击后向数字人发送的问题"}]}\n'
+        "summary_speech 写 2-3 句适合直接语音播报的核心总结。"
+    )
+    system_prompt += "\n" + DYNAMIC_UI_CONTRACT
+    user_prompt = f"任务标题：{payload.title}\n\n任务产出内容：\n{payload.content[:12000]}"
+    ui_agent = Agent(
+        id="digital-human-ui-synthesizer",
+        aic="",
+        name="Dynamic UI Synthesizer",
+        role="partner",
+        system_prompt=system_prompt,
+        tools=[],
+        skills=[],
+        model_name=provider.default_model,
+        streaming_enabled=False,
+    )
+    transport = TransportRegistry().get(provider.kind)
+    request_id = getattr(request.state, "audit_request_id", None) or uuid.uuid4().hex
+    owner_id = getattr(request.state, "owner_id", None) or "demo"
+    try:
+        with usage_scope(owner_id, f"dh-ui-{owner_id[:16]}", f"dh-ui-{request_id}", SessionLocal):
+            raw = await transport.execute(
+                ui_agent,
+                user_prompt,
+                timeout_seconds=25.0,
+                provider=provider,
+                session_id=f"dh-ui-{request_id}",
+                max_rounds=0,
+                structured_output=True,
+            )
+        parsed = json.loads(_strip_json_fences(raw))
+        blocks = parsed.get("ui_blocks") if isinstance(parsed.get("ui_blocks"), list) else []
+        if not blocks:
+            blocks = _fallback_ui_blocks(payload.title, payload.content)
+        return DigitalHumanSynthesizeUiResponse(
+            ui_title=str(parsed.get("ui_title") or payload.title)[:120],
+            ui_blocks=blocks[:10],
+            summary_speech=str(parsed.get("summary_speech") or f"关于「{payload.title}」的研究已完成，详细可视化界面已为您呈现。")[:600],
+        )
+    except quotas.QuotaExceeded:
+        raise
+    except Exception:
+        return DigitalHumanSynthesizeUiResponse(
+            ui_title=payload.title,
+            ui_blocks=_fallback_ui_blocks(payload.title, payload.content),
+            summary_speech=f"您好，关于「{payload.title}」的研究已经完成了，详细内容已呈现在界面上，您可以点击卡片继续追问。",
+        )
 
 
 @app.get("/api/policy", response_model=PolicyRead, dependencies=[Depends(require_admin)], tags=["routing"])

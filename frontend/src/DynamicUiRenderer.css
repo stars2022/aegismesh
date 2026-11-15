@@ -1,0 +1,283 @@
+.dh-prefab-root {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 2px 4px 6px 0;
+  box-sizing: border-box;
+}
+
+.dh-prefab-root *,
+.dh-prefab-root *::before,
+.dh-prefab-root *::after {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+.dh-ui-block {
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(56, 189, 248, 0.24);
+}
+
+.dh-ui-block-title {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #bae6fd;
+  letter-spacing: 0.02em;
+}
+
+.dh-ui-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+  gap: 10px;
+}
+
+.dh-ui-kpi-card {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(30, 41, 59, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dh-ui-kpi-label {
+  font-size: 12px;
+  color: #94a3b8;
+  overflow-wrap: anywhere;
+}
+
+.dh-ui-kpi-value {
+  font-size: 18px;
+  color: #f8fafc;
+  overflow-wrap: anywhere;
+}
+
+.dh-ui-kpi-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+.dh-ui-kpi-delta.is-up { color: #34d399; }
+.dh-ui-kpi-delta.is-down { color: #f87171; }
+
+.dh-ui-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dh-ui-bar-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dh-ui-bar-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: #e2e8f0;
+}
+
+.dh-ui-bar-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.16);
+  overflow: hidden;
+}
+
+.dh-ui-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #0284c7, #38bdf8);
+}
+
+.dh-ui-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.dh-ui-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  color: #e2e8f0;
+}
+
+.dh-ui-table th,
+.dh-ui-table td {
+  padding: 7px 10px;
+  text-align: left;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  word-break: break-word;
+}
+
+.dh-ui-table th {
+  color: #93c5fd;
+  font-weight: 600;
+  background: rgba(30, 41, 59, 0.55);
+}
+
+.dh-ui-tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.dh-ui-tab-bar button {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.dh-ui-tab-bar button.is-active {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: rgba(56, 189, 248, 0.65);
+  color: #f0f9ff;
+}
+
+.dh-ui-summary {
+  margin: 0 0 8px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #e2e8f0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dh-ui-bullets {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #cbd5e1;
+}
+
+.dh-ui-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.dh-ui-card {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(30, 41, 59, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.dh-ui-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.dh-ui-card-head strong {
+  font-size: 13px;
+  color: #f8fafc;
+  overflow-wrap: anywhere;
+}
+
+.dh-ui-badge {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: rgba(56, 189, 248, 0.16);
+  color: #7dd3fc;
+}
+
+.dh-ui-card-sub {
+  font-size: 11.5px;
+  color: #94a3b8;
+}
+
+.dh-ui-card-body {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #cbd5e1;
+  overflow-wrap: anywhere;
+}
+
+.dh-ui-card-link {
+  margin-top: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #38bdf8;
+  text-decoration: none;
+}
+
+.dh-ui-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dh-ui-actions button {
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  background: rgba(56, 189, 248, 0.14);
+  color: #e0f2fe;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.dh-ui-actions button:hover {
+  background: rgba(56, 189, 248, 0.25);
+}
+
+.dh-ui-empty { margin: 8px 0; color: #cbd5e1; line-height: 1.6; font-size: 14px; }
+.dh-ui-source { flex: none; padding: 12px 14px; color: #e2e8f0; border-top: 1px solid #397fa9; }
+.dh-ui-source summary { cursor: pointer; padding: 4px 0 10px; }
+.dh-ui-source .dh-ui-summary { white-space: pre-wrap; overflow-wrap: anywhere; }
+.dh-ui-tab-panel { flex-shrink: 0; min-height: 80px; }
+/* Keep complete modules in the scroll flow. Flex shrinking used to leave only
+   tab headers visible when captions and the microphone consumed the viewport. */
+.dh-prefab-root > * { flex: 0 0 auto; }
+
+/* Key information stays visible together; legacy tab responses become rows. */
+.dh-ui-comparison-list { margin: 0; }
+.dh-ui-comparison-row { display: grid; grid-template-columns: minmax(70px, .25fr) minmax(0, 1fr); gap: 12px; padding: 10px 0; border-top: 1px solid #7ba4c326; }
+.dh-ui-comparison-row dt { font-size: 15px; font-weight: 600; color: #bae6fd; overflow-wrap: anywhere; }
+.dh-ui-comparison-row dd { margin: 0; color: #e2e8f0; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.dh-ui-comparison-row p { margin: 0; }
+.dh-ui-comparison-row ul { margin: 4px 0 0; padding-left: 18px; }
+.dh-ui-pending { margin: 8px 0 0; color: #b5c7d8; font-size: 13px; }
+.dh-ui-block { padding: 10px 12px; border-radius: 6px; }
+.dh-ui-block-title { font-size: 15px; margin-bottom: 8px; }
+.dh-ui-cards { gap: 8px; }
+.dh-ui-card { padding: 8px 10px; }
+.dh-ui-source { padding: 6px 12px; font-size: 13px; }

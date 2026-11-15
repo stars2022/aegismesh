@@ -618,7 +618,7 @@ tr:last-child td { border-bottom: 0; }
 .provider-actions button:last-child { color: var(--red); }
 .provider-empty { grid-column: 1 / -1; min-height: 240px; display: grid; place-items: center; }
 .provider-drawer { grid-template-rows: auto 1fr auto; }
-.switch-row { flex-direction: row; align-items: center; justify-content: space-between; padding: 12px; background: var(--cffffff); border: 1px solid var(--line); border-radius: 7px; }
+.switch-row, .form-stack .switch-row { flex-direction: row; align-items: center; justify-content: space-between; padding: 12px; background: var(--cffffff); border: 1px solid var(--line); border-radius: 7px; }
 .form-stack .switch-row input { width: 17px; height: 17px; padding: 0; }
 .stream-switch > span { display: flex; flex-direction: column; gap: 4px; }
 .stream-switch strong { color: var(--ink); font-size: 12px; }

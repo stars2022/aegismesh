@@ -329,3 +329,50 @@
 @media (prefers-reduced-motion: reduce) {
   .digital-human *, .digital-human *::before, .digital-human *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+.dh-dynamic-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; overflow: hidden; }
+.dh-realtime-caption { display: flex; align-items: baseline; gap: 10px; padding: 10px 14px; border-radius: 10px; background: rgba(15, 23, 42, 0.72); border: 1px solid rgba(56, 189, 248, 0.28); }
+.dh-realtime-caption strong { color: #38bdf8; font-size: 14px; white-space: nowrap; }
+.dh-realtime-caption p { margin: 0; font-size: 14px; line-height: 1.5; color: #f1f5f9; }
+.dh-dynamic-frame { flex: 1; width: 100%; min-height: 280px; border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 12px; background: rgba(11, 19, 36, 0.85); }
+.dh-dynamic-standby { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; gap: 18px; padding: 24px; border: 1px dashed rgba(56, 189, 248, 0.3); border-radius: 12px; background: rgba(15, 23, 42, 0.45); }
+.dh-dynamic-standby p { max-width: 46ch; margin: 0; color: #cbd5e1; line-height: 1.65; font-size: 14px; }
+.dh-dynamic-chips { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.dh-dynamic-chips button { padding: 9px 16px; border-radius: 999px; border: 1px solid rgba(56, 189, 248, 0.4); background: rgba(56, 189, 248, 0.12); color: #e0f2fe; cursor: pointer; font-size: 13px; transition: background .15s ease, border-color .15s ease; }
+.dh-dynamic-chips button:hover { background: rgba(56, 189, 248, 0.24); border-color: rgba(56, 189, 248, 0.7); }
+.dh-background-tasks { display: grid; gap: 8px; margin: 0 0 14px; }
+.dh-background-task { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; padding: 10px 14px; border: 1px solid rgba(70, 180, 240, .45); border-radius: 6px; background: rgba(24, 93, 145, .12); }
+.dh-background-task strong { min-width: 0; overflow-wrap: anywhere; }
+.dh-background-task span { font-size: .85em; color: #8ad6ff; }
+.dh-background-task[data-status="completed"] span { color: #69d7a3; }
+.dh-background-task[data-status="failed"] span { color: #ffaaa2; }
+.dh-rehearsal { display: grid; gap: 8px; }
+.dh-rehearsal h2 { margin: 0; font-size: 1em; }
+.dh-rehearsal button { color: inherit; background: rgba(24, 93, 145, .15); border: 1px solid rgba(70, 180, 240, .4); border-radius: 4px; padding: 8px; text-align: left; cursor: pointer; }
+.dh-rehearsal button:disabled { opacity: .5; cursor: default; }
+.dh-voice-composer { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 166px; margin-top: 16px; padding: 20px 16px; border: 1px solid var(--dh-line); border-radius: 8px; background: linear-gradient(140deg, #0b2c47, #061a2d); }
+.dh-voice-composer .dh-inline-notice { align-self: stretch; margin: 0; }
+.digital-human .dh-voice-trigger { display: grid; place-items: center; width: 78px; height: 78px; padding: 0; border: 1px solid #65d8ff; border-radius: 50%; color: #effaff; background: radial-gradient(circle at 40% 25%, #3b83af, #0c385e 65%); box-shadow: inset 0 1px 4px #c4f1ff33, 0 0 0 6px #1e82b520, 0 0 0 12px #1689b80b; }
+.digital-human .dh-voice-trigger.is-active { border-color: #79dfc0; background: radial-gradient(circle at 40% 25%, #2f8d8e, #0c4d60 65%); box-shadow: inset 0 1px 4px #c4fff133, 0 0 0 6px #37b59822, 0 0 0 12px #37b5980b; }
+.dh-voice-action { color: var(--dh-muted); font-size: 15px; text-align: center; }
+@media (max-width: 600px) { .dh-voice-composer { min-height: 146px; padding: 16px; } .digital-human .dh-voice-trigger { width: 68px; height: 68px; } }
+
+/* Stacked layouts scroll as a page: fixed viewport rows otherwise collapse the
+   conversation and let the service directory overlap its controls. */
+@media (max-width: 52rem) {
+  .digital-human { height: auto; min-height: 100dvh; overflow: visible; }
+  .dh-layout { flex: none; grid-template-rows: auto auto auto; align-items: start; }
+  .dh-service-column { overflow: visible; }
+  .dh-consultation { min-height: 520px; height: auto; }
+  .dh-conversation-body { min-height: 240px; }
+  .dh-messages { max-height: 55dvh; }
+  .dh-voice-composer { flex-shrink: 0; }
+}
+.digital-human .dh-ui-table td { color: var(--dh-ink); }
+.dh-dynamic-stage { overflow-y: auto; }
+.dh-dynamic-stage > * { flex-shrink: 0; }
+.dh-dynamic-stage .dh-prefab-root { flex: 0 0 auto; overflow: visible; }
+@media (min-width: 52.01rem) and (max-height: 820px) {
+  .dh-voice-composer { min-height: 112px; padding: 10px; gap: 6px; }
+  .digital-human .dh-voice-trigger { width: 56px; height: 56px; }
+  .dh-voice-trigger svg { width: 28px; height: 28px; }
+}

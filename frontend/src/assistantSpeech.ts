@@ -45,5 +45,5 @@ export function createAssistantSpeech(engine: Engine, callbacks: Callbacks,
     next()
     return run === generation && active !== null
   }
-  return { play, stop }
+  return { play, stop, isActive: () => active !== null }
 }

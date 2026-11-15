@@ -2,6 +2,8 @@ import type { Agent, Attachment, ChatResult, DashboardData, Policy, ProbeResult,
 import type { LogPage, LogRecord, LogStatus } from './logs'
 import type { SearchSettings, SearchSettingsUpdate, SearchTestResult } from './WebSearchSettings'
 import type { DesignerResult } from './admin/AgentDesigner'
+import type { DynamicUiBlock } from './DynamicUiRenderer'
+import type { PcmSpeechAudio } from './streamingSpeechPlayer'
 
 const jsonHeaders = { 'Content-Type': 'application/json' }
 
@@ -26,6 +28,79 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   } catch {
     throw new Error('服务响应格式不正确，请稍后重试')
   }
+}
+
+async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const response = await fetch(path, { credentials: 'same-origin', ...init })
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}))
+    const detail = body.detail
+    throw new Error(typeof detail === 'string' ? detail : `请求失败 (${response.status})`)
+  }
+  return await response.blob()
+}
+
+export type DigitalHumanAdminSettings = {
+  enabled: boolean
+  realtime_mode: boolean
+  display_name: string
+  greeting: string
+  tts_backend: 'browser' | 'deepseek' | 'disabled'
+  tts_provider_id: string
+  tts_base_url: string
+  tts_key_configured?: boolean
+  tts_voice_id: 'stella' | 'tide'
+  tts_filter_markdown: boolean
+  tts_timeout_seconds: number
+  asr_backend: 'browser' | 'deepseek' | 'disabled'
+  asr_provider_id: string
+  asr_base_url: string
+  asr_key_configured?: boolean
+  asr_timeout_seconds: number
+}
+
+export type DigitalHumanAdminSettingsUpdate = DigitalHumanAdminSettings & {
+  tts_api_key?: string
+  clear_tts_api_key?: boolean
+  asr_api_key?: string
+  clear_asr_api_key?: boolean
+}
+
+export type DigitalHumanPublicConfig = {
+  enabled: boolean
+  realtime_mode: boolean
+  display_name: string
+  greeting: string
+  tts_backend: 'browser' | 'deepseek' | 'disabled'
+  tts_voice_id: 'stella' | 'tide'
+  tts_available: boolean
+  asr_backend: 'browser' | 'deepseek' | 'disabled'
+  asr_available: boolean
+}
+
+export type DigitalHumanBackgroundTaskSummary = {
+  id: string
+  title: string
+  status: 'running' | 'completed' | 'failed' | 'stopped'
+  stage?: string
+  result_preview?: string
+}
+
+export type DigitalHumanRealtimeChatResponse = {
+  reply: string
+  action: 'chat' | 'quick_search' | 'dispatch_task'
+  task_prompt: string
+  task_title: string
+  ui_title: string
+  ui_blocks: DynamicUiBlock[]
+  ui_html: string
+}
+
+export type DigitalHumanSynthesizeUiResponse = {
+  ui_title: string
+  ui_blocks: DynamicUiBlock[]
+  ui_html: string
+  summary_speech: string
 }
 
 export type StreamEvent = {
@@ -245,6 +320,134 @@ export const api = {
   testSearchSettings: (payload: SearchSettingsUpdate) => request<SearchTestResult>('/api/admin/web-search/test', {
     method: 'POST', headers: jsonHeaders, body: JSON.stringify(payload),
   }),
+  digitalHumanSettings: () => request<DigitalHumanAdminSettings>('/api/admin/digital-human'),
+  updateDigitalHumanSettings: (payload: DigitalHumanAdminSettingsUpdate) =>
+    request<DigitalHumanAdminSettings>('/api/admin/digital-human', {
+      method: 'PUT', headers: jsonHeaders, body: JSON.stringify(payload),
+    }),
+  testDigitalHumanTts: (payload: DigitalHumanAdminSettingsUpdate, text?: string) =>
+    requestBlob(`/api/admin/digital-human/test-tts${text ? `?text=${encodeURIComponent(text)}` : ''}`, {
+      method: 'POST', headers: jsonHeaders, body: JSON.stringify(payload),
+    }),
+  testDigitalHumanAsr: (file: Blob, providerId: string, timeoutSeconds: number, baseUrl = '', apiKey = '') => {
+    const formData = new FormData()
+    formData.append('file', file, 'test.wav')
+    formData.append('provider_id', providerId)
+    formData.append('base_url', baseUrl)
+    formData.append('api_key', apiKey)
+    formData.append('timeout_seconds', String(timeoutSeconds))
+    return request<{ ok: boolean; latency_ms: number; text: string; duration_ms: number }>('/api/admin/digital-human/test-asr', {
+      method: 'POST', body: formData,
+    })
+  },
+  digitalHumanPublicConfig: () => request<DigitalHumanPublicConfig>('/api/demo/digital-human/config'),
+  digitalHumanTts: (text: string, voiceId?: 'stella' | 'tide', signal?: AbortSignal) =>
+    requestBlob('/api/demo/digital-human/tts', {
+      method: 'POST', headers: jsonHeaders, body: JSON.stringify({ text, voice_id: voiceId }), signal,
+    }),
+  digitalHumanSpeechAudio: async (text: string, voiceId?: 'stella' | 'tide', signal?: AbortSignal): Promise<Blob | PcmSpeechAudio> => {
+    if (!(window.AudioContext || (window as unknown as { webkitAudioContext?: unknown }).webkitAudioContext)) {
+      return api.digitalHumanTts(text, voiceId, signal)
+    }
+    const response = await fetch('/api/demo/digital-human/tts', {
+      method: 'POST', credentials: 'same-origin', headers: jsonHeaders,
+      body: JSON.stringify({ text, voice_id: voiceId, format: 'pcm' }), signal,
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      throw new Error(typeof body.detail === 'string' ? body.detail : `请求失败 (${response.status})`)
+    }
+    if (!response.body || !response.headers.get('Content-Type')?.startsWith('audio/pcm')) {
+      await response.body?.cancel()
+      throw new Error('语音服务未返回流式 PCM 音频，请同步更新服务端')
+    }
+    return { stream: response.body, sampleRate: 24000 }
+  },
+  digitalHumanAsr: (file: Blob, signal?: AbortSignal) => {
+    const formData = new FormData()
+    formData.append('file', file, 'speech.wav')
+    return request<{ text: string; duration_ms: number }>('/api/demo/digital-human/asr', {
+      method: 'POST', body: formData, signal,
+    })
+  },
+  digitalHumanRealtimeChat: (
+    payload: {
+      message: string
+      history: { role: 'user' | 'assistant'; text: string }[]
+      tasks: DigitalHumanBackgroundTaskSummary[]
+    },
+    signal?: AbortSignal,
+  ) =>
+    request<DigitalHumanRealtimeChatResponse>('/api/demo/digital-human/realtime-chat', {
+      method: 'POST', headers: jsonHeaders, body: JSON.stringify(payload), signal,
+    }),
+  digitalHumanRealtimeChatStream: async (
+    payload: {
+      message: string
+      history: { role: 'user' | 'assistant'; text: string }[]
+      tasks: DigitalHumanBackgroundTaskSummary[]
+    },
+    handlers: {
+      onStage?: (stage: string) => void
+      onSpeech?: (text: string) => void
+      onUi?: (uiTitle: string, uiBlocks: DynamicUiBlock[]) => void
+    },
+    signal?: AbortSignal,
+  ): Promise<DigitalHumanRealtimeChatResponse> => {
+    const response = await fetch('/api/demo/digital-human/realtime-chat/stream', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { ...jsonHeaders, Accept: 'text/event-stream' },
+      body: JSON.stringify(payload),
+      signal,
+    })
+    if (!response.ok || !response.body) {
+      const body = await response.json().catch(() => ({}))
+      throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${response.status}`)
+    }
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let donePayload: DigitalHumanRealtimeChatResponse | null = null
+    const processEvent = (raw: string) => {
+      let eventName = 'message'
+      const dataLines: string[] = []
+      for (const line of raw.split(/\r?\n/)) {
+        if (line.startsWith('event:')) eventName = line.slice(6).trim()
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
+      }
+      if (!dataLines.length) return
+      const data = JSON.parse(dataLines.join('\n'))
+      if (eventName === 'stage' && typeof data.stage === 'string') handlers.onStage?.(data.stage)
+      else if (eventName === 'speech' && typeof data.text === 'string') handlers.onSpeech?.(data.text)
+      else if (eventName === 'ui') handlers.onUi?.(data.ui_title || '', Array.isArray(data.ui_blocks) ? data.ui_blocks : [])
+      else if (eventName === 'error') throw new Error(data.detail || '实时交互失败')
+      else if (eventName === 'done') donePayload = data as DigitalHumanRealtimeChatResponse
+    }
+    try {
+      while (true) {
+        const { value, done } = await reader.read()
+        if (value) buffer += decoder.decode(value, { stream: true })
+        const parts = buffer.split(/\r?\n\r?\n/)
+        buffer = parts.pop() || ''
+        for (const part of parts) {
+          if (part.trim()) processEvent(part)
+        }
+        if (done || donePayload) break
+      }
+      buffer += decoder.decode()
+      if (!donePayload && buffer.trim()) processEvent(buffer)
+      if (!donePayload) throw new Error('实时响应未正常结束')
+      return donePayload
+    } finally {
+      await reader.cancel().catch(() => undefined)
+      reader.releaseLock()
+    }
+  },
+  digitalHumanSynthesizeUi: (payload: { title: string; content: string }, signal?: AbortSignal) =>
+    request<DigitalHumanSynthesizeUiResponse>('/api/demo/digital-human/synthesize-ui', {
+      method: 'POST', headers: jsonHeaders, body: JSON.stringify(payload), signal,
+    }),
   policy: () => request<Policy>('/api/policy'),
   chatConfig: () => request<{ interop_compatibility: boolean; bounty_enabled?: boolean; default_coordinator_id: string | null }>('/api/chat/config'),
   updatePolicy: (payload: Policy) =>
@@ -330,8 +533,15 @@ export const api = {
     request<{ active: boolean; interrupted?: { invocation_id: string; message: string; partial_result?: string }; task?: { task_id: string; agent_id?: string; status: string; event_count: number; has_result: boolean; error?: string; created_at?: number } }>(
       `/api/demo/tasks/active?session_id=${encodeURIComponent(sessionId)}`,
     ),
-  assistantChatStream: (message: string, sessionId: string, signal: AbortSignal, onTaskId: (taskId: string) => void) =>
-    streamChat('/api/demo/chat/stream', { message, session_id: sessionId, interface: 'harness', presentation: 'assistant', mode: 'collaborate', collab_style: 'auto' }, () => undefined, undefined, 'POST', signal, onTaskId),
+  assistantChatStream: (
+    message: string,
+    sessionId: string,
+    signal: AbortSignal,
+    onTaskId: (taskId: string) => void,
+    onDelta: (text: string) => void = () => undefined,
+    onEvent?: (event: StreamEvent) => void,
+  ) =>
+    streamChat('/api/demo/chat/stream', { message, session_id: sessionId, interface: 'harness', presentation: 'assistant', mode: 'collaborate', collab_style: 'auto' }, onDelta, onEvent, 'POST', signal, onTaskId),
   sessionActivity: (sessionId: string, before?: string) =>
     request<{ session_id: string; items: ChatResult[]; next_before: string | null }>(
       `/api/chat/sessions/${encodeURIComponent(sessionId)}/activity${before ? `?before=${encodeURIComponent(before)}` : ''}`,

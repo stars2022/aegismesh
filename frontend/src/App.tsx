@@ -16,6 +16,7 @@ import {
   Settings2,
   ShieldCheck,
   Users,
+  Volume2,
 } from "lucide-react";
 import { api } from "./api";
 import { FlowMark } from "./LoadingFlow";
@@ -30,6 +31,7 @@ import { Overview } from "./admin/Overview";
 import { Probes } from "./admin/Probes";
 import { Providers } from "./admin/Providers";
 import { Routing } from "./admin/Routing";
+import { DigitalHumanSettings } from "./admin/DigitalHumanSettings";
 import { Studio } from "./admin/Studio";
 import { NewAgentMenu, type CreationMode, type CreationRequest } from "./admin/NewAgentMenu";
 import { Traces } from "./admin/Traces";
@@ -46,6 +48,7 @@ const navigation: { id: View; label: string; icon: typeof LayoutDashboard }[] =
     { id: "logs", label: "日志与审计", icon: FileText },
     { id: "accounts", label: "账号管理", icon: Users },
     { id: "quotas", label: "配额管理", icon: Gauge },
+    { id: "digital-human", label: "数字人配置", icon: Volume2 },
     { id: "access", label: "访问与数据", icon: ShieldCheck },
   ];
 
@@ -59,6 +62,7 @@ const titles: Record<View, string> = {
   logs: "日志与审计",
   accounts: "账号管理",
   quotas: "配额管理",
+  "digital-human": "数字人配置",
   access: "访问与数据",
 };
 
@@ -265,6 +269,7 @@ function App({ onLogout }: { onLogout?: () => void }) {
           {view === "logs" && <LogCenter refreshKey={logsRefresh} />}
           {view === "accounts" && <AccountAdministration refreshKey={accountsRefresh} />}
           {view === "quotas" && <QuotaAdministration refreshKey={accountsRefresh} />}
+          {view === "digital-human" && <DigitalHumanSettings providers={providers} />}
           {view === "access" && <AccessControl />}
           </ErrorBoundary>
         </div>
