@@ -865,10 +865,10 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
           <header className="dh-chat-heading"><h2>{realtimeMode ? (dynamicUi?.title || `${dhConfig.display_name || '麦溪'} · 实时交互`) : `与${dhConfig.display_name || '麦溪'}对话`}</h2><div>{realtimeMode && dynamicUi && <button type="button" onClick={() => setDynamicUi(null)}>清空视图</button>}<button aria-pressed={largeText} onClick={() => setLargeText(value => !value)}>大字</button><button onClick={() => { setDynamicUi(null); setLiveCaption(''); changeSession(newAssistantSession()) }} disabled={busy}><Plus size={18}/>新咨询</button></div></header>
           {realtimeMode ? (
             <div className="dh-dynamic-stage">
-              <div className="dh-realtime-caption" role="status" aria-live="polite">
+              {liveCaption && <div className="dh-realtime-caption" role="status" aria-live="polite">
                 <strong>{dhConfig.display_name || '麦溪'}</strong>
-                <p>{liveCaption || (busy ? (routingStage || '正在实时响应…') : dhConfig.greeting || '您好，请问有什么可以帮您？')}</p>
-              </div>
+                <p>{liveCaption}</p>
+              </div>}
               {backgroundTasks.some(task => task.status !== 'completed') && <div className="dh-background-tasks" aria-label="后台协作任务">
                 {backgroundTasks.filter(task => task.status !== 'completed').slice(0, 3).map(task => <div className="dh-background-task" key={task.id} data-status={task.status}>
                   <strong>{task.title}</strong><span role="status">{task.stage}</span>
@@ -888,11 +888,11 @@ export default function DigitalHuman({ ownerId }: { ownerId: string }) {
                 ) : null
               ) : (
                 <div className="dh-dynamic-standby">
-                  <p>点击下方麦克风开始对话。</p>
+                  <p>{dhConfig.greeting || '您好，请问有什么可以帮您？'} 点击下方麦克风开始对话，或选择快捷互动主题：</p>
                   <div className="dh-dynamic-chips">
-                    <button type="button" onClick={() => submitText('帮我研究一下小米公司最新财报并做可视化对比')}>研究小米公司财报</button>
+                    <button type="button" onClick={() => submitText('帮我研究一下小米公司最新财报并做可视化图表对比')}>研究小米财报图表</button>
+                    <button type="button" onClick={() => submitText('给我出两道人工智能知识选择题，让我互动答题')}>AI 互动选择题</button>
                     <button type="button" onClick={() => submitText('帮我梳理最近一周人工智能领域重点动态')}>近期 AI 重点动态</button>
-                    <button type="button" onClick={() => submitText('你好，介绍一下你能做什么')}>认识一下{dhConfig.display_name || '麦溪'}</button>
                   </div>
                 </div>
               )}

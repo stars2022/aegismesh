@@ -370,7 +370,7 @@
 .digital-human .dh-ui-table td { color: var(--dh-ink); }
 .dh-dynamic-stage { overflow-y: auto; }
 .dh-dynamic-stage > * { flex-shrink: 0; }
-.dh-dynamic-stage .dh-prefab-root { flex: 0 0 auto; overflow: visible; }
+.dh-dynamic-stage .dh-prefab-root { flex: 1 0 auto; overflow: visible; }
 @media (min-width: 52.01rem) and (max-height: 820px) {
   .dh-voice-composer { min-height: 112px; padding: 10px; gap: 6px; }
   .digital-human .dh-voice-trigger { width: 56px; height: 56px; }

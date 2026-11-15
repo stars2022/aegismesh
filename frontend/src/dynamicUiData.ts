@@ -33,12 +33,40 @@ export function normalizeDynamicUiBlocks(raw: unknown): DynamicUiBlock[] {
       const rows = list(block.rows ?? block.data).map(row => Array.isArray(row) ? row.map(item => uiText(item)) : keys.map(key => uiText(record(row)[key])))
       return columns.length ? [{ type, title, columns, rows }] : []
     }
-    if (['cards', 'kpi_grid', 'bar_chart', 'actions'].includes(type)) {
-      const items = list(block.items).filter(value => value != null).map(value => {
+    if (type === 'quiz') {
+      const rawQuestions = list(block.questions ?? block.items)
+      const questions = (rawQuestions.length ? rawQuestions : [block]).map((qVal, qIdx) => {
+        const q = record(qVal)
+        const prompt = firstText(q.question, q.prompt, q.title, q.stem)
+        const opts = list(q.options ?? q.choices).map((oVal, oIdx) => {
+          if (typeof oVal === 'string') {
+            return { key: String.fromCharCode(65 + oIdx), label: oVal.trim(), correct: undefined as boolean | undefined, explanation: '' }
+          }
+          const o = record(oVal)
+          const correct = typeof o.correct === 'boolean' ? o.correct : (typeof o.is_correct === 'boolean' ? o.is_correct : undefined)
+          return {
+            key: firstText(o.key, o.id) || String.fromCharCode(65 + oIdx),
+            label: firstText(o.label, o.text, o.title, o.content),
+            correct,
+            explanation: firstText(o.explanation, o.reason, o.feedback),
+          }
+        }).filter(o => o.label)
+        const answer = firstText(q.answer, q.correct_key)
+        if (answer) {
+          opts.forEach(o => {
+            if (o.correct === undefined) o.correct = o.key.toUpperCase() === answer.toUpperCase()
+          })
+        }
+        return { id: firstText(q.id) || `q-${qIdx}`, question: prompt, explanation: firstText(q.explanation, q.analysis), options: opts }
+      }).filter(q => q.question && q.options.length > 0)
+      return questions.length ? [{ type: 'quiz', title: title || '互动选择题', questions }] : []
+    }
+    if (['cards', 'kpi_grid', 'bar_chart', 'line_chart', 'pie_chart', 'actions'].includes(type)) {
+      const items = list(block.items ?? block.points ?? block.data).filter(value => value != null).map(value => {
         const item = record(value)
         if (type === 'cards') return { title: firstText(item.title, item.label, item.name), subtitle: uiText(item.subtitle), body: content(item), badge: uiText(item.badge), url: firstText(item.url, item.link) }
         if (type === 'actions') return { label: firstText(item.label, item.title), prompt: firstText(item.prompt, item.label, item.title) }
-        if (type === 'bar_chart') return { label: firstText(item.label, item.name), value: Number.isFinite(Number(item.value)) ? Number(item.value) : 0, display: firstText(item.display, item.value) }
+        if (['bar_chart', 'line_chart', 'pie_chart'].includes(type)) return { label: firstText(item.label, item.name, item.x), value: Number.isFinite(Number(item.value ?? item.y)) ? Number(item.value ?? item.y) : 0, display: firstText(item.display, item.value, item.y) }
         return { label: firstText(item.label, item.name), value: uiText(item.value), delta: uiText(item.delta), trend: ['up', 'down', 'flat'].includes(String(item.trend)) ? item.trend : 'flat' }
       })
       return items.length ? [{ type, title, items }] : []

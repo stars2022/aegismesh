@@ -26,3 +26,16 @@ test('missing candidate detail remains empty so the UI can report it without inv
   assert.equal(normalizeDynamicUiBlocks([{type:'tabs',tabs:[{label:'项目甲'}]}])[0].items[0].summary,'')
   assert.deepEqual(normalizeDynamicUiBlocks({type:'tabs'}),[])
 })
+test('quiz and chart blocks normalize cleanly', () => {
+  const blocks = normalizeDynamicUiBlocks([
+    {type:'quiz',title:'随堂测试',question:'1+1=?',options:['1','2'],answer:'B'},
+    {type:'line_chart',title:'季度营收',points:[{label:'Q1',y:100,display:'100亿'},{label:'Q2',y:135}]},
+    {type:'pie_chart',title:'营收占比',items:[{label:'手机',value:60},{label:'汽车',value:40}]}
+  ])
+  assert.equal(blocks[0].type,'quiz')
+  assert.equal(blocks[0].questions[0].options[1].correct,true)
+  assert.equal(blocks[1].type,'line_chart')
+  assert.equal(blocks[1].items[1].value,135)
+  assert.equal(blocks[2].type,'pie_chart')
+  assert.equal(blocks[2].items.length,2)
+})
